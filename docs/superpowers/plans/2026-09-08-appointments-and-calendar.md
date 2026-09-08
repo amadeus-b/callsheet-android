@@ -37,7 +37,17 @@
 | `calendar/BusyTimes.kt` | One `Instances` query per day, returning `BusyInterval`s from every visible calendar. |
 | `ui/AppointmentSheet.kt` | The bottom sheet: day row, timeline, duration chips, location field. |
 | `app/src/test/.../AppointmentTest.kt` | Tests for `Appointment`. Plain JUnit. |
-| `app/src/test/.../CalendarStoreTest.kt` | Robolectric tests for `CalendarStore` and `BusyTimes` against the Robolectric content provider. |
+
+Robolectric 4.16 ships **no** shadow for `CalendarContract` — the jar this
+project pulls contains no calendar provider, and none for contacts either. An
+unregistered authority stores nothing, so a test that inserts an event and reads
+it back would only be testing `ShadowContentResolver`.
+
+This is the question `PhoneBook.kt` already answered: 287 lines, no test, while
+the pure `ContactMerge` is tested. `calendar/` follows it. Every decision worth
+testing lives in `Appointment.kt` and is tested there; `CalendarStore` and
+`BusyTimes` stay thin enough to read in one sitting, fail soft on everything,
+and get checked by hand in Task 15.
 
 **Modified:**
 
@@ -978,7 +988,8 @@ git commit -m "Einstellungen: Kalender und gemerkte Termindauer"
 - Create: `app/src/main/java/io/github/amadeusb/callsheet/calendar/CalendarStore.kt`
 - Create: `app/src/main/java/io/github/amadeusb/callsheet/calendar/BusyTimes.kt`
 - Modify: `app/src/main/AndroidManifest.xml`
-- Test: `app/src/test/java/io/github/amadeusb/callsheet/CalendarStoreTest.kt` (create)
+- Test: none — see the note in File Structure. This task is checked by hand in
+  Task 15; the decisions it feeds are tested in Task 4.
 
 **Interfaces:**
 - Consumes: `BusyInterval` from Task 4.
@@ -1017,178 +1028,21 @@ And inside `<queries>`, so the address can reach a map application:
         </intent>
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 2: Keep every call fail-soft**
 
-Create `app/src/test/java/io/github/amadeusb/callsheet/CalendarStoreTest.kt`:
+There is no test to catch a mistake here, so the shape of the code has to carry
+the safety instead. Every method in Task 6 obeys three rules:
 
-```kotlin
-package io.github.amadeusb.callsheet
+1. **Check the permission first** and return the empty answer without touching
+   the resolver — `emptyList()`, `null` or `false`.
+2. **Wrap the provider call in `runCatching`** and turn a throw into that same
+   empty answer. A calendar that has gone away must not take the app with it.
+3. **Return no partial state.** A half-written event is worse than none; either
+   `insert` returns an id or it returns null.
 
-import android.Manifest
-import android.provider.CalendarContract
-import androidx.test.core.app.ApplicationProvider
-import io.github.amadeusb.callsheet.calendar.CalendarStore
-import io.github.amadeusb.callsheet.calendar.BusyTimes
-import io.github.amadeusb.callsheet.calendar.EventFields
-import io.github.amadeusb.callsheet.data.Clock
-import kotlinx.coroutines.test.runTest
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Before
-import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows
-import org.robolectric.annotation.Config
-import java.time.ZonedDateTime
+A reviewer should be able to confirm all three by reading, which is the point.
 
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
-class CalendarStoreTest {
-
-    private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-
-    private fun millis(hour: Int, minute: Int = 0): Long =
-        ZonedDateTime.of(2026, 9, 10, hour, minute, 0, 0, Clock.zone).toInstant().toEpochMilli()
-
-    private val dayStart: Long
-        get() = ZonedDateTime.of(2026, 9, 10, 0, 0, 0, 0, Clock.zone).toInstant().toEpochMilli()
-
-    /** A calendar to write into, inserted straight through the provider. */
-    private fun createCalendar(displayName: String = "Arbeit"): Long {
-        val uri = CalendarContract.Calendars.CONTENT_URI.buildUpon()
-            .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
-            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, "test@example.org")
-            .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
-            .build()
-        val values = android.content.ContentValues().apply {
-            put(CalendarContract.Calendars.ACCOUNT_NAME, "test@example.org")
-            put(CalendarContract.Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
-            put(CalendarContract.Calendars.NAME, displayName)
-            put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, displayName)
-            put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL, CalendarContract.Calendars.CAL_ACCESS_OWNER)
-            put(CalendarContract.Calendars.VISIBLE, 1)
-            put(CalendarContract.Calendars.SYNC_EVENTS, 1)
-            put(CalendarContract.Calendars.CALENDAR_TIME_ZONE, Clock.zone.id)
-        }
-        return context.contentResolver.insert(uri, values)!!.lastPathSegment!!.toLong()
-    }
-
-    @Before
-    fun aufbau() {
-        Shadows.shadowOf(ApplicationProvider.getApplicationContext<android.app.Application>())
-            .grantPermissions(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
-    }
-
-    @Test
-    fun `ohne Berechtigung wird nichts gelesen`() = runTest {
-        Shadows.shadowOf(ApplicationProvider.getApplicationContext<android.app.Application>())
-            .denyPermissions(Manifest.permission.READ_CALENDAR)
-
-        assertTrue(CalendarStore.calendars(context).isEmpty())
-        assertTrue(BusyTimes.forDay(context, dayStart).isEmpty())
-    }
-
-    @Test
-    fun `die Kalender des Geraets werden gefunden`() = runTest {
-        createCalendar("Arbeit")
-
-        val kalender = CalendarStore.calendars(context)
-
-        assertEquals(listOf("Arbeit"), kalender.map { it.name })
-    }
-
-    @Test
-    fun `ein Termin wird angelegt und wieder gelesen`() = runTest {
-        val kalenderId = createCalendar()
-
-        val id = CalendarStore.insert(
-            context, kalenderId,
-            EventFields(
-                title = "Ortstermin Gartenbau Merten",
-                startMillis = millis(14),
-                endMillis = millis(15),
-                location = "Zehentstraße 39, 85055 Ingolstadt",
-                description = "Aus Callsheet",
-            ),
-        )
-        assertNotNull(id)
-
-        val gelesen = CalendarStore.read(context, id!!)!!
-        assertEquals("Ortstermin Gartenbau Merten", gelesen.title)
-        assertEquals(millis(14), gelesen.startMillis)
-        assertEquals(millis(15), gelesen.endMillis)
-        assertEquals("Zehentstraße 39, 85055 Ingolstadt", gelesen.location)
-    }
-
-    @Test
-    fun `ein verschobener Termin wird verschoben gelesen`() = runTest {
-        val kalenderId = createCalendar()
-        val id = CalendarStore.insert(
-            context, kalenderId,
-            EventFields("Ortstermin", millis(14), millis(15), null, null),
-        )!!
-
-        CalendarStore.update(
-            context, id,
-            EventFields("Ortstermin", millis(16), millis(17), "Woanders", null),
-        )
-
-        val gelesen = CalendarStore.read(context, id)!!
-        assertEquals(millis(16), gelesen.startMillis)
-        assertEquals("Woanders", gelesen.location)
-    }
-
-    @Test
-    fun `ein geloeschter Termin liest sich als null`() = runTest {
-        val kalenderId = createCalendar()
-        val id = CalendarStore.insert(
-            context, kalenderId,
-            EventFields("Ortstermin", millis(14), millis(15), null, null),
-        )!!
-
-        CalendarStore.delete(context, id)
-
-        assertNull(CalendarStore.read(context, id))
-    }
-
-    @Test
-    fun `eine unbekannte Event-Id liest sich als null`() = runTest {
-        assertNull(CalendarStore.read(context, 999_999L))
-    }
-
-    @Test
-    fun `belegte Zeiten kommen aus allen sichtbaren Kalendern`() = runTest {
-        val arbeit = createCalendar("Arbeit")
-        val privat = createCalendar("Privat")
-        CalendarStore.insert(context, arbeit, EventFields("Baustelle Nord", millis(9), millis(10), null, null))
-        CalendarStore.insert(context, privat, EventFields("Zahnarzt", millis(12), millis(13), null, null))
-
-        val belegt = BusyTimes.forDay(context, dayStart)
-
-        assertEquals(listOf("Baustelle Nord", "Zahnarzt"), belegt.map { it.title })
-        assertEquals(millis(9), belegt.first().startMillis)
-    }
-
-    @Test
-    fun `ein Termin am Vortag zaehlt nicht zum Tag`() = runTest {
-        val kalenderId = createCalendar()
-        val gestern = ZonedDateTime.of(2026, 9, 9, 14, 0, 0, 0, Clock.zone).toInstant().toEpochMilli()
-        CalendarStore.insert(context, kalenderId, EventFields("Gestern", gestern, gestern + 3_600_000L, null, null))
-
-        assertTrue(BusyTimes.forDay(context, dayStart).isEmpty())
-    }
-}
-```
-
-- [ ] **Step 3: Run the tests and watch them fail**
-
-Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.CalendarStoreTest"`
-Expected: FAIL to compile — `CalendarStore` does not exist.
-
-- [ ] **Step 4: Write `CalendarStore`**
+- [ ] **Step 3: Write `CalendarStore`**
 
 Create `app/src/main/java/io/github/amadeusb/callsheet/calendar/CalendarStore.kt`:
 
@@ -1345,7 +1199,7 @@ object CalendarStore {
 }
 ```
 
-- [ ] **Step 5: Write `BusyTimes`**
+- [ ] **Step 4: Write `BusyTimes`**
 
 Create `app/src/main/java/io/github/amadeusb/callsheet/calendar/BusyTimes.kt`:
 
@@ -1409,19 +1263,36 @@ object BusyTimes {
 }
 ```
 
-- [ ] **Step 6: Run the tests and watch them pass**
+- [ ] **Step 5: Build, and check the suite still passes**
 
-Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.CalendarStoreTest"`
-Expected: PASS, eight tests.
+Run: `./gradlew assembleDebug testDebugUnitTest`
+Expected: BUILD SUCCESSFUL, tests PASS. Nothing new is asserted here — this only
+proves the package compiles and breaks nothing.
 
-If Robolectric's calendar provider turns out not to support `Instances` (it is a view over `Events`, and shadow support varies by version), do **not** delete the test. Report it, and fall back to querying `CalendarContract.Events` with a `DTSTART`/`DTEND` range in `BusyTimes` — recurring events are then out of scope, which is worth stating in the spec rather than silently accepting.
+- [ ] **Step 6: Prove it against a real calendar**
+
+On a device or emulator with at least one writable calendar and at least two
+events on the same day, in different calendars:
+
+1. Grant the calendar permission, then confirm `CalendarStore.calendars` returns
+   every writable calendar and none of the read-only ones.
+2. Insert an event through the app and find it in the calendar application, with
+   the right day, time, length and location.
+3. Confirm `BusyTimes.forDay` returns both events, in order, with their titles —
+   including the one in the calendar the app does *not* write to.
+4. Confirm an all-day entry does not appear in the result.
+5. Delete the event in the calendar application, then confirm `read` returns null
+   rather than throwing.
+
+The quickest way to see the results is a temporary log line in the view model,
+removed before the commit. This is the step that replaces the missing tests; do
+not skip it and do not report the task done without it.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add app/src/main/java/io/github/amadeusb/callsheet/calendar/ \
-        app/src/main/AndroidManifest.xml \
-        app/src/test/java/io/github/amadeusb/callsheet/CalendarStoreTest.kt
+        app/src/main/AndroidManifest.xml
 git commit -m "Kalenderpaket: Termine schreiben, lesen, belegte Zeiten"
 ```
 
@@ -1860,11 +1731,7 @@ git commit -m "Termin speichern: Spalten, Status und Kalendereintrag"
 - Consumes: `AppointmentDraft`, `Appointment`, `BusyInterval`, `Clock`.
 - Produces: `@Composable fun AppointmentSheet(draft: AppointmentDraft, onDraft: (AppointmentDraft) -> Unit, onSave: () -> Unit, onLink: (Long) -> Unit, onForce: () -> Unit, onPickDate: () -> Unit, onDismiss: () -> Unit)`
 
-Note `onLink` takes a `Long`, but `BusyInterval` carries no event id. Extend `BusyInterval` in `calling/Appointment.kt` with `val eventId: Long? = null` and fill it in `BusyTimes` from `CalendarContract.Instances.EVENT_ID`; `AppointmentTest` keeps compiling because the parameter has a default. Do this first, in this task, and add a line to `CalendarStoreTest`:
-
-```kotlin
-        assertNotNull(belegt.first().eventId)
-```
+Note `onLink` takes a `Long`, but `BusyInterval` carries no event id. Extend `BusyInterval` in `calling/Appointment.kt` with `val eventId: Long? = null` and fill it in `BusyTimes` from `CalendarContract.Instances.EVENT_ID`; `AppointmentTest` keeps compiling because the parameter has a default. Do this first, in this task, and confirm by hand — alongside the Task 6 walkthrough — that a busy interval read from the calendar carries a non-null `eventId`. Without it, **Verknüpfen** has nothing to link to and the conflict dialog can only offer two of its three answers.
 
 - [ ] **Step 1: Extend `BusyInterval` and `BusyTimes`**
 
@@ -1882,10 +1749,10 @@ data class BusyInterval(
 
 In `calendar/BusyTimes.kt`, add `CalendarContract.Instances.EVENT_ID` to the projection and read it into `eventId`.
 
-- [ ] **Step 2: Run the calendar tests**
+- [ ] **Step 2: Run the appointment tests**
 
-Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.CalendarStoreTest" --tests "io.github.amadeusb.callsheet.AppointmentTest"`
-Expected: PASS.
+Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.AppointmentTest"`
+Expected: PASS — the added `eventId` has a default, so nothing there changes.
 
 - [ ] **Step 3: Write the sheet**
 
@@ -2266,8 +2133,7 @@ Install, open a business, set an appointment. Check: the busy blocks show their 
 git add app/src/main/java/io/github/amadeusb/callsheet/ui/AppointmentSheet.kt \
         app/src/main/java/io/github/amadeusb/callsheet/calling/Appointment.kt \
         app/src/main/java/io/github/amadeusb/callsheet/calendar/BusyTimes.kt \
-        app/src/main/java/io/github/amadeusb/callsheet/CallsheetViewModel.kt \
-        app/src/test/java/io/github/amadeusb/callsheet/CalendarStoreTest.kt
+        app/src/main/java/io/github/amadeusb/callsheet/CallsheetViewModel.kt
 git commit -m "Terminpicker: Zeitleiste, Dauer, Ort"
 ```
 
@@ -2874,7 +2740,7 @@ git commit -m "Doku: Termine und Kalender"
 - [ ] **Step 1: Run every test**
 
 Run: `./gradlew testDebugUnitTest`
-Expected: PASS, with `MigrationTest`, `AppointmentTest`, `PreferencesTest`, `CalendarStoreTest`, `RepositoryTest` and `ImporterTest` all reporting.
+Expected: PASS, with `MigrationTest`, `AppointmentTest`, `PreferencesTest`, `RepositoryTest` and `ImporterTest` all reporting. `calendar/` has no tests by design — Step 4 below is what covers it.
 
 - [ ] **Step 2: Build the release APK**
 

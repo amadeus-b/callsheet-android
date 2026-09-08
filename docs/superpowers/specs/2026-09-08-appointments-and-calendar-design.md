@@ -228,10 +228,17 @@ current from the read-back.
   60 on a fresh install.
 - Cancelling the sheet leaves status, appointment and calendar untouched.
 
-Tests run under Robolectric, as `RepositoryTest` already does. Overlap
-detection and the read-back decision are kept as pure functions in
-`BusyTimes.kt` so they can be tested without a provider at all — the split
-`ContactMergeTest` already relies on.
+Tests run under Robolectric, as `RepositoryTest` already does.
+
+Robolectric ships no shadow for `CalendarContract`, so the provider layer cannot
+be tested on the JVM at all — the same reason `PhoneBook.kt` has no test while
+the pure `ContactMerge` does. `calendar/` follows that precedent: it stays a thin
+wrapper that fails soft on everything and gets checked against a real calendar by
+hand.
+
+Everything that decides anything therefore lives in `Appointment.kt`, free of
+Android imports: the duration arithmetic, the overlap rule, and the read-back
+decision — unchanged, updated or gone. Those are the tests above.
 
 ## Out of scope
 
