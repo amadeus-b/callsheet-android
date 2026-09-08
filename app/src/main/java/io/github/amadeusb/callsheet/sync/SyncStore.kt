@@ -170,7 +170,13 @@ class SyncStore(context: Context) {
         } else {
             Rows.toValues(row, tableColumns).apply {
                 if (blocked) put("status", Merge.BLOCKED)
-                put("dirty", 0)
+                // If the incoming row itself does not carry the block, the app
+                // is the side forcing it back on — that decision must travel
+                // up on the next sync, or the server keeps the unblocked
+                // status forever and a restore onto a new phone loses the
+                // block entirely. The rule is inviolable, so this is not
+                // optional.
+                put("dirty", if (blocked && row.optString("status") != Merge.BLOCKED) 1 else 0)
             }
         }
 

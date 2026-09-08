@@ -124,6 +124,19 @@ class SyncStoreTest {
     }
 
     @Test
+    fun `a local do_not_call survives a newer incoming row without the block, and is marked for upload`() {
+        // The finding this covers: the app forced the block back on but wrote
+        // dirty = 0, so its own decision never travelled up — the server kept
+        // the unblocked status forever, and a restore onto a new phone would
+        // have lost the block.
+        einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 0)
+        schreibe("UPDATE businesses SET status = 'do_not_call' WHERE place_id = 'P1'")
+        store.apply(antwort(betriebJson("P1", null, "2026-09-08T10:00:00+02:00", status = "new")))
+        assertEquals("do_not_call", status("P1"))
+        assertEquals(1, store.pendingCount())
+    }
+
+    @Test
     fun `a remote tombstone removes the contact and its numbers`() {
         schreibe("INSERT INTO contacts (id, place_id, name, position, updated_at, dirty) VALUES ('K1', 'P1', 'Frau Meier', 0, '2026-09-07T10:00:00+02:00', 0)")
         schreibe("INSERT INTO contact_numbers (id, contact_id, number, kind, position, updated_at, dirty) VALUES ('N1', 'K1', '+4917612345', 'mobile', 0, '2026-09-07T10:00:00+02:00', 0)")
