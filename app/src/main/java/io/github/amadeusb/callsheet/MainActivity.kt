@@ -10,6 +10,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -51,6 +54,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun App(vm: CallsheetViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -93,6 +97,8 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
     }
 
     var appointmentDate by remember { mutableStateOf(false) }
+    var appointmentStart by remember { mutableStateOf(false) }
+    var appointmentEnd by remember { mutableStateOf(false) }
 
     if (appointmentDate) {
         val draft = state.appointmentDraft
@@ -122,6 +128,50 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                 TextButton(onClick = { appointmentDate = false }) { Text("Abbrechen") }
             },
         ) { DatePicker(state = pickerState) }
+    }
+
+    // Start and end share one dialog. The end is stored as a length, so picking
+    // it is picking a length — an end before the start would be a negative one,
+    // and is held at the fifteen minutes the picker snaps to everywhere else.
+    if (appointmentStart || appointmentEnd) {
+        val draft = state.appointmentDraft
+        val startMillis = Clock.millis(draft?.startIso)
+        val shown = if (appointmentEnd && startMillis != null) {
+            Clock.zdt(startMillis + (draft?.minutes ?: 0) * 60_000L)
+        } else if (startMillis != null) {
+            Clock.zdt(startMillis)
+        } else {
+            null
+        }
+        val timeState = rememberTimePickerState(
+            initialHour = shown?.hour ?: 9,
+            initialMinute = shown?.minute ?: 0,
+            is24Hour = true,
+        )
+        val closing = { appointmentStart = false; appointmentEnd = false }
+        AlertDialog(
+            onDismissRequest = closing,
+            title = { Text(if (appointmentEnd) "Ende" else "Beginn") },
+            text = { TimePicker(state = timeState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (draft != null && startMillis != null) {
+                        val day = Clock.zdt(startMillis).toLocalDate()
+                        val picked = day.atTime(timeState.hour, timeState.minute).atZone(Clock.zone)
+                        if (appointmentEnd) {
+                            val length = ((picked.toInstant().toEpochMilli() - startMillis) / 60_000L).toInt()
+                            vm.updateAppointmentDraft(draft.copy(minutes = length.coerceAtLeast(15)))
+                        } else {
+                            // Moving the start moves the appointment, it does not
+                            // stretch it: the length stays as it was.
+                            vm.updateAppointmentDraft(draft.copy(startIso = Clock.format(picked)))
+                        }
+                    }
+                    closing()
+                }) { Text("Übernehmen") }
+            },
+            dismissButton = { TextButton(onClick = closing) { Text("Abbrechen") } },
+        )
     }
 
     val filePicker = rememberLauncherForActivityResult(
@@ -239,6 +289,8 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                         onLink = { vm.saveAppointment(linkExisting = it) },
                         onForce = { vm.saveAppointment(force = true) },
                         onPickDate = { appointmentDate = true },
+                        onPickStart = { appointmentStart = true },
+                        onPickEnd = { appointmentEnd = true },
                         onDismiss = vm::dismissAppointment,
                     )
                 }

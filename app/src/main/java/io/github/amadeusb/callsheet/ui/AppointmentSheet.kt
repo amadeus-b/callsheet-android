@@ -3,6 +3,7 @@ package io.github.amadeusb.callsheet.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -55,8 +57,7 @@ private const val RUN_UP_HOURS = 1
 /** Nobody agrees an appointment at 14:07. */
 private const val SNAP_MINUTES = 15
 
-private val dayFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EE", Locale.GERMAN)
-private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.")
+private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EE dd.MM.", Locale.GERMAN)
 private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
 /**
@@ -81,6 +82,8 @@ fun AppointmentSheet(
     onLink: (Long) -> Unit,
     onForce: () -> Unit,
     onPickDate: () -> Unit,
+    onPickStart: () -> Unit,
+    onPickEnd: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -100,8 +103,13 @@ fun AppointmentSheet(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
 
-            SectionLabel("Tag")
-            DayRow(draft = draft, onDraft = onDraft, onPickDate = onPickDate)
+            SectionLabel("Datum und Zeit")
+            WhenRow(
+                draft = draft,
+                onPickDate = onPickDate,
+                onPickStart = onPickStart,
+                onPickEnd = onPickEnd,
+            )
 
             // The missing permission rides along in the label rather than in a
             // paragraph of its own: it still has to be said — an empty strip
@@ -171,41 +179,57 @@ private fun SectionLabel(text: String) {
 }
 
 /**
- * The next five days, starting with the one the draft is on. Picking a day keeps
- * the time of day — the hour is usually agreed before the date.
+ * Date, start and end on one line, each one a button into its own picker.
+ *
+ * A row of the coming days was quicker for "the day after tomorrow" and useless
+ * for anything else — a date three weeks out took the overflow button anyway,
+ * and the time of day could only be reached by dragging the block. Three fields
+ * cost one line and can express every appointment somebody agrees to on the
+ * phone, including next month at half past six.
  */
 @Composable
-private fun DayRow(
+private fun WhenRow(
     draft: AppointmentDraft,
-    onDraft: (AppointmentDraft) -> Unit,
     onPickDate: () -> Unit,
+    onPickStart: () -> Unit,
+    onPickEnd: () -> Unit,
 ) {
     val start = Clock.millis(draft.startIso) ?: return
     val from = Clock.zdt(start)
+    val until = Clock.zdt(start + draft.minutes * 60_000L)
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        (0..4).forEach { offset ->
-            val day = from.plusDays(offset.toLong())
-            FilterChip(
-                selected = offset == 0,
-                onClick = { onDraft(draft.copy(startIso = Clock.format(day))) },
-                label = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(day.format(dayFormat), style = MaterialTheme.typography.labelSmall)
-                        Text(day.format(dateFormat), style = MaterialTheme.typography.labelLarge)
-                    }
-                },
-                modifier = Modifier.weight(1f),
-            )
-        }
-        FilterChip(
-            selected = false,
+        WhenField(
+            value = from.format(dateFormat),
             onClick = onPickDate,
-            label = { Text("anderer", style = MaterialTheme.typography.labelSmall) },
+            modifier = Modifier.weight(1.5f),
+        )
+        WhenField(
+            value = from.format(timeFormat),
+            onClick = onPickStart,
             modifier = Modifier.weight(1f),
         )
+        Text("–", style = MaterialTheme.typography.bodyMedium)
+        WhenField(
+            value = until.format(timeFormat),
+            onClick = onPickEnd,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun WhenField(value: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier.heightIn(min = 48.dp),
+        shape = RoundedCornerShape(12.dp),
+        contentPadding = PaddingValues(horizontal = 8.dp),
+    ) {
+        Text(value, maxLines = 1)
     }
 }
 
