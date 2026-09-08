@@ -7,16 +7,17 @@
 #   tools/release.sh major     1.0.0 -> 2.0.0
 #   tools/release.sh 1.4.2     genau diese Version
 #
-# Das Skript bricht ab, bevor es etwas veröffentlicht, wenn Tests scheitern
-# oder das Arbeitsverzeichnis nicht sauber ist. Der versionCode steigt bei
-# jedem Release um eins — ohne das erkennt weder Android noch Obtainium ein
-# Update.
+# Das Skript bricht ab, bevor es etwas veröffentlicht, wenn Tests scheitern,
+# das Arbeitsverzeichnis nicht sauber ist oder der CHANGELOG-Abschnitt zur
+# neuen Version fehlt. Der versionCode steigt bei jedem Release um eins — ohne
+# das erkennt weder Android noch Obtainium ein Update.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 REPO_APK_NAME="callsheet"
 VERSION_FILE="version.properties"
+CHANGELOG="CHANGELOG.md"
 
 fail() { printf '\n\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[36m==> %s\033[0m\n' "$*"; }
@@ -50,7 +51,26 @@ TAG="v$NEW_VERSION"
 
 git rev-parse "$TAG" >/dev/null 2>&1 && fail "Tag $TAG existiert schon."
 
+# --- Release-Notes aus dem CHANGELOG ----------------------------------------
+
+# Der Abschnitt wird vor dem Release von Hand geschrieben und dient als Text
+# des GitHub-Releases. Ohne ihn erschiene dort nur ein nackter Versionssprung.
+[ -f "$CHANGELOG" ] || fail "$CHANGELOG fehlt."
+
+NOTES=$(awk -v version="$NEW_VERSION" '
+    $1 == "##" && $2 == version { inside = 1; next }
+    inside && $1 == "##" { exit }
+    inside { print }
+' "$CHANGELOG" | sed -e '/./,$!d')
+
+[ -n "$NOTES" ] || fail "In $CHANGELOG fehlt ein Abschnitt \"## $NEW_VERSION\". Erst aufschreiben, was sich geändert hat."
+
+NOTES_FILE=$(mktemp)
+trap 'rm -f "$NOTES_FILE"' EXIT
+printf '%s\n' "$NOTES" > "$NOTES_FILE"
+
 step "$CURRENT_VERSION ($CURRENT_CODE) → $NEW_VERSION ($NEW_CODE)"
+printf '\nRelease-Notes:\n%s\n' "$NOTES"
 
 # --- Tests --------------------------------------------------------------------
 
@@ -95,7 +115,7 @@ git push origin HEAD --tags
 step "GitHub-Release"
 gh release create "$TAG" "$APK" \
     --title "Callsheet $NEW_VERSION" \
-    --generate-notes
+    --notes-file "$NOTES_FILE"
 
 printf '\n\033[32mVeröffentlicht: %s\033[0m\n' "$TAG"
 printf 'Obtainium meldet die neue Version beim nächsten Prüflauf.\n'

@@ -69,6 +69,15 @@ because Android only accepts an update when the signature stays the same.
 The app reaches a device via `adb install -r <apk>`, or by copying the file over
 and opening it in a file manager.
 
+## Releasing
+
+`tools/release.sh patch|minor|major|x.y.z` raises the version, runs the tests,
+builds and signs the APK, tags the commit and publishes the GitHub release.
+
+Write the `CHANGELOG.md` section for the new version first and commit it. The
+script reads that section and uses it as the release notes; without it the
+release is refused, so a published version always says what changed in it.
+
 ## Language in the codebase
 
 Code, identifiers and comments are English. Three things stay German, and they
