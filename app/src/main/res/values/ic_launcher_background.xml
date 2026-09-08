@@ -1,1 +1,4 @@
-<resources><color name="ic_launcher_background">#1B4965</color></resources>
+<resources>
+    <!-- Same teal as the app theme's primary colour. -->
+    <color name="ic_launcher_background">#00504F</color>
+</resources>

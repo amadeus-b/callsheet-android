@@ -117,6 +117,12 @@ The app sends nothing. All data stays on the device. The imported business
 database contains personal data and belongs neither in this repository nor in the
 APK — it is loaded at runtime through the file picker.
 
+## Credits
+
+The launcher icon is adapted from
+[Material Symbols](https://github.com/google/material-design-icons) by Google,
+licensed under the Apache License 2.0. See [NOTICE](NOTICE).
+
 ## License
 
 [MIT](LICENSE) — © 2026 Callsheet contributors
