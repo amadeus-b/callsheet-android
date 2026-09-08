@@ -4,13 +4,40 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
-## 1.2.2
+## 1.3.0
 
 - **Date, start and end sit on one line in the appointment sheet**, each one a
   button into its own picker. The row of coming days it replaces was quick for
   the day after tomorrow and no use for anything else: a date three weeks out
   took the overflow button anyway, and the time of day could only be reached by
   dragging. Moving the start moves the appointment; it does not stretch it.
+- **The sheet uses the full height of the screen.** It was capped, which left the
+  day strip about two hours tall — a strip that short reads as an empty day
+  rather than as a strip. The note about a missing calendar permission moved
+  into the section heading, where it no longer costs three lines of the strip it
+  is talking about.
+- A proposed appointment time starts on a quarter hour, like every time the
+  picker produces when dragged.
+- **Every business with a number goes into the phone book**, not only the ones
+  already called or hand-entered. Research material is exactly the stock most
+  likely to ring first, and it used to come up as a bare number. Blocked
+  businesses stay out — they always should have, and the filter that has now
+  gone was the only thing keeping them out.
+- **The server connection is set up in a dialog that tries it.** Two fields with
+  a Save button looked the same whether the details were right or a digit was
+  wrong. Now the attempt happens on saving: it goes through, or it says which of
+  the two fields to fix. The section then shows the server and the last
+  exchange instead of the fields.
+- **The button to synchronise by hand is gone.** It happens every time the app
+  comes to the front, and a button for it was only ever pressed by somebody who
+  did not know that.
+- **Importing moved to the foot of the settings**, behind a note saying what an
+  import overwrites and what it never touches. It is a rare thing to do, and its
+  circular arrow in the title bar had come to look like "synchronise".
+- Appointments now reach the server: it gained the columns in a migration of its
+  own, and it takes the columns of a table from the schema instead of a list
+  kept beside it. A row that arrived before a new column existed gets that
+  column filled in on the next upload, rather than being skipped as "not newer".
 
 ## 1.2.1
 
