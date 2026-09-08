@@ -25,6 +25,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -84,6 +85,7 @@ fun SettingsScreen(
     var confirm by remember { mutableStateOf<Business?>(null) }
     var accountPicker by remember { mutableStateOf(false) }
     var confirmImport by remember { mutableStateOf(false) }
+    var repairOpen by remember { mutableStateOf(false) }
     var calendarPicker by remember { mutableStateOf(false) }
     var confirmReupload by remember { mutableStateOf(false) }
 
@@ -163,6 +165,28 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    if (syncState.running || syncState.connecting) {
+                        Spacer(Modifier.height(10.dp))
+                        val progress = syncState.uploadProgress
+                        if (progress == null) {
+                            // Nothing to upload — only fetching, and how much the
+                            // server holds is not known until it stops sending.
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        } else {
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "${syncState.uploadTotal - syncState.uploadRemaining} " +
+                                    "von ${syncState.uploadTotal} gesendet",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
                     (syncState.connectError ?: syncState.error)?.let { message ->
                         Spacer(Modifier.height(4.dp))
                         Text(
@@ -185,21 +209,39 @@ fun SettingsScreen(
                     // comes to the front. A button for it would only ever be
                     // pressed by somebody who does not know that.
 
-                    Spacer(Modifier.height(12.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    Spacer(Modifier.height(12.dp))
-
-                    OutlinedButton(
-                        onClick = { confirmReupload = true },
-                        enabled = !syncState.running && syncState.url.isNotBlank(),
-                    ) { Text("Alles erneut hochladen") }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Nötig nach dem Wiedereinspielen eines Server-Backups oder " +
-                            "beim Wechsel auf einen anderen Server.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    // Changes go up by themselves; this is a repair tool, not a
+                    // step. Out of the way, because the one case still left for
+                    // it is a restored server backup — a different server now
+                    // resets on its own when the address changes.
+                    if (syncState.url.isNotBlank()) {
+                        Spacer(Modifier.height(12.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        TextButton(
+                            onClick = { repairOpen = !repairOpen },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = if (repairOpen) "Wenn etwas nicht stimmt ▴"
+                                else "Wenn etwas nicht stimmt ▾",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        if (repairOpen) {
+                            Text(
+                                text = "Änderungen gehen von allein hoch, bei jedem Öffnen der " +
+                                    "App. Der Knopf hier ist nur für den Fall, dass auf dem " +
+                                    "Server ein älteres Backup eingespielt wurde — dann hält " +
+                                    "die App fälschlich alles für gesendet.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = { confirmReupload = true },
+                                enabled = !syncState.running,
+                            ) { Text("Alles erneut hochladen") }
+                        }
+                    }
                 }
             }
 

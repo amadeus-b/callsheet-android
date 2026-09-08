@@ -153,11 +153,25 @@ data class SyncUiState(
     val dialogOpen: Boolean = false,
     /** A connection attempt from that dialog is under way. */
     val connecting: Boolean = false,
+    /** Rows still waiting to go up, and how many were waiting at the start. */
+    val uploadRemaining: Int = 0,
+    val uploadTotal: Int = 0,
     /** Why the last attempt failed. Null once one has succeeded. */
     val connectError: String? = null,
 ) {
     /** A server is configured and the last exchange with it went through. */
     val connected: Boolean get() = url.isNotBlank() && connectError == null
+
+    /**
+     * How far the upload has come, or null while there is nothing to count.
+     *
+     * Null is not zero: it means the app cannot know the total — it is only
+     * fetching, and the server does not say in advance how much it holds. The
+     * interface shows an indeterminate bar for that, rather than a determinate
+     * one built on a number nobody has.
+     */
+    val uploadProgress: Float?
+        get() = if (uploadTotal > 0) (uploadTotal - uploadRemaining).toFloat() / uploadTotal else null
 }
 
 class CallsheetViewModel(application: Application) : AndroidViewModel(application) {
@@ -212,7 +226,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             _syncState.value = _syncState.value.copy(running = true)
-            val result = withContext(Dispatchers.IO) { syncEngine.sync(SyncClient(url, token)) }
+            val result = withContext(Dispatchers.IO) {
+                syncEngine.sync(SyncClient(url, token), ::reportUploadProgress)
+            }
             // NETWORK and RATE_LIMITED stay silent on an automatic run — both are
             // common and self-healing, and showing them here would make the
             // settings screen look broken most of the time; every other kind,
@@ -228,7 +244,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 else -> null
             }
-            _syncState.value = _syncState.value.copy(running = false, error = error)
+            _syncState.value = _syncState.value.copy(
+                running = false, error = error, uploadRemaining = 0, uploadTotal = 0,
+            )
             refreshSyncState()
             if (result is SyncResult.Ok) {
                 refreshList()
@@ -282,11 +300,13 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             if (addressChanged) withContext(Dispatchers.IO) { syncEngine.resetForFullResync() }
 
             val result = withContext(Dispatchers.IO) {
-                syncEngine.sync(SyncClient(preferences.serverUrl!!, token))
+                syncEngine.sync(SyncClient(preferences.serverUrl!!, token), ::reportUploadProgress)
             }
             val failure = (result as? SyncResult.Failed)?.message
             _syncState.value = _syncState.value.copy(
                 connecting = false,
+                uploadRemaining = 0,
+                uploadTotal = 0,
                 connectError = failure,
                 // Only a success closes it. A failure keeps the fields on the
                 // screen, next to the reason — that is where they get fixed.
@@ -344,6 +364,11 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             withContext(Dispatchers.IO) { syncEngine.resetForFullResync() }
             refreshSyncState()
         }
+    }
+
+    /** Called from the sync thread after every round. */
+    private fun reportUploadProgress(remaining: Int, total: Int) {
+        _syncState.value = _syncState.value.copy(uploadRemaining = remaining, uploadTotal = total)
     }
 
     private fun refreshSyncState() {

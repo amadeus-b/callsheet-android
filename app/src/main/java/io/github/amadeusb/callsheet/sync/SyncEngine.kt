@@ -61,12 +61,23 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
 
     private val running = AtomicBoolean(false)
 
-    fun sync(transport: Transport): SyncResult {
+    /**
+     * Runs one exchange with the server.
+     *
+     * [onProgress] is called with how many rows are still waiting to go up and
+     * how many were waiting when this run began — after every round, and once
+     * before the first. Both zero means there is nothing to upload and only the
+     * download is left, which has no total to count against: the server does not
+     * say how much it holds until it stops saying "more".
+     */
+    fun sync(transport: Transport, onProgress: (remaining: Int, total: Int) -> Unit = { _, _ -> }): SyncResult {
         if (prefs.serverUrl == null || prefs.serverToken == null) return SyncResult.Idle
         if (!running.compareAndSet(false, true)) return SyncResult.Idle
 
         try {
             var rounds = 0
+            val total = store.pendingCount()
+            onProgress(total, total)
             while (true) {
                 val outgoing = store.pending(BLOCK)
                 val payload = JSONObject(outgoing.toString()).put("since", prefs.watermark)
@@ -81,8 +92,11 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
                 val watermark = response.optInt("watermark", prefs.watermark)
                 if (watermark > prefs.watermark) prefs.watermark = watermark
 
+                val remaining = store.pendingCount()
+                onProgress(remaining, total)
+
                 val more = response.optBoolean("more", false) ||
-                    (sentCount(outgoing) >= BLOCK && store.pendingCount() > 0)
+                    (sentCount(outgoing) >= BLOCK && remaining > 0)
                 if (!more) {
                     prefs.lastSyncAt = Clock.now()
                     return SyncResult.Ok
