@@ -4,6 +4,7 @@ import androidx.test.core.app.ApplicationProvider
 import io.github.amadeusb.callsheet.calling.CallFlow
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.ContactDraft
+import io.github.amadeusb.callsheet.data.Database
 import io.github.amadeusb.callsheet.data.PhoneDraft
 import io.github.amadeusb.callsheet.data.PhoneType
 import io.github.amadeusb.callsheet.data.EntryKind
@@ -40,6 +41,7 @@ class RepositoryTest {
     fun aufbau() {
         val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
         ctx.deleteDatabase("callsheet.db")
+        Database.resetSharedInstanceForTesting()
         repo = Repository(ctx)
     }
 

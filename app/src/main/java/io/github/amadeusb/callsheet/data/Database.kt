@@ -124,6 +124,36 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         const val NAME = "callsheet.db"
         const val VERSION = 2
 
+        @Volatile
+        private var shared: Database? = null
+
+        /**
+         * One helper for the whole process. [Repository] and [io.github.amadeusb.callsheet.sync.SyncStore]
+         * both write to this file, and a sync can start right after a call is
+         * logged while the user is already editing the next business — two
+         * separate [SQLiteOpenHelper] instances would each open their own
+         * connection and contend on file locks instead of sharing the
+         * in-process lock a single connection gets for free.
+         */
+        fun instance(context: Context): Database =
+            shared ?: synchronized(this) {
+                shared ?: Database(context.applicationContext).also { shared = it }
+            }
+
+        /**
+         * Test-only escape hatch. A test that deletes the database file out
+         * from under a cached connection (`Context.deleteDatabase`, used to
+         * start each test from a clean slate) needs [instance] to open a
+         * fresh one afterwards rather than keep writing to the now-unlinked
+         * file the old connection still holds open.
+         */
+        internal fun resetSharedInstanceForTesting() {
+            synchronized(this) {
+                shared?.close()
+                shared = null
+            }
+        }
+
         /**
          * Contacts only ever come into being inside the app, never from an
          * import. `id` is a UUID and stays stable — it later doubles as the

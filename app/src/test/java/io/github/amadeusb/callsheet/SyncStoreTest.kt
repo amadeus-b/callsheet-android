@@ -26,6 +26,7 @@ class SyncStoreTest {
     fun aufbau() {
         ctx = ApplicationProvider.getApplicationContext()
         ctx.deleteDatabase("callsheet.db")
+        Database.resetSharedInstanceForTesting()
         store = SyncStore(ctx)
     }
 

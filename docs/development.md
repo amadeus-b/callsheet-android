@@ -174,6 +174,16 @@ in memory.
 SQLite only lower-cases ASCII on its own. Without the extra `search_text` column,
 searching for „müller" would not find „Müller".
 
+### One `Database` helper for the whole process
+
+`Repository` and `SyncStore` both write to the same file, and a sync can start
+right after a call is logged while the user is already editing the next
+business — a 500-row transaction and a user edit genuinely overlap in time.
+Two separate `SQLiteOpenHelper` instances would each open their own connection
+and contend on file locks instead of sharing the in-process lock a single
+connection gets for free. `Database.instance(context)` hands out one shared
+helper; neither class constructs `Database` directly.
+
 ## Open questions, answerable only on a device
 
 1. **The call log under GrapheneOS** — whether `CallLog.Calls` fills fast enough

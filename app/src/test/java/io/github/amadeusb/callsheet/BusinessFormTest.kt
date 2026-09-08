@@ -5,6 +5,7 @@ import io.github.amadeusb.callsheet.data.Filter
 import io.github.amadeusb.callsheet.data.ORIGIN_MANUAL
 import io.github.amadeusb.callsheet.data.MANUAL_PREFIX
 import io.github.amadeusb.callsheet.data.BusinessDraft
+import io.github.amadeusb.callsheet.data.Database
 import io.github.amadeusb.callsheet.data.Repository
 import io.github.amadeusb.callsheet.data.Status
 import kotlinx.coroutines.test.runTest
@@ -34,6 +35,7 @@ class BusinessFormTest {
     fun aufbau() {
         val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
         ctx.deleteDatabase("callsheet.db")
+        Database.resetSharedInstanceForTesting()
         repo = Repository(ctx)
     }
 

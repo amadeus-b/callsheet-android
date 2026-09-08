@@ -22,7 +22,7 @@ import java.io.InputStream
  */
 class Repository(context: Context) {
 
-    private val helper = Database(context.applicationContext)
+    private val helper = Database.instance(context)
 
     private val _changes = MutableStateFlow(0L)
 

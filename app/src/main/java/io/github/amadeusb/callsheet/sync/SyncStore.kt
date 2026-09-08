@@ -14,7 +14,7 @@ import org.json.JSONObject
  */
 class SyncStore(context: Context) {
 
-    private val helper = Database(context.applicationContext)
+    private val helper = Database.instance(context)
 
     /** Rows marked as changed, at most [limit] across all tables together. */
     fun pending(limit: Int): JSONObject {

@@ -31,6 +31,7 @@ class SyncEngineTest {
     fun aufbau() {
         ctx = ApplicationProvider.getApplicationContext()
         ctx.deleteDatabase("callsheet.db")
+        Database.resetSharedInstanceForTesting()
         prefs = Preferences(ctx)
         prefs.watermark = 0
         prefs.serverUrl = "https://beispiel.invalid"

@@ -29,6 +29,7 @@ class DirtyTest {
     fun aufbau() {
         ctx = ApplicationProvider.getApplicationContext()
         ctx.deleteDatabase("callsheet.db")
+        Database.resetSharedInstanceForTesting()
         repo = Repository(ctx)
     }
 
