@@ -4,6 +4,14 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.2.2
+
+- **Date, start and end sit on one line in the appointment sheet**, each one a
+  button into its own picker. The row of coming days it replaces was quick for
+  the day after tomorrow and no use for anything else: a date three weeks out
+  took the overflow button anyway, and the time of day could only be reached by
+  dragging. Moving the start moves the appointment; it does not stretch it.
+
 ## 1.2.1
 
 - The appointment sheet uses the full height of the screen. It was capped, which
