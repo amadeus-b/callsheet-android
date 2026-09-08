@@ -139,71 +139,67 @@ fun SettingsScreen(
             }
 
             item(key = "sync") {
-                Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Abgleich", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(8.dp))
-
-                        // A state, not two input fields. Fields that always look
-                        // the same, with a Save button that is always enabled,
-                        // say nothing about whether anything is connected.
-                        if (syncState.url.isBlank()) {
-                            Text(
-                                text = "Kein Server eingetragen — die App arbeitet nur auf diesem Gerät.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        } else {
-                            Text(
-                                text = syncState.url.removePrefix("https://"),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                text = "Zuletzt abgeglichen: ${Clock.readable(syncState.lastSyncAt)} · " +
-                                    "${syncState.pending} offen",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        (syncState.connectError ?: syncState.error)?.let { message ->
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = message,
-                                color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedButton(
-                            onClick = onOpenServerDialog,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            shape = RoundedCornerShape(14.dp),
-                        ) {
-                            Text(if (syncState.url.isBlank()) "Server verbinden" else "Verbindung ändern")
-                        }
-
-                        // No "sync now": it runs by itself every time the app
-                        // comes to the front. A button for it would only ever be
-                        // pressed by somebody who does not know that.
-
-                        Spacer(Modifier.height(12.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Spacer(Modifier.height(12.dp))
-
-                        OutlinedButton(
-                            onClick = { confirmReupload = true },
-                            enabled = !syncState.running && syncState.url.isNotBlank(),
-                        ) { Text("Alles erneut hochladen") }
-                        Spacer(Modifier.height(4.dp))
+                Section("Abgleich")
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    // A state, not two input fields. Fields that always look
+                    // the same, with a Save button that is always enabled,
+                    // say nothing about whether anything is connected.
+                    if (syncState.url.isBlank()) {
                         Text(
-                            text = "Nötig nach dem Wiedereinspielen eines Server-Backups oder " +
-                                "beim Wechsel auf einen anderen Server.",
+                            text = "Kein Server eingetragen — die App arbeitet nur auf diesem Gerät.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Text(
+                            text = syncState.url.removePrefix("https://"),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = "Zuletzt abgeglichen: ${Clock.readable(syncState.lastSyncAt)} · " +
+                                "${syncState.pending} offen",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    (syncState.connectError ?: syncState.error)?.let { message ->
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = onOpenServerDialog,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(14.dp),
+                    ) {
+                        Text(if (syncState.url.isBlank()) "Server verbinden" else "Verbindung ändern")
+                    }
+
+                    // No "sync now": it runs by itself every time the app
+                    // comes to the front. A button for it would only ever be
+                    // pressed by somebody who does not know that.
+
+                    Spacer(Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Spacer(Modifier.height(12.dp))
+
+                    OutlinedButton(
+                        onClick = { confirmReupload = true },
+                        enabled = !syncState.running && syncState.url.isNotBlank(),
+                    ) { Text("Alles erneut hochladen") }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Nötig nach dem Wiedereinspielen eines Server-Backups oder " +
+                            "beim Wechsel auf einen anderen Server.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 
@@ -551,7 +547,9 @@ private fun CalendarBlock(
                     text = "Ohne gewählten Kalender wird nichts geschrieben. Der " +
                         "Termin bleibt trotzdem in der App.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
+                    // A note, not a fault: nothing has gone wrong, and nothing is
+                    // lost. Red would say the opposite of both.
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
@@ -611,7 +609,7 @@ private fun PhoneBookBlock(
                 Text(
                     text = "Ohne gewähltes Adressbuch wird nichts geschrieben.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
             } else {
