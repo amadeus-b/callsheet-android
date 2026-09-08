@@ -75,6 +75,8 @@ closed          INTEGER         -- 0/1
 is_target       INTEGER         -- 0/1, computed on import
 origin          TEXT            -- JSON array as text
 collected_at    TEXT            -- ISO-8601
+latitude        REAL            -- from `location.lat`, nothing reads it yet
+longitude       REAL            -- from `location.lng`
 ```
 
 Working fields, **never overwritten by an import**:
@@ -83,6 +85,10 @@ Working fields, **never overwritten by an import**:
 status          TEXT NOT NULL DEFAULT 'new'
 note            TEXT
 follow_up_at    TEXT            -- ISO-8601 with a time, not just a date
+appointment_at       TEXT       -- the appointment on site, ISO-8601 with a time
+appointment_end_at   TEXT       -- its end; the two together give the duration
+appointment_location TEXT       -- one line, as it goes into the calendar event
+calendar_event_id    INTEGER    -- the linked event; local to this device
 updated_at      TEXT NOT NULL   -- ISO-8601
 dirty           INTEGER NOT NULL DEFAULT 0   -- 1 while a change is waiting to sync
 ```
@@ -177,6 +183,12 @@ it is compared as an instant in time, never as a string: two equivalent
 timestamps written with a different offset or format must resolve the same
 way.
 
+The appointment's time, end and location travel like every other working field.
+`calendar_event_id` does not: it names an entry in *this* device's calendar
+provider, and the same number on another device would be a different appointment
+or none at all. A second device therefore learns when and where the appointment
+is, and links it to its own calendar the next time it is saved there.
+
 A device upgrading from before `dirty` existed marks its entire pre-existing
 stock as unsent as part of that migration — the column's own default of 0
 would otherwise tell the sync engine there was nothing to upload. The same
@@ -201,6 +213,24 @@ speaks **no** CardDAV and needs no credentials.
 - People newly created in the phone book are **not** pulled in — they have no
   link to a business.
 
+## Calendar
+
+So that an appointment on site is where the rest of the day is, the app writes
+it into the device's calendar — through the Android calendar API, into the
+calendar chosen in the settings. When that is a CalDAV calendar managed by
+DAVx5, the appointment reaches the server the same way; the app itself speaks
+**no** CalDAV and needs no credentials.
+
+- The app recognises its own appointment by the event id it stores on the
+  business. Other people's appointments are never touched — an appointment that
+  already exists can be *linked*, which records that the two are the same thing
+  and leaves the entry exactly as it was.
+- Writing happens when an appointment is saved or changed.
+- The other direction: opening a record reads the event back. Moved or
+  relocated, the calendar wins. Deleted, the appointment is cleared and the
+  status falls back to `called` — but only if it was still `appointment`.
+- Busy times for the picker are read from every visible calendar, and only read.
+
 ## Import
 
 Importing goes through the Android file picker (Storage Access Framework), so no
@@ -209,8 +239,9 @@ without a new build.
 
 1. Matching happens on `place_id`.
 2. New businesses are created with `status = 'new'`.
-3. Known businesses: **master data only.** Status, note, follow-up and call
-   history stay untouched. A fresh export must never overwrite the work.
+3. Known businesses: **master data only.** Status, note, follow-up, the
+   appointment and its calendar link, and the call history stay untouched. A
+   fresh export must never overwrite the work.
 4. Phone numbers are normalised: `phoneUnformatted` preferred, brought to E.164
    (`+49…`). No number → `is_target = 0`.
 5. A summary follows: how many new, how many updated, how many without a phone.

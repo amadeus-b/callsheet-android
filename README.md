@@ -21,7 +21,10 @@ The user interface is German; the code and documentation are English.
 - **Dials at a tap** via `ACTION_DIAL` — the app never places a call itself
 - **Call duration** read automatically from the Android call log
 - **Status, note and follow-up** in one go after hanging up
-- **"Today"** with follow-ups that are due *and* overdue
+- **Appointment on site** with a time, a length and an address, mirrored into
+  the device's calendar
+- **"Today"** with the day's appointments above follow-ups that are due *and*
+  overdue
 - **Contacts** per business, merged with the device's phone book
 - **Hand-entered businesses**, for the referral that arrives over the phone
 - **Do-not-call** enforced as a hard exclusion in the database query, not a filter
@@ -58,6 +61,10 @@ On first start the app asks for access to the **call log**. That is how it reads
 the duration after you hang up. Refuse it and everything still works — the status
 is then set by hand.
 
+Calendar access is asked for only when you switch appointments on in the
+settings. Refuse it, or leave it off, and appointments still work — they simply
+stay in the app, and the picker says it cannot show you which hours are taken.
+
 How the data gets in and what the daily flow looks like is covered in the
 [usage guide](docs/usage.md).
 
@@ -67,6 +74,7 @@ How the data gets in and what the daily flow looks like is covered in the
 |---|---|
 | `READ_CALL_LOG` | call duration after hanging up; optional, the app runs without it |
 | `READ_CONTACTS`, `WRITE_CONTACTS` | writing contacts into the phone book; optional |
+| `READ_CALENDAR`, `WRITE_CALENDAR` | mirroring appointments into the device calendar; optional |
 | `INTERNET` | used for synchronisation when a server is configured |
 
 That is the complete list from the manifest. Dialling goes through `ACTION_DIAL`,
@@ -90,7 +98,7 @@ trying it out, not for published releases.
 
 | Document | Contents |
 |---|---|
-| [Usage](docs/usage.md) | import, daily flow, blocking, follow-ups |
+| [Usage](docs/usage.md) | import, daily flow, blocking, follow-ups, appointments |
 | [Architecture](docs/architecture.md) | screens, call flow, technical decisions |
 | [Data model](docs/data-model.md) | import format, tables, phone book merge |
 | [Development](docs/development.md) | toolchain, tests, known pitfalls |

@@ -52,6 +52,45 @@ missed call-backs should not disappear silently.
 In the detail view a follow-up can be set through the quick choices („in 2
 Tagen", „nächste Woche", „nächster Monat") or by picking a date and time.
 
+## Appointments on site
+
+When a call ends in a visit, the detail view's **Termin vor Ort** section is
+where it goes. „Termin anlegen" opens a sheet over the record, so the business
+stays readable while the conversation is still running.
+
+The sheet shows the day as a strip from midnight to midnight, opened around the
+time being set. Everything already in your calendars is drawn in with its title,
+so a slot that is taken is visible rather than discovered later. Drag the block
+to move it, drag the handle at its bottom edge to change its length; both snap
+to quarter hours. The chips underneath set 30, 60, 90 or 120 minutes in one tap,
+and whichever length you save is what the next appointment starts at.
+
+The location is prefilled from the business's address and can be overwritten —
+useful when the meeting is at a site rather than the office. It is what the
+calendar entry carries, so it is what the navigation reads.
+
+**When the slot is already taken** the app says what is there and asks, instead
+of writing a second entry on top:
+
+- **Verknüpfen** — this is that appointment. The existing entry is left exactly
+  as it is, and the business is linked to it; its time and place win.
+- **Trotzdem anlegen** — two things at once, deliberately.
+- **Andere Zeit** — back to the strip.
+
+Saving writes the appointment, sets the status to „Termin", and — if the
+calendar is switched on in the settings — puts an entry in the chosen calendar.
+Without a calendar, or without the permission, the appointment still lives in
+the app; the strip then says so rather than pretending the day is free.
+
+**Moving it in the calendar is enough.** Shift the entry on a laptop or in the
+car, and the app takes the new time over the next time the record is opened,
+without asking. Delete it there and the appointment is cleared, the status
+falling back to „Angerufen" — that one is said out loud, because it is the only
+case that needs to be noticed.
+
+Tapping the address, in the appointment or in the master data, hands it to a map
+application.
+
 ## Entering a single business by hand
 
 The **Betrieb** button at the bottom right of the work list opens an entry form —

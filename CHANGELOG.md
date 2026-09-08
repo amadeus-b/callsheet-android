@@ -4,6 +4,32 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.2.0
+
+- **Appointment on site.** A visit now has a time, a length and an address of
+  its own, instead of living in a status flag that said „Termin" and nothing
+  more. Set in the detail view through a sheet that shows the day as a strip:
+  what is already in your calendars is drawn in with its titles, so a slot that
+  is taken is visible before it is booked over.
+- The appointment can be **mirrored into the device's calendar** — into the
+  calendar chosen in the settings, typically one DAVx5 keeps in sync. Off until
+  switched on; without it, or without the permission, the appointment still
+  lives in the app.
+- **The calendar wins.** Move the entry on a laptop and the app takes the new
+  time over the next time the record is opened. Delete it there and the
+  appointment is cleared, with the status falling back to „Angerufen".
+- **An appointment that already exists can be linked** rather than duplicated.
+  The existing entry is left exactly as it was; the app only records that the
+  two are the same thing.
+- **"Heute"** shows the day's appointments above the follow-ups.
+- **The address opens a map application**, in the appointment and in the master
+  data.
+- Appointments synchronise with the server like every other working field. The
+  link to the calendar entry does not — it names an event on one device.
+- Coordinates from the import file are stored. Nothing reads them yet.
+- The database moves to version 3. Existing data is carried over, from 1.0.2 and
+  from 1.1.0 alike.
+
 ## 1.1.0
 
 - **Synchronisation with your own server.** The app can now keep its work in
