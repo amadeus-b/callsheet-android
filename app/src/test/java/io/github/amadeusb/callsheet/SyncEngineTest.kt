@@ -108,19 +108,19 @@ class SyncEngineTest {
 
     @Test
     fun `a run already in flight blocks a second one and stays untouched`() {
-        var aufrufe = 0
-        lateinit var verschachteltesErgebnis: SyncResult
-        val ergebnis = engine.sync(object : Transport {
+        var calls = 0
+        lateinit var nestedResult: SyncResult
+        val result = engine.sync(object : Transport {
             override fun post(payload: JSONObject): JSONObject {
-                aufrufe++
+                calls++
                 // Called from inside the request that is already running.
-                verschachteltesErgebnis = engine.sync(this)
+                nestedResult = engine.sync(this)
                 return leereAntwort(5)
             }
         })
-        assertEquals(SyncResult.Idle, verschachteltesErgebnis)
-        assertEquals(1, aufrufe)
-        assertEquals(SyncResult.Ok, ergebnis)
+        assertEquals(SyncResult.Idle, nestedResult)
+        assertEquals(1, calls)
+        assertEquals(SyncResult.Ok, result)
         assertEquals(5, prefs.watermark)
     }
 
@@ -129,36 +129,79 @@ class SyncEngineTest {
         engine.sync(object : Transport {
             override fun post(payload: JSONObject): JSONObject = throw java.io.IOException("kein Netz")
         })
-        val ergebnis = engine.sync(object : Transport {
+        val result = engine.sync(object : Transport {
             override fun post(payload: JSONObject) = leereAntwort(9)
         })
-        assertEquals(SyncResult.Ok, ergebnis)
+        assertEquals(SyncResult.Ok, result)
         assertEquals(9, prefs.watermark)
     }
 
     @Test
     fun `429 is its own failure kind and stops the run before the next block`() {
-        var aufrufe = 0
-        val ergebnis = engine.sync(object : Transport {
+        var calls = 0
+        val result = engine.sync(object : Transport {
             override fun post(payload: JSONObject): JSONObject {
-                aufrufe++
+                calls++
                 throw HttpFailure(FailureKind.RATE_LIMITED, "Bitte warten.")
             }
         })
-        assertTrue(ergebnis is SyncResult.Failed && (ergebnis as SyncResult.Failed).kind == FailureKind.RATE_LIMITED)
-        assertEquals(1, aufrufe)
+        assertTrue(result is SyncResult.Failed && (result as SyncResult.Failed).kind == FailureKind.RATE_LIMITED)
+        assertEquals(1, calls)
     }
 
     @Test
     fun `413 ends the run as a visible failure instead of looping`() {
-        var aufrufe = 0
-        val ergebnis = engine.sync(object : Transport {
+        var calls = 0
+        val result = engine.sync(object : Transport {
             override fun post(payload: JSONObject): JSONObject {
-                aufrufe++
+                calls++
                 throw HttpFailure(FailureKind.TOO_LARGE, "Zu groß.")
             }
         })
-        assertTrue(ergebnis is SyncResult.Failed && (ergebnis as SyncResult.Failed).kind == FailureKind.TOO_LARGE)
-        assertEquals(1, aufrufe)
+        assertTrue(result is SyncResult.Failed && (result as SyncResult.Failed).kind == FailureKind.TOO_LARGE)
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun `a response that is not JSON becomes a visible failure, not a crash`() {
+        betrieb("P1")
+        val result = engine.sync(object : Transport {
+            override fun post(payload: JSONObject): JSONObject =
+                throw HttpFailure(FailureKind.BAD_RESPONSE, "Die Antwort des Servers ließ sich nicht lesen.")
+        })
+        assertTrue(result is SyncResult.Failed && (result as SyncResult.Failed).kind == FailureKind.BAD_RESPONSE)
+        assertEquals(0, prefs.watermark)
+        assertEquals(1, SyncStore(ctx).pendingCount())
+    }
+
+    @Test
+    fun `a JSON field that is not the expected object becomes a visible failure, not a crash`() {
+        betrieb("P1")
+        val result = engine.sync(object : Transport {
+            override fun post(payload: JSONObject) = leereAntwort(17).apply {
+                // A row that should be a JSON object but is a plain string —
+                // the shape a malformed or half-broken server might send.
+                put("businesses", JSONArray().put("not an object"))
+            }
+        })
+        assertTrue(result is SyncResult.Failed && (result as SyncResult.Failed).kind == FailureKind.BAD_RESPONSE)
+        assertEquals(0, prefs.watermark)
+        assertEquals(1, SyncStore(ctx).pendingCount())
+    }
+
+    @Test
+    fun `hitting the round limit while work remains reports Incomplete, not Ok`() {
+        prefs.lastSyncAt = "vorher"
+        var calls = 0
+        val result = engine.sync(object : Transport {
+            override fun post(payload: JSONObject): JSONObject {
+                calls++
+                return leereAntwort(calls, weitere = true)
+            }
+        })
+        assertEquals(SyncResult.Incomplete, result)
+        assertEquals(250, calls)
+        assertEquals(250, prefs.watermark)
+        assertEquals("vorher", prefs.lastSyncAt)
     }
 }

@@ -1,5 +1,6 @@
 package io.github.amadeusb.callsheet.sync
 
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -9,8 +10,10 @@ import java.net.URL
  * What went wrong. AUTH and NOT_FOUND are misconfiguration and worth showing
  * to the user directly. RATE_LIMITED and TOO_LARGE are their own kinds
  * because the engine reacts to them differently — see [SyncEngine].
+ * BAD_RESPONSE covers a 200 whose body a broken server or an intercepting
+ * proxy made unreadable as the JSON the contract promises.
  */
-enum class FailureKind { NETWORK, AUTH, NOT_FOUND, RATE_LIMITED, TOO_LARGE, SERVER }
+enum class FailureKind { NETWORK, AUTH, NOT_FOUND, RATE_LIMITED, TOO_LARGE, BAD_RESPONSE, SERVER }
 
 class HttpFailure(val kind: FailureKind, message: String) : IOException(message)
 
@@ -40,7 +43,15 @@ class SyncClient(private val url: String, private val token: String) : Transport
                 429 -> throw HttpFailure(FailureKind.RATE_LIMITED, "Der Server bittet um eine Pause.")
                 else -> throw HttpFailure(FailureKind.SERVER, "Der Server meldet Fehler $code.")
             }
-            return JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+            val body = connection.inputStream.bufferedReader().use { it.readText() }
+            // A 200 with a body that is not the promised JSON — a broken
+            // server or a proxy's error page — must become a visible
+            // failure, not an uncaught org.json.JSONException.
+            return try {
+                JSONObject(body)
+            } catch (malformed: JSONException) {
+                throw HttpFailure(FailureKind.BAD_RESPONSE, "Die Antwort des Servers ließ sich nicht lesen.")
+            }
         } finally {
             connection.disconnect()
         }

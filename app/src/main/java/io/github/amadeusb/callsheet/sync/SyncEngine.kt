@@ -2,6 +2,7 @@ package io.github.amadeusb.callsheet.sync
 
 import io.github.amadeusb.callsheet.contacts.Preferences
 import io.github.amadeusb.callsheet.data.Clock
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -12,6 +13,14 @@ sealed class SyncResult {
 
     /** No server configured, or a sync is already running — the app runs as it always did. */
     object Idle : SyncResult()
+
+    /**
+     * Stopped at the round limit while rows were still marked. Everything
+     * that did go through is real — the watermark and the cleared marks
+     * stand — but the caller must not treat this as a completed sync: no
+     * new `lastSyncAt` is set.
+     */
+    object Incomplete : SyncResult()
 
     data class Failed(val kind: FailureKind, val message: String) : SyncResult()
 }
@@ -37,7 +46,7 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
         if (!running.compareAndSet(false, true)) return SyncResult.Idle
 
         try {
-            var runden = 0
+            var rounds = 0
             while (true) {
                 val outgoing = store.pending(BLOCK)
                 val payload = JSONObject(outgoing.toString()).put("seit", prefs.watermark)
@@ -46,17 +55,28 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
 
                 store.apply(response)
                 store.clearPending(outgoing)
-                prefs.watermark = response.optInt("stand", prefs.watermark)
+                // The watermark only ever moves forward. A stale or
+                // misbehaving server sending a lower value must not put the
+                // client behind where it already stood.
+                val stand = response.optInt("stand", prefs.watermark)
+                if (stand > prefs.watermark) prefs.watermark = stand
 
                 val more = response.optBoolean("weitere", false) || store.pendingCount() > 0
-                if (!more) break
-                if (++runden >= MAX_RUNDEN) break
+                if (!more) {
+                    prefs.lastSyncAt = Clock.now()
+                    return SyncResult.Ok
+                }
+                if (++rounds >= MAX_ROUNDS) return SyncResult.Incomplete
             }
-            prefs.lastSyncAt = Clock.now()
-            return SyncResult.Ok
-        } catch (fehler: HttpFailure) {
-            return SyncResult.Failed(fehler.kind, fehler.message ?: "Abgleich gescheitert.")
-        } catch (fehler: IOException) {
+        } catch (failure: HttpFailure) {
+            return SyncResult.Failed(failure.kind, failure.message ?: "Abgleich gescheitert.")
+        } catch (malformed: JSONException) {
+            // A response that parsed as JSON but not into the shape the
+            // contract promises — e.g. a field that should be an object
+            // turns out to be something else. Same treatment as a body that
+            // was not JSON at all: a visible failure, not a crash.
+            return SyncResult.Failed(FailureKind.BAD_RESPONSE, "Die Antwort des Servers ließ sich nicht lesen.")
+        } catch (failure: IOException) {
             return SyncResult.Failed(FailureKind.NETWORK, "Kein Netz.")
         } finally {
             running.set(false)
@@ -67,6 +87,6 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
         const val BLOCK = 500
 
         /** A stop against a server that keeps saying „more" — 250 blocks are 125 000 rows. */
-        const val MAX_RUNDEN = 250
+        const val MAX_ROUNDS = 250
     }
 }
