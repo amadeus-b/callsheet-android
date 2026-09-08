@@ -40,6 +40,7 @@ object Importer {
         val closed = o.bool("permanentlyClosed") || o.bool("temporarilyClosed")
 
         val isTarget = TargetRule.isTarget(industry, phone, closed)
+        val location = if (o.has("location") && !o.isNull("location")) o.optJSONObject("location") else null
 
         return ImportedBusiness(
             placeId = placeId,
@@ -59,6 +60,8 @@ object Importer {
             isTarget = isTarget,
             origin = o.texts("herkunft"),
             collectedAt = o.text("erhobenAm") ?: Clock.now(),
+            latitude = location?.decimal("lat"),
+            longitude = location?.decimal("lng"),
         )
     }
 

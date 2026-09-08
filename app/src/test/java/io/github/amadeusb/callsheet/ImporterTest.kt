@@ -237,4 +237,25 @@ class ImporterTest {
         ]
         """
     }
+
+    @Test
+    fun `coordinates are read from location`() {
+        val json = """
+            [{"placeId":"k-1","title":"Gartenbau Merten",
+              "location":{"lat":48.8059466,"lng":11.4058554}}]
+        """.trimIndent()
+
+        val business = Importer.read(json).single()
+
+        assertEquals(48.8059466, business.latitude!!, 0.0000001)
+        assertEquals(11.4058554, business.longitude!!, 0.0000001)
+    }
+
+    @Test
+    fun `a missing location field yields no coordinates`() {
+        val business = Importer.read("""[{"placeId":"k-2","title":"Ohne Ort"}]""").single()
+
+        assertNull(business.latitude)
+        assertNull(business.longitude)
+    }
 }

@@ -115,6 +115,8 @@ class Repository(context: Context) {
         put("street", s.street)
         put("postal_code", s.postalCode)
         put("city", s.city)
+        put("latitude", s.latitude)
+        put("longitude", s.longitude)
         put("phone", s.phone)
         put("website", s.website)
         put("email", s.email)
