@@ -153,6 +153,72 @@ class SyncStoreTest {
     }
 
     @Test
+    fun `a number is suppressed when its parent contact was deleted before the number was last touched`() {
+        // Fix-Runde 1, Befund 1: the number's own row has no tombstone, but
+        // its parent contact does — and the number is older than that
+        // tombstone. The server checks the parent's tombstone in
+        // `empfangeKontakt`; the app must do the same.
+        schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K1', '2026-09-07T11:00:00+02:00')")
+        val remoteNumber = JSONObject().apply {
+            put("id", "N1"); put("contact_id", "K1"); put("number", "+4917612345")
+            put("kind", "mobile"); put("position", 0); put("updated_at", "2026-09-07T10:00:00+02:00")
+        }
+        store.apply(antwort().apply { put("contact_numbers", JSONArray(listOf(remoteNumber))) })
+        assertEquals(0, zahl("SELECT COUNT(*) FROM contact_numbers WHERE id = 'N1'"))
+    }
+
+    @Test
+    fun `a number newer than its parent's tombstone is written anyway`() {
+        // The number was created after the contact was deleted — it did not
+        // exist yet when the deletion happened, so it must survive.
+        schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K1', '2026-09-07T11:00:00+02:00')")
+        val remoteNumber = JSONObject().apply {
+            put("id", "N1"); put("contact_id", "K1"); put("number", "+4917612345")
+            put("kind", "mobile"); put("position", 0); put("updated_at", "2026-09-07T12:00:00+02:00")
+        }
+        store.apply(antwort().apply { put("contact_numbers", JSONArray(listOf(remoteNumber))) })
+        assertEquals(1, zahl("SELECT COUNT(*) FROM contact_numbers WHERE id = 'N1'"))
+    }
+
+    @Test
+    fun `a local tombstone beats an older incoming contact row`() {
+        // Fix-Runde 1, Befund 2: the row-vs-tombstone direction, tested from
+        // the row side instead of the tombstone side.
+        schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K1', '2026-09-07T11:00:00+02:00')")
+        val remoteContact = JSONObject().apply {
+            put("id", "K1"); put("place_id", "P1"); put("name", "Frau Meier")
+            put("position", 0); put("updated_at", "2026-09-07T10:00:00+02:00")
+        }
+        store.apply(antwort().apply { put("contacts", JSONArray(listOf(remoteContact))) })
+        assertEquals(0, zahl("SELECT COUNT(*) FROM contacts WHERE id = 'K1'"))
+    }
+
+    @Test
+    fun `an incoming contact row newer than a local tombstone wins`() {
+        schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K1', '2026-09-07T11:00:00+02:00')")
+        val remoteContact = JSONObject().apply {
+            put("id", "K1"); put("place_id", "P1"); put("name", "Frau Meier")
+            put("position", 0); put("updated_at", "2026-09-07T12:00:00+02:00")
+        }
+        store.apply(antwort().apply { put("contacts", JSONArray(listOf(remoteContact))) })
+        assertEquals(1, zahl("SELECT COUNT(*) FROM contacts WHERE id = 'K1'"))
+    }
+
+    @Test
+    fun `clearPending leaves a tombstone rewritten while the request was in flight marked`() {
+        // Fix-Runde 1, Befund 3: same optimistic-lock guard the row loop got,
+        // applied to the deletions loop.
+        schreibe("INSERT INTO contacts (id, place_id, name, position, updated_at, dirty) VALUES ('K1', 'P1', 'Frau Meier', 0, '2026-09-07T09:00:00+02:00', 0)")
+        schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K1', '2026-09-07T10:00:00+02:00')")
+        val block = store.pending(500)
+        // The contact is deleted again (re-tombstoned) after the block was read.
+        schreibe("DELETE FROM deletions WHERE table_name = 'contacts' AND row_id = 'K1'")
+        schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K1', '2026-09-07T10:05:00+02:00')")
+        store.clearPending(block)
+        assertEquals(1, zahl("SELECT COUNT(*) FROM deletions WHERE table_name = 'contacts' AND row_id = 'K1'"))
+    }
+
+    @Test
     fun `a tombstone for a table outside the allowlist is skipped silently`() {
         // Correction A: businesses has no id column, and the app never
         // deletes businesses or calls — a tombstone naming either must not

@@ -84,9 +84,12 @@ class SyncStore(context: Context) {
             val deletions = payload.optJSONArray("geloescht") ?: JSONArray()
             for (i in 0 until deletions.length()) {
                 val stone = deletions.getJSONObject(i)
+                // Same guard as for rows: only clear a tombstone that is still
+                // exactly the one that was sent. One freshly (re-)written while
+                // the request was in flight — `deleted_at` moved on — stays.
                 db.delete(
-                    "deletions", "table_name = ? AND row_id = ?",
-                    arrayOf(stone.getString("table_name"), stone.getString("row_id")),
+                    "deletions", "table_name = ? AND row_id = ? AND deleted_at = ?",
+                    arrayOf(stone.getString("table_name"), stone.getString("row_id"), stone.getString("deleted_at")),
                 )
             }
             db.setTransactionSuccessful()
@@ -98,13 +101,16 @@ class SyncStore(context: Context) {
     /** Applies what the server sent. Never marks anything as dirty. */
     fun apply(response: JSONObject) {
         val db = helper.writableDatabase
+        // Fetched once per call rather than once per row — the schema does
+        // not change mid-sync, and a first sync can carry a few thousand rows.
+        val columnsByTable = Rows.TABLES.associateWith { columns(db, it) }
         db.beginTransaction()
         try {
             val deletions = response.optJSONArray("geloescht") ?: JSONArray()
             for (i in 0 until deletions.length()) applyTombstone(db, deletions.getJSONObject(i))
             for (table in Rows.TABLES) {
                 val rows = response.optJSONArray(table) ?: continue
-                for (i in 0 until rows.length()) applyRow(db, table, rows.getJSONObject(i))
+                for (i in 0 until rows.length()) applyRow(db, table, rows.getJSONObject(i), columnsByTable.getValue(table))
             }
             db.setTransactionSuccessful()
         } finally {
@@ -119,13 +125,22 @@ class SyncStore(context: Context) {
             names
         }
 
-    private fun applyRow(db: SQLiteDatabase, table: String, row: JSONObject) {
+    private fun applyRow(db: SQLiteDatabase, table: String, row: JSONObject, tableColumns: Set<String>) {
         val key = Rows.key(table)
         val id = row.getString(key)
         val remoteAt = row.optString("updated_at", null)
 
         val stone = tombstone(db, table, id)
         if (stone != null && !Merge.isNewer(remoteAt, stone)) return
+
+        // A number's own row may still be untouched while its contact was
+        // deleted: the tombstone lives on the parent, not on the number. The
+        // server applies the same check in `empfangeKontakt`.
+        if (table == "contact_numbers") {
+            val contactId = row.optString("contact_id", null)
+            val parentStone = if (contactId != null) tombstone(db, "contacts", contactId) else null
+            if (parentStone != null && !Merge.isNewer(remoteAt, parentStone)) return
+        }
 
         val local = db.rawQuery("SELECT * FROM $table WHERE $key = ?", arrayOf(id)).use { c ->
             if (c.moveToFirst()) Rows.toJson(c) else null
@@ -153,7 +168,7 @@ class SyncStore(context: Context) {
                 put("dirty", 0)
             }
         } else {
-            Rows.toValues(row, columns(db, table)).apply {
+            Rows.toValues(row, tableColumns).apply {
                 if (blocked) put("status", Merge.BLOCKED)
                 put("dirty", 0)
             }
