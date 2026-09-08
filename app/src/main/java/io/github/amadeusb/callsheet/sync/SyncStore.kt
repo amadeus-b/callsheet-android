@@ -124,6 +124,13 @@ class SyncStore(context: Context) {
             val deletions = payload.optJSONArray("geloescht") ?: JSONArray()
             for (i in 0 until deletions.length()) {
                 val stone = deletions.getJSONObject(i)
+                // The server names a rejected tombstone the same way it names
+                // a rejected row: the table and key of the affected row (here
+                // `table_name`/`row_id` rather than `tabelle`/`schluessel`,
+                // but the same pair). Same reasoning as above: skip it, or the
+                // deletion disappears from the outgoing queue without ever
+                // having reached the server.
+                if (stone.getString("table_name") to stone.getString("row_id") in rejected) continue
                 // Same guard as for rows: only clear a tombstone that is still
                 // exactly the one that was sent. One freshly (re-)written while
                 // the request was in flight — `deleted_at` moved on — stays.

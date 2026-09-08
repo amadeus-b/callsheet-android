@@ -45,9 +45,17 @@ sealed class SyncResult {
  * quietly hammering the server on every automatic run. The loop instead only
  * continues on a full block: if the last block sent held fewer rows than
  * [BLOCK], every currently dirty row was already offered this round, so
- * nothing would be gained by asking again before the next sync. A rejected
- * row stays marked — and so counted as open — without being retried within
- * the same run.
+ * nothing would be gained by asking again before the next sync.
+ *
+ * That bounds the retries by the number of blocks a run takes, not by
+ * [MAX_ROUNDS] — but it does not confine a rejected row to being tried only
+ * once per run. [SyncStore.pending] has no ordering, so a row rejected in an
+ * earlier block of the same run can be selected into a later one and sent
+ * again before the run ends; a row that goes through on that second attempt
+ * is exactly what should happen. What the loop does guarantee: a rejected
+ * row stays marked, is never silently dropped, and — should it keep failing
+ * — is retried only as many times as there are blocks, never spun on its own
+ * up to the round limit.
  */
 class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
 

@@ -266,6 +266,17 @@ class SyncStoreTest {
     }
 
     @Test
+    fun `a tombstone the server names in abgewiesen stays in the outgoing queue, the other is cleared`() {
+        schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K1', '2026-09-07T10:00:00+02:00')")
+        schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K2', '2026-09-07T10:00:00+02:00')")
+        val block = store.pending(500)
+        store.clearPending(block, leereAntwort("contacts" to "K1"))
+        assertEquals(1, zahl("SELECT COUNT(*) FROM deletions WHERE table_name = 'contacts' AND row_id = 'K1'"))
+        assertEquals(0, zahl("SELECT COUNT(*) FROM deletions WHERE table_name = 'contacts' AND row_id = 'K2'"))
+        assertEquals(1, store.pendingCount())
+    }
+
+    @Test
     fun `a tombstone for a table outside the allowlist is skipped silently`() {
         // Correction A: businesses has no id column, and the app never
         // deletes businesses or calls — a tombstone naming either must not
