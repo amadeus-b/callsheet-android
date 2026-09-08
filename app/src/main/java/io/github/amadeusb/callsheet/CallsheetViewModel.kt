@@ -363,7 +363,15 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             val now = System.currentTimeMillis()
             val due = repo.due(Clock.todayStart(now) + 24L * 60 * 60 * 1000)
             val (late, today) = due.partition { FollowUp.isOverdue(it.followUpAt, now) }
-            _state.value = _state.value.copy(overdue = late, dueToday = today)
+            val appointments = repo.appointmentsDue(
+                fromMillis = Clock.todayStart(now),
+                toMillis = Clock.todayStart(now) + 24L * 60 * 60 * 1000,
+            )
+            _state.value = _state.value.copy(
+                overdue = late,
+                dueToday = today,
+                appointmentsToday = appointments,
+            )
         }
     }
 

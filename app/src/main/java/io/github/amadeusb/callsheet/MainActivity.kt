@@ -246,6 +246,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
         }
 
         is Screen.Today -> TodayScreen(
+            appointments = state.appointmentsToday,
             overdue = state.overdue,
             dueToday = state.dueToday,
             onBack = { vm.back() },

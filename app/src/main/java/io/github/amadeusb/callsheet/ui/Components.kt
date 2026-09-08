@@ -42,6 +42,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.NumberPicker
 import io.github.amadeusb.callsheet.data.Business
 import io.github.amadeusb.callsheet.data.Status
@@ -102,6 +103,7 @@ fun BusinessRow(
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
     showFollowUp: Boolean = false,
+    showAppointment: Boolean = false,
     overdue: Boolean = false,
 ) {
     Row(
@@ -137,6 +139,15 @@ fun BusinessRow(
                     text = it,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (showAppointment && business.appointmentAt != null) {
+                Text(
+                    text = Appointment.readableRange(business.appointmentAt, business.appointmentEndAt),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

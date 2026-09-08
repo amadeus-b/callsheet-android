@@ -28,6 +28,7 @@ import io.github.amadeusb.callsheet.data.Business
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodayScreen(
+    appointments: List<Business>,
     overdue: List<Business>,
     dueToday: List<Business>,
     onBack: () -> Unit,
@@ -51,7 +52,7 @@ fun TodayScreen(
             )
         },
     ) { inner ->
-        if (overdue.isEmpty() && dueToday.isEmpty()) {
+        if (appointments.isEmpty() && overdue.isEmpty() && dueToday.isEmpty()) {
             Column(modifier = Modifier.padding(inner).fillMaxSize()) {
                 EmptyState("Keine Wiedervorlage offen. Nichts, was heute noch drängt.")
             }
@@ -63,6 +64,28 @@ fun TodayScreen(
                 .padding(inner)
                 .fillMaxSize(),
         ) {
+            // Above the follow-ups: an appointment is somewhere to be at a
+            // particular time, and the day has to be planned around it.
+            if (appointments.isNotEmpty()) {
+                item(key = "header-appointments") {
+                    GroupHeader(
+                        title = "Termine heute (${appointments.size})",
+                        subtitle = "Vor Ort. Fahrzeit einplanen.",
+                        background = MaterialTheme.colorScheme.tertiaryContainer,
+                        foreground = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                }
+                items(appointments, key = { "t-" + it.placeId }) { business ->
+                    BusinessRow(
+                        business = business,
+                        onDial = { onDial(business) },
+                        onOpen = { onOpen(business) },
+                        showAppointment = true,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
+            }
+
             if (overdue.isNotEmpty()) {
                 item(key = "header-overdue") {
                     GroupHeader(
