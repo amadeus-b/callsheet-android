@@ -17,6 +17,29 @@ data class BusyInterval(
     val eventId: Long? = null,
 )
 
+/** What saving an appointment should do about the calendar. */
+sealed interface SavePlan {
+    /** The window is taken and nobody has said what to do about it yet. */
+    data class Conflict(val with: List<BusyInterval>) : SavePlan
+
+    /**
+     * Take over an appointment that is already in the calendar. Its time and
+     * place win and the event is left untouched — the app only records that the
+     * two are the same thing. Writing the draft over it would rename and move
+     * somebody else's entry, which is the one thing this feature must never do.
+     */
+    data class Adopt(val eventId: Long) : SavePlan
+
+    /** Write the draft over the event this business already owns. */
+    data class Update(val eventId: Long) : SavePlan
+
+    /** Create a new event. */
+    data object Create : SavePlan
+
+    /** Columns only — the calendar is switched off or out of reach. */
+    data object LocalOnly : SavePlan
+}
+
 /**
  * The arithmetic behind an appointment on site.
  *
@@ -67,6 +90,28 @@ object Appointment {
         endMillis: Long,
         busy: List<BusyInterval>,
     ): List<BusyInterval> = busy.filter { startMillis < it.endMillis && it.startMillis < endMillis }
+
+    /**
+     * What saving should do. The order matters: an explicit instruction from the
+     * user beats a conflict, and a conflict beats everything else.
+     */
+    fun plan(
+        startMillis: Long,
+        endMillis: Long,
+        busy: List<BusyInterval>,
+        ownEventId: Long?,
+        linkExisting: Long?,
+        force: Boolean,
+        calendarEnabled: Boolean,
+    ): SavePlan {
+        if (linkExisting != null) return SavePlan.Adopt(linkExisting)
+        if (!force) {
+            val clash = overlapping(startMillis, endMillis, busy)
+            if (clash.isNotEmpty()) return SavePlan.Conflict(clash)
+        }
+        if (!calendarEnabled) return SavePlan.LocalOnly
+        return if (ownEventId != null) SavePlan.Update(ownEventId) else SavePlan.Create
+    }
 
     /** Street, postal code and city on one line. Null when nothing is known. */
     fun address(street: String?, postalCode: String?, city: String?): String? {

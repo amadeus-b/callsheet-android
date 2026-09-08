@@ -2,6 +2,7 @@ package io.github.amadeusb.callsheet
 
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
+import io.github.amadeusb.callsheet.calling.SavePlan
 import io.github.amadeusb.callsheet.data.Clock
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -131,5 +132,74 @@ class AppointmentTest {
     @Test
     fun `without an appointment there is a dash`() {
         assertEquals("—", Appointment.readableRange(null, null))
+    }
+
+    // --- plan ---------------------------------------------------------------
+
+    private val slotStart = millis(2026, 9, 10, 14)
+    private val slotEnd = millis(2026, 9, 10, 15)
+
+    @Test
+    fun `a free slot with the calendar on creates an event`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd, busy = emptyList(),
+            ownEventId = null, linkExisting = null, force = false, calendarEnabled = true,
+        )
+
+        assertEquals(SavePlan.Create, plan)
+    }
+
+    @Test
+    fun `a free slot with the calendar off writes only the columns`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd, busy = emptyList(),
+            ownEventId = null, linkExisting = null, force = false, calendarEnabled = false,
+        )
+
+        assertEquals(SavePlan.LocalOnly, plan)
+    }
+
+    @Test
+    fun `an existing own event is updated, not duplicated`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd, busy = emptyList(),
+            ownEventId = 42L, linkExisting = null, force = false, calendarEnabled = true,
+        )
+
+        assertEquals(SavePlan.Update(42L), plan)
+    }
+
+    @Test
+    fun `a taken slot asks before writing anything`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd,
+            busy = listOf(busy(14, 15, "Steuerbüro")),
+            ownEventId = null, linkExisting = null, force = false, calendarEnabled = true,
+        )
+
+        assertTrue(plan is SavePlan.Conflict)
+        assertEquals(listOf("Steuerbüro"), (plan as SavePlan.Conflict).with.map { it.title })
+    }
+
+    @Test
+    fun `force writes into a taken slot anyway`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd,
+            busy = listOf(busy(14, 15, "Steuerbüro")),
+            ownEventId = null, linkExisting = null, force = true, calendarEnabled = true,
+        )
+
+        assertEquals(SavePlan.Create, plan)
+    }
+
+    @Test
+    fun `linking beats the conflict and never creates`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd,
+            busy = listOf(busy(14, 15, "Steuerbüro")),
+            ownEventId = null, linkExisting = 7L, force = false, calendarEnabled = true,
+        )
+
+        assertEquals(SavePlan.Adopt(7L), plan)
     }
 }

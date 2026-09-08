@@ -12,6 +12,7 @@ import io.github.amadeusb.callsheet.calendar.EventFields
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
 import io.github.amadeusb.callsheet.calling.CallFlow
+import io.github.amadeusb.callsheet.calling.SavePlan
 import io.github.amadeusb.callsheet.calling.CallLogReader
 import io.github.amadeusb.callsheet.calling.FollowUp
 import io.github.amadeusb.callsheet.data.CallEntry
@@ -67,6 +68,32 @@ data class NumberPicker(
     val targets: List<DialTarget>,
 )
 
+/**
+ * The appointment being set. Lives only while the sheet is open — cancelling
+ * throws it away, and nothing has been written by then.
+ */
+data class AppointmentDraft(
+    val placeId: String,
+    val startIso: String,
+    val minutes: Int,
+    val location: String,
+    /**
+     * Everything already taken on that day, for the timeline. The business's own
+     * event is filtered out: it would otherwise collide with itself on every
+     * change, and the conflict question would be unanswerable.
+     */
+    val busy: List<BusyInterval> = emptyList(),
+    /** What the chosen window runs into. Empty means it is free. */
+    val conflict: List<BusyInterval> = emptyList(),
+    /**
+     * Whether the calendar could be read at all. Without this, an empty [busy]
+     * would be indistinguishable from a genuinely free day — and telling the
+     * user a day is free when the app simply cannot see it is the one lie this
+     * feature must not tell.
+     */
+    val calendarReadable: Boolean = true,
+)
+
 data class State(
     val screen: Screen = Screen.WorkList,
     /** The screens behind the current one — the most recent last. */
@@ -105,6 +132,8 @@ data class State(
     val calendarEnabled: Boolean = false,
     val calendar: CalendarAccount? = null,
     val calendars: List<CalendarAccount> = emptyList(),
+    val appointmentDraft: AppointmentDraft? = null,
+    val appointmentsToday: List<Business> = emptyList(),
     val outsideBusinessHours: Boolean = false,
     val draft: BusinessDraft = BusinessDraft(),
     val formError: String? = null,
@@ -515,6 +544,194 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     fun pickCalendar(calendar: CalendarAccount) {
         preferences.calendarId = calendar.id
         _state.update { it.copy(calendar = calendar) }
+    }
+
+    // --------------------------------------------------------------- Appointment
+
+    /** Opens the sheet, prefilled from the business and the last duration used. */
+    fun openAppointment(placeId: String) {
+        viewModelScope.launch {
+            val business = repo.business(placeId) ?: return@launch
+            val start = business.appointmentAt ?: FollowUp.inTwoDays()
+            val minutes = if (business.appointmentAt != null) {
+                Appointment.minutesBetween(business.appointmentAt, business.appointmentEndAt)
+            } else {
+                preferences.appointmentMinutes
+            }
+            val location = business.appointmentLocation
+                ?: Appointment.address(business.street, business.postalCode, business.city)
+                ?: ""
+            _state.update {
+                it.copy(
+                    appointmentDraft = AppointmentDraft(
+                        placeId = placeId,
+                        startIso = start,
+                        minutes = minutes,
+                        location = location,
+                        calendarReadable = CalendarStore.canRead(getApplication()),
+                    )
+                )
+            }
+            Clock.millis(start)?.let { loadBusy(it, business.calendarEventId) }
+        }
+    }
+
+    /**
+     * Reads the busy times for the day containing [millis].
+     *
+     * [ownEventId] drops out of the result. An appointment being changed is
+     * already in the calendar, so leaving it in would make every save collide
+     * with itself — and the conflict question would offer to link an appointment
+     * to itself.
+     */
+    private fun loadBusy(millis: Long, ownEventId: Long?) {
+        viewModelScope.launch {
+            val dayStart = Clock.todayStart(millis)
+            val busy = BusyTimes.forDay(getApplication(), dayStart)
+                .filter { it.eventId == null || it.eventId != ownEventId }
+            _state.update { state ->
+                val draft = state.appointmentDraft ?: return@update state
+                state.copy(appointmentDraft = draft.copy(busy = busy, conflict = emptyList()))
+            }
+        }
+    }
+
+    fun updateAppointmentDraft(draft: AppointmentDraft) {
+        val previous = _state.value.appointmentDraft
+        val previousDay = Clock.todayStart(Clock.millis(previous?.startIso) ?: 0L)
+        val newDay = Clock.todayStart(Clock.millis(draft.startIso) ?: return)
+        val dayChanged = previous == null || previousDay != newDay
+
+        // On a new day the old day's busy times are dropped straight away.
+        // Keeping them until the reload returns would place yesterday's
+        // appointments against today's midnight — foreign blocks standing at
+        // times nobody is busy.
+        _state.update {
+            it.copy(
+                appointmentDraft = draft.copy(
+                    conflict = emptyList(),
+                    busy = if (dayChanged) emptyList() else draft.busy,
+                )
+            )
+        }
+
+        if (dayChanged) {
+            viewModelScope.launch {
+                val start = Clock.millis(draft.startIso) ?: return@launch
+                loadBusy(start, repo.business(draft.placeId)?.calendarEventId)
+            }
+        }
+    }
+
+    fun dismissAppointment() {
+        _state.update { it.copy(appointmentDraft = null) }
+    }
+
+    /** Writes the appointment: the four columns, the status, and the calendar. */
+    fun saveAppointment(linkExisting: Long? = null, force: Boolean = false) {
+        val draft = _state.value.appointmentDraft ?: return
+        viewModelScope.launch {
+            val startMillis = Clock.millis(draft.startIso) ?: return@launch
+            val endIsoFromDraft = Appointment.endOf(draft.startIso, draft.minutes)
+            val endMillis = Clock.millis(endIsoFromDraft) ?: return@launch
+            val business = repo.business(draft.placeId)
+            val location = draft.location.trim().ifEmpty { null }
+
+            val plan = Appointment.plan(
+                startMillis = startMillis,
+                endMillis = endMillis,
+                busy = draft.busy,
+                ownEventId = business?.calendarEventId,
+                linkExisting = linkExisting,
+                force = force,
+                calendarEnabled = preferences.calendarEnabled,
+            )
+
+            if (plan is SavePlan.Conflict) {
+                _state.update { it.copy(appointmentDraft = draft.copy(conflict = plan.with)) }
+                return@launch
+            }
+
+            val fields = EventFields(
+                title = "Ortstermin ${business?.name ?: ""}".trim(),
+                startMillis = startMillis,
+                endMillis = endMillis,
+                location = location,
+                description = business?.phone,
+            )
+
+            // Adopting takes the calendar's values, so the columns written below
+            // differ per plan. Every other case writes the draft.
+            var atIso = draft.startIso
+            var endIso = endIsoFromDraft
+            var place = location
+
+            val eventId: Long? = when (plan) {
+                is SavePlan.Adopt -> {
+                    val event = CalendarStore.read(getApplication(), plan.eventId)
+                    if (event != null) {
+                        atIso = Clock.format(event.startMillis)
+                        endIso = Clock.format(event.endMillis)
+                        place = event.location ?: location
+                        plan.eventId
+                    } else {
+                        // Gone between listing the day and pressing save. Linking
+                        // to an id that no longer resolves would leave a business
+                        // pointing at nothing; keep the draft and no link.
+                        null
+                    }
+                }
+
+                // A failed update usually means the event is gone — deleted in
+                // the calendar between opening the sheet and saving it. Falling
+                // back to a new one is what the user asked for; reporting "could
+                // not be written" and pointing at the permission would be a lie.
+                is SavePlan.Update -> plan.eventId.takeIf {
+                    CalendarStore.update(getApplication(), it, fields)
+                } ?: preferences.calendarId?.let { CalendarStore.insert(getApplication(), it, fields) }
+
+                SavePlan.Create ->
+                    preferences.calendarId?.let { CalendarStore.insert(getApplication(), it, fields) }
+
+                SavePlan.LocalOnly -> null
+                is SavePlan.Conflict -> null // already returned above
+            }
+
+            preferences.appointmentMinutes = draft.minutes
+            repo.setAppointment(draft.placeId, atIso, endIso, place, eventId)
+            repo.setStatus(draft.placeId, Status.APPOINTMENT)
+            _state.update {
+                it.copy(
+                    appointmentDraft = null,
+                    hint = if (preferences.calendarEnabled && plan !is SavePlan.LocalOnly && eventId == null) {
+                        "Termin gespeichert. Der Kalendereintrag konnte nicht " +
+                            "geschrieben werden — prüfe die Berechtigung und den " +
+                            "gewählten Kalender in den Einstellungen."
+                    } else {
+                        null
+                    },
+                )
+            }
+            loadDetail(draft.placeId)
+        }
+    }
+
+    /**
+     * Removes the appointment and its calendar event.
+     *
+     * The status only falls back when it is still `appointment`. A business set
+     * to `declined` or `do_not_call` in the meantime keeps that — those are
+     * decisions the user made, and removing an appointment is not permission to
+     * undo them.
+     */
+    fun removeAppointment(placeId: String) {
+        viewModelScope.launch {
+            val business = repo.business(placeId) ?: return@launch
+            business.calendarEventId?.let { CalendarStore.delete(getApplication(), it) }
+            repo.setAppointment(placeId, null, null, null, null)
+            if (business.status == Status.APPOINTMENT) repo.setStatus(placeId, Status.CALLED)
+            loadDetail(placeId)
+        }
     }
 
     fun setAddressBookAccount(account: AddressBookAccount?) {
