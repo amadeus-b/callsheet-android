@@ -22,8 +22,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -255,7 +253,6 @@ fun BusinessFormScreen(
 
             // ---- Origin and note --------------------------------------------
             Section("Herkunft und Notiz")
-            OriginExplanation()
 
             Field(
                 value = draft.origin,
@@ -282,39 +279,6 @@ fun BusinessFormScreen(
             )
 
             Spacer(Modifier.height(24.dp))
-        }
-    }
-}
-
-/**
- * Why origin is not a side field: for imported businesses the research run
- * records where the data came from. For a hand-entered one only this note does —
- * and it is what gets asked about on the phone.
- */
-@Composable
-private fun OriginExplanation() {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-        ),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "Woher stammt dieser Kontakt?",
-                style = MaterialTheme.typography.titleSmall,
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "Eine Empfehlung, eine Visitenkarte von einer Messe, ein eigener " +
-                    "Fund im Netz. Bei importierten Betrieben hält der Recherchelauf das " +
-                    "fest — hier nur diese Zeile. Fragt jemand am Telefon, woher die " +
-                    "Nummer kommt, steht die Antwort dann hier.",
-                style = MaterialTheme.typography.bodySmall,
-            )
         }
     }
 }
