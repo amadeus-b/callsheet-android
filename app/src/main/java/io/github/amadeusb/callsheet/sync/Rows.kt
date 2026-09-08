@@ -15,8 +15,16 @@ object Rows {
     /** The key column of each synchronised table. */
     fun key(table: String): String = if (table == "businesses") "place_id" else "id"
 
-    /** Columns that never leave the device. */
-    private val LOCAL_ONLY = setOf("dirty", "contact_version")
+    /**
+     * Columns that never leave the device.
+     *
+     * `calendar_event_id` points into this device's calendar provider. The same
+     * number on another device is a different appointment, or none — sending it
+     * would make the second device claim an entry it does not own. The
+     * appointment's time, end and location are deliberately absent from this
+     * list: they are work, and work is what synchronisation is for.
+     */
+    private val LOCAL_ONLY = setOf("dirty", "contact_version", "calendar_event_id")
 
     fun toJson(c: Cursor): JSONObject {
         val row = JSONObject()

@@ -41,7 +41,19 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
                 -- without this column "müller" would not find "Müller".
                 search_text     TEXT,
                 -- Set on every local write, cleared once the server has it.
-                dirty           INTEGER NOT NULL DEFAULT 0
+                dirty           INTEGER NOT NULL DEFAULT 0,
+                -- Appointment on site. Working fields, like status and
+                -- follow_up_at: an import never overwrites them.
+                appointment_at       TEXT,
+                appointment_end_at   TEXT,
+                appointment_location TEXT,
+                -- The linked event in the device calendar, null while none
+                -- exists. Local to this device — see Rows.LOCAL_ONLY.
+                calendar_event_id    INTEGER,
+                -- Master data from the import, filled like every other imported
+                -- column. Nothing reads them yet.
+                latitude             REAL,
+                longitude            REAL
             )
             """.trimIndent()
         )
@@ -72,6 +84,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         db.execSQL("CREATE INDEX idx_businesses_is_target ON businesses(is_target)")
         db.execSQL("CREATE INDEX idx_businesses_follow_up ON businesses(follow_up_at)")
         db.execSQL("CREATE INDEX idx_businesses_search_text ON businesses(search_text)")
+        db.execSQL("CREATE INDEX idx_businesses_appointment ON businesses(appointment_at)")
         db.execSQL("CREATE INDEX idx_calls_place_id ON calls(place_id)")
         db.execSQL(INDEX_CONTACTS)
         db.execSQL(INDEX_NUMBERS)
@@ -107,6 +120,19 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             )
             db.execSQL(TABLE_DELETIONS)
         }
+        // Two separate ifs, never an else if: a device still on version 1 has to
+        // walk through the block above and then this one, in that order.
+        if (old < 3) {
+            // Appointments. Nothing to mark dirty here: the columns arrive
+            // empty, so no existing row has anything new to tell the server.
+            db.execSQL("ALTER TABLE businesses ADD COLUMN appointment_at TEXT")
+            db.execSQL("ALTER TABLE businesses ADD COLUMN appointment_end_at TEXT")
+            db.execSQL("ALTER TABLE businesses ADD COLUMN appointment_location TEXT")
+            db.execSQL("ALTER TABLE businesses ADD COLUMN calendar_event_id INTEGER")
+            db.execSQL("ALTER TABLE businesses ADD COLUMN latitude REAL")
+            db.execSQL("ALTER TABLE businesses ADD COLUMN longitude REAL")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_businesses_appointment ON businesses(appointment_at)")
+        }
     }
 
     /**
@@ -122,7 +148,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
 
     companion object {
         const val NAME = "callsheet.db"
-        const val VERSION = 2
+        const val VERSION = 3
 
         @Volatile
         private var shared: Database? = null

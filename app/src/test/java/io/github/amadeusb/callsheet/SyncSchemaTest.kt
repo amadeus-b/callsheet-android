@@ -2,7 +2,10 @@ package io.github.amadeusb.callsheet
 
 import androidx.test.core.app.ApplicationProvider
 import io.github.amadeusb.callsheet.data.Database
+import io.github.amadeusb.callsheet.sync.Rows
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -81,5 +84,22 @@ class SyncSchemaTest {
                 assertEquals("$table not marked dirty after upgrade", 1, c.getInt(0))
             }
         }
+    }
+
+    @Test
+    fun `the calendar event id stays on the device`() {
+        val row = JSONObject().apply {
+            put("place_id", "P1")
+            put("appointment_at", "2026-09-10T14:00:00+02:00")
+            put("calendar_event_id", 4711)
+        }
+
+        val values = Rows.toValues(row, setOf("place_id", "appointment_at", "calendar_event_id"))
+
+        assertEquals("2026-09-10T14:00:00+02:00", values.getAsString("appointment_at"))
+        assertFalse(
+            "calendar_event_id must not come in from the server",
+            values.containsKey("calendar_event_id"),
+        )
     }
 }
