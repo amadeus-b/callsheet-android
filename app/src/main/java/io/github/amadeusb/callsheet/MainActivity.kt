@@ -10,6 +10,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -23,6 +29,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.amadeusb.callsheet.calling.CallFlow
 import io.github.amadeusb.callsheet.data.Business
 import io.github.amadeusb.callsheet.data.DialTarget
+import io.github.amadeusb.callsheet.data.Clock
+import io.github.amadeusb.callsheet.ui.AppointmentSheet
 import io.github.amadeusb.callsheet.ui.CallsheetTheme
 import io.github.amadeusb.callsheet.ui.ContactScreen
 import io.github.amadeusb.callsheet.ui.WorkListScreen
@@ -33,6 +41,8 @@ import io.github.amadeusb.callsheet.ui.TodayScreen
 import io.github.amadeusb.callsheet.calendar.CalendarStore
 import io.github.amadeusb.callsheet.contacts.PhoneBook
 import io.github.amadeusb.callsheet.ui.NumberPickerDialog
+import java.time.Instant
+import java.time.ZoneOffset
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,6 +90,38 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { outcome ->
         vm.setCalendarEnabled(outcome.values.all { it })
+    }
+
+    var appointmentDate by remember { mutableStateOf(false) }
+
+    if (appointmentDate) {
+        val draft = state.appointmentDraft
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = Clock.millis(draft?.startIso),
+        )
+        DatePickerDialog(
+            onDismissRequest = { appointmentDate = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    val picked = pickerState.selectedDateMillis
+                    val startIso = draft?.startIso
+                    val startMillis = Clock.millis(startIso)
+                    if (draft != null && picked != null && startMillis != null) {
+                        // The picker returns midnight UTC. Only the date is
+                        // taken from it; the time of day stays as agreed.
+                        val date = Instant.ofEpochMilli(picked).atZone(ZoneOffset.UTC).toLocalDate()
+                        val time = Clock.zdt(startMillis).toLocalTime()
+                        vm.updateAppointmentDraft(
+                            draft.copy(startIso = Clock.format(date.atTime(time).atZone(Clock.zone)))
+                        )
+                    }
+                    appointmentDate = false
+                }) { Text("Übernehmen") }
+            },
+            dismissButton = {
+                TextButton(onClick = { appointmentDate = false }) { Text("Abbrechen") }
+            },
+        ) { DatePicker(state = pickerState) }
     }
 
     val filePicker = rememberLauncherForActivityResult(
@@ -183,9 +225,23 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                     },
                     onContact = { id -> vm.showContact(business.placeId, id) },
                     onFollowUp = { vm.setFollowUp(business.placeId, it) },
+                    onAppointment = { vm.openAppointment(business.placeId) },
+                    onRemoveAppointment = { vm.removeAppointment(business.placeId) },
                     onOpenUrl = ::openUrl,
                     onDismissHint = vm::hintDismissed,
                 )
+
+                state.appointmentDraft?.let { draft ->
+                    AppointmentSheet(
+                        draft = draft,
+                        onDraft = vm::updateAppointmentDraft,
+                        onSave = { vm.saveAppointment() },
+                        onLink = { vm.saveAppointment(linkExisting = it) },
+                        onForce = { vm.saveAppointment(force = true) },
+                        onPickDate = { appointmentDate = true },
+                        onDismiss = vm::dismissAppointment,
+                    )
+                }
             }
         }
 

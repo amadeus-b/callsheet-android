@@ -1,5 +1,6 @@
 package io.github.amadeusb.callsheet.ui
 
+import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -58,6 +59,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.FollowUp
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.Contact
@@ -86,10 +88,13 @@ fun BusinessDetailScreen(
     onOutcome: (Status, String) -> Unit,
     onContact: (String?) -> Unit,
     onFollowUp: (String?) -> Unit,
+    onAppointment: () -> Unit,
+    onRemoveAppointment: () -> Unit,
     onOpenUrl: (String) -> Unit,
     onDismissHint: () -> Unit,
 ) {
     var blockConfirm by remember { mutableStateOf(false) }
+    var removeAppointment by remember { mutableStateOf(false) }
 
     // Status and note are only taken over by the save button. Until then the
     // draft lives here; it resets as soon as the saved state catches up or a
@@ -249,6 +254,16 @@ fun BusinessDetailScreen(
                 }
             }
 
+            item(key = "appointment") {
+                Section("Termin vor Ort")
+                AppointmentBlock(
+                    business = business,
+                    onSet = onAppointment,
+                    onRemove = { removeAppointment = true },
+                    onOpenUrl = onOpenUrl,
+                )
+            }
+
             item(key = "follow-up") {
                 Section("Wiedervorlage")
                 FollowUpBlock(
@@ -312,6 +327,28 @@ fun BusinessDetailScreen(
             },
             dismissButton = {
                 TextButton(onClick = { blockConfirm = false }) { Text("Abbrechen") }
+            },
+        )
+    }
+
+    if (removeAppointment) {
+        AlertDialog(
+            onDismissRequest = { removeAppointment = false },
+            title = { Text("Termin entfernen?") },
+            text = {
+                Text(
+                    "Der Termin wird auch aus dem Kalender gelöscht. " +
+                        "Der Status fällt zurück auf „Angerufen“."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRemoveAppointment()
+                    removeAppointment = false
+                }) { Text("Entfernen") }
+            },
+            dismissButton = {
+                TextButton(onClick = { removeAppointment = false }) { Text("Abbrechen") }
             },
         )
     }
@@ -545,6 +582,82 @@ private fun SaveBar(
                 modifier = Modifier.weight(2f).heightIn(min = 56.dp),
                 shape = RoundedCornerShape(14.dp),
             ) { Text(if (saving) "Speichert …" else "Ergebnis speichern") }
+        }
+    }
+}
+
+/**
+ * An address as a map application takes it. `geo:0,0?q=` rather than
+ * coordinates: the query lets the map do the geocoding and land on the door
+ * number, which the business's own coordinates do not always do.
+ */
+internal fun geoUri(address: String): String = "geo:0,0?q=" + Uri.encode(address)
+
+/**
+ * The appointment on site. Sits above the follow-up because the two are the
+ * answers to one question — when does this go on? — and takes effect straight
+ * away, the way the follow-up does.
+ */
+@Composable
+private fun AppointmentBlock(
+    business: Business,
+    onSet: () -> Unit,
+    onRemove: () -> Unit,
+    onOpenUrl: (String) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        val set = business.appointmentAt
+        if (set == null) {
+            // A status of "Termin" without a time is the hole this section
+            // exists to close. Say so, and offer the way out — never force it.
+            val statusOnly = business.status == Status.APPOINTMENT
+            Text(
+                text = if (statusOnly) {
+                    "Status „Termin“, aber kein Zeitpunkt gesetzt."
+                } else {
+                    "Kein Termin vereinbart."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (statusOnly) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onSet,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                shape = RoundedCornerShape(14.dp),
+            ) { Text("Termin anlegen") }
+        } else {
+            Text(
+                text = Appointment.readableRange(set, business.appointmentEndAt),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            business.appointmentLocation?.takeIf { it.isNotBlank() }?.let { where ->
+                Text(
+                    text = where,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clickable { onOpenUrl(geoUri(where)) }
+                        .padding(vertical = 4.dp),
+                )
+            }
+            if (business.calendarEventId != null) {
+                Text(
+                    text = "Im Kalender abgelegt.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onSet, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    Text("Ändern")
+                }
+                OutlinedButton(onClick = onRemove, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    Text("Entfernen")
+                }
+            }
         }
     }
 }
