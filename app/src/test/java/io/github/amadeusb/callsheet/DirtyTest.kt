@@ -85,6 +85,39 @@ class DirtyTest {
     }
 
     @Test
+    fun `removing a number on edit leaves a tombstone only for it`() = runTest {
+        val id = einBetrieb()
+        val kontakt = repo.saveContact(ContactDraft(
+            placeId = id, name = "Frau Meier",
+            numbers = listOf(
+                PhoneDraft(number = "0176 12345678", kind = PhoneType.MOBILE),
+                PhoneDraft(number = "0176 87654321", kind = PhoneType.MOBILE),
+            ),
+        )).getOrThrow()
+
+        val db = Database(ctx).readableDatabase
+        val (bleibendeId, entfernteId) = db.rawQuery(
+            "SELECT id, number FROM contact_numbers WHERE contact_id = ?", arrayOf(kontakt),
+        ).use { c ->
+            var keep: String? = null
+            var drop: String? = null
+            while (c.moveToNext()) {
+                if (c.getString(1).endsWith("12345678")) keep = c.getString(0) else drop = c.getString(0)
+            }
+            keep!! to drop!!
+        }
+
+        repo.saveContact(ContactDraft(
+            id = kontakt, placeId = id, name = "Frau Meier",
+            numbers = listOf(PhoneDraft(number = "0176 12345678", kind = PhoneType.MOBILE, id = bleibendeId)),
+        )).getOrThrow()
+
+        assertEquals(1, zahl("SELECT COUNT(*) FROM deletions WHERE table_name = 'contact_numbers' AND row_id = '$entfernteId'"))
+        assertEquals(0, zahl("SELECT COUNT(*) FROM deletions WHERE table_name = 'contact_numbers' AND row_id = '$bleibendeId'"))
+        assertEquals(1, zahl("SELECT COUNT(*) FROM contact_numbers WHERE id = '$bleibendeId'"))
+    }
+
+    @Test
     fun `a merge with the phone book is not a content change`() = runTest {
         val id = einBetrieb()
         val kontakt = repo.saveContact(ContactDraft(placeId = id, name = "Frau Meier")).getOrThrow()

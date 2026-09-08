@@ -88,10 +88,10 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
                 db.execSQL("ALTER TABLE $table ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("CREATE INDEX idx_${table}_dirty ON $table(dirty)")
             }
-            // Anrufe und Rufnummern hatten keinen eigenen Änderungszeitpunkt. Ohne
-            // ihn liesse sich für eine nachgetragene Notiz nicht entscheiden, welche
-            // Fassung die jüngere ist. Der Bestand erbt seinen Anrufzeitpunkt, damit
-            // keine Zeile ohne Wert dasteht.
+            // Calls and phone numbers had no change timestamp of their own. Without
+            // one, there would be no way to tell which version is newer for a note
+            // added later. Existing rows inherit their call time, so no row is
+            // left without a value.
             db.execSQL("ALTER TABLE calls ADD COLUMN updated_at TEXT")
             db.execSQL("UPDATE calls SET updated_at = started_at WHERE updated_at IS NULL")
             db.execSQL("ALTER TABLE contact_numbers ADD COLUMN updated_at TEXT")

@@ -506,13 +506,21 @@ class Repository(context: Context) {
                 }
 
                 // The numbers are written afresh: order and types come from the
-                // form, not from whatever was stored before.
+                // form, not from whatever was stored before. Any id that was
+                // there before and does not come back gets a tombstone — the
+                // number was removed on the form, not merely reordered.
+                val before = db.rawQuery(
+                    "SELECT id FROM contact_numbers WHERE contact_id = ?", arrayOf(id),
+                ).use { c -> generateSequence { if (c.moveToNext()) c.getString(0) else null }.toMutableSet() }
+
                 db.delete("contact_numbers", "contact_id = ?", arrayOf(id))
                 checked.forEachIndexed { index, (row, number) ->
+                    val numberId = row.id ?: java.util.UUID.randomUUID().toString()
+                    before.remove(numberId)
                     db.insert(
                         "contact_numbers", null,
                         ContentValues().apply {
-                            put("id", row.id ?: java.util.UUID.randomUUID().toString())
+                            put("id", numberId)
                             put("contact_id", id)
                             put("number", number)
                             put("kind", row.kind.key)
@@ -522,6 +530,7 @@ class Repository(context: Context) {
                         },
                     )
                 }
+                for (removed in before) tombstone(db, "contact_numbers", removed, now)
 
                 val timestamp = ContentValues().apply { put("updated_at", now); put("dirty", 1) }
                 db.update("businesses", timestamp, "place_id = ?", arrayOf(draft.placeId))
