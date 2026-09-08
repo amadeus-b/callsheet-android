@@ -75,9 +75,26 @@ class SyncStore(context: Context) {
 
     /**
      * Clears the marks on exactly the rows that were sent — not on everything.
-     * A row changed while the request was in flight must stay marked.
+     * A row changed while the request was in flight must stay marked. Nor is a
+     * row the server named in `response`'s `abgewiesen` cleared: it never made
+     * it into the server's stock, so clearing its mark would make the row
+     * vanish from both sides at once — gone from the outgoing queue, absent
+     * from the server, and no longer counted as open. It stays dirty instead,
+     * which means it is offered again on every following sync. For a row the
+     * server keeps rejecting that is a permanent, honest "still open" rather
+     * than a silent drop or a retry no one can see — there is no per-row error
+     * display to fall back on, so staying counted is the only visible signal
+     * this app has.
      */
-    fun clearPending(payload: JSONObject) {
+    fun clearPending(payload: JSONObject, response: JSONObject) {
+        val rejected = HashSet<Pair<String, String>>()
+        val abgewiesen = response.optJSONArray("abgewiesen") ?: JSONArray()
+        for (i in 0 until abgewiesen.length()) {
+            val eintrag = abgewiesen.getJSONObject(i)
+            val tabelle = eintrag.optString("tabelle", null) ?: continue
+            val schluessel = eintrag.optString("schluessel", null) ?: continue
+            rejected.add(tabelle to schluessel)
+        }
         val db = helper.writableDatabase
         db.beginTransaction()
         try {
@@ -87,6 +104,7 @@ class SyncStore(context: Context) {
                 for (i in 0 until rows.length()) {
                     val sent = rows.getJSONObject(i)
                     val id = sent.getString(key)
+                    if (table to id in rejected) continue
                     // Only clear the mark if the row is still exactly the one
                     // that was sent. If it changed while the request was in
                     // flight, `updated_at` moved on and the row stays marked.

@@ -36,6 +36,18 @@ sealed class SyncResult {
  * the same way any other failure does: the exception leaves the loop before
  * another block is requested, so the server is never hammered and a body
  * that keeps growing past the limit cannot spin forever.
+ *
+ * A row the server names in `abgewiesen` keeps its mark (see
+ * [SyncStore.clearPending]) so it is not lost, but that also means it is
+ * still dirty when [SyncStore.pendingCount] is checked below. Continuing the
+ * loop just because rows are still marked would turn a row the server keeps
+ * rejecting into 250 rounds of resending it, every single call to [sync] —
+ * quietly hammering the server on every automatic run. The loop instead only
+ * continues on a full block: if the last block sent held fewer rows than
+ * [BLOCK], every currently dirty row was already offered this round, so
+ * nothing would be gained by asking again before the next sync. A rejected
+ * row stays marked — and so counted as open — without being retried within
+ * the same run.
  */
 class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
 
@@ -54,14 +66,15 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
                 val response = transport.post(payload)
 
                 store.apply(response)
-                store.clearPending(outgoing)
+                store.clearPending(outgoing, response)
                 // The watermark only ever moves forward. A stale or
                 // misbehaving server sending a lower value must not put the
                 // client behind where it already stood.
                 val stand = response.optInt("stand", prefs.watermark)
                 if (stand > prefs.watermark) prefs.watermark = stand
 
-                val more = response.optBoolean("weitere", false) || store.pendingCount() > 0
+                val more = response.optBoolean("weitere", false) ||
+                    (sentCount(outgoing) >= BLOCK && store.pendingCount() > 0)
                 if (!more) {
                     prefs.lastSyncAt = Clock.now()
                     return SyncResult.Ok
@@ -94,6 +107,13 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
         } finally {
             running.set(false)
         }
+    }
+
+    /** How many rows [payload] actually carried — across the four tables and the deletions. */
+    private fun sentCount(payload: JSONObject): Int {
+        var total = payload.optJSONArray("geloescht")?.length() ?: 0
+        for (table in Rows.TABLES) total += payload.optJSONArray(table)?.length() ?: 0
+        return total
     }
 
     private companion object {

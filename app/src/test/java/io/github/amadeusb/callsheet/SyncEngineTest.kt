@@ -207,6 +207,48 @@ class SyncEngineTest {
     }
 
     @Test
+    fun `a row the server rejects stays marked and the sync still completes`() {
+        // The concrete finding: without this, the row would be gone from the
+        // outgoing queue, absent from the server, and no longer counted as
+        // open — the worst kind of failure this project guards against.
+        betrieb("P1")
+        betrieb("P2")
+        val ergebnis = engine.sync(object : Transport {
+            override fun post(payload: JSONObject) = leereAntwort(5).apply {
+                put("abgewiesen", JSONArray().put(JSONObject().apply {
+                    put("tabelle", "businesses"); put("schluessel", "P1"); put("fehler", "kaputt")
+                }))
+            }
+        })
+        assertEquals(SyncResult.Ok, ergebnis)
+        assertEquals(1, SyncStore(ctx).pendingCount())
+        assertEquals(1, Database(ctx).readableDatabase.rawQuery(
+            "SELECT dirty FROM businesses WHERE place_id = 'P1'", null,
+        ).use { it.moveToFirst(); it.getInt(0) })
+    }
+
+    @Test
+    fun `a row rejected on every attempt does not spin the engine — it is offered again on the next sync, not hammered within this one`() {
+        betrieb("P1")
+        var aufrufe = 0
+        val ergebnis = engine.sync(object : Transport {
+            override fun post(payload: JSONObject): JSONObject {
+                aufrufe++
+                return leereAntwort(1).apply {
+                    put("abgewiesen", JSONArray().put(JSONObject().apply {
+                        put("tabelle", "businesses"); put("schluessel", "P1"); put("fehler", "kaputt")
+                    }))
+                }
+            }
+        })
+        // One attempt this run — the row stays marked for the next sync
+        // instead of being retried 250 times in this one.
+        assertEquals(1, aufrufe)
+        assertEquals(SyncResult.Ok, ergebnis)
+        assertEquals(1, SyncStore(ctx).pendingCount())
+    }
+
+    @Test
     fun `hitting the round limit while work remains reports Incomplete, not Ok`() {
         prefs.lastSyncAt = "vorher"
         var calls = 0

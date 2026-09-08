@@ -47,6 +47,20 @@ class SyncStoreTest {
         put("geloescht", JSONArray())
     }
 
+    /** A response with no data and, unless given, no rejections. */
+    private fun leereAntwort(vararg abgewiesen: Pair<String, String>) = JSONObject().apply {
+        put("stand", 1)
+        put("weitere", false)
+        put("businesses", JSONArray())
+        put("calls", JSONArray())
+        put("contacts", JSONArray())
+        put("contact_numbers", JSONArray())
+        put("geloescht", JSONArray())
+        put("abgewiesen", JSONArray(abgewiesen.map { (tabelle, schluessel) ->
+            JSONObject().apply { put("tabelle", tabelle); put("schluessel", schluessel); put("fehler", "kaputt") }
+        }))
+    }
+
     private fun betriebJson(id: String, note: String?, zeit: String, status: String = "new") = JSONObject().apply {
         put("place_id", id); put("name", "Elektro Meier"); put("status", status)
         if (note == null) put("note", JSONObject.NULL) else put("note", note)
@@ -74,8 +88,27 @@ class SyncStoreTest {
         einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 1)
         einBetrieb("P2", null, "2026-09-07T10:00:00+02:00", dirty = 1)
         val block = store.pending(1)
-        store.clearPending(block)
+        store.clearPending(block, leereAntwort())
         assertEquals(1, store.pendingCount())
+    }
+
+    @Test
+    fun `a row the server names in abgewiesen keeps its mark, the other is cleared`() {
+        einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 1)
+        einBetrieb("P2", null, "2026-09-07T10:00:00+02:00", dirty = 1)
+        val block = store.pending(500)
+        store.clearPending(block, leereAntwort("businesses" to "P1"))
+        assertEquals(1, store.pendingCount())
+        assertEquals(1, zahl("SELECT dirty FROM businesses WHERE place_id = 'P1'"))
+        assertEquals(0, zahl("SELECT dirty FROM businesses WHERE place_id = 'P2'"))
+    }
+
+    @Test
+    fun `a rejection naming a table or key the app does not know is ignored without damage`() {
+        einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 1)
+        val block = store.pending(500)
+        store.clearPending(block, leereAntwort("unbekannte_tabelle" to "P1", "businesses" to "P9-nicht-gesendet"))
+        assertEquals(0, store.pendingCount())
     }
 
     @Test
@@ -85,7 +118,7 @@ class SyncStoreTest {
         // The user edits the row again after it was already read for sending;
         // every real write path bumps updated_at along with dirty.
         schreibe("UPDATE businesses SET note = 'neu', updated_at = '2026-09-07T10:05:00+02:00', dirty = 1 WHERE place_id = 'P1'")
-        store.clearPending(block)
+        store.clearPending(block, leereAntwort())
         assertEquals(1, store.pendingCount())
     }
 
@@ -228,7 +261,7 @@ class SyncStoreTest {
         // The contact is deleted again (re-tombstoned) after the block was read.
         schreibe("DELETE FROM deletions WHERE table_name = 'contacts' AND row_id = 'K1'")
         schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K1', '2026-09-07T10:05:00+02:00')")
-        store.clearPending(block)
+        store.clearPending(block, leereAntwort())
         assertEquals(1, zahl("SELECT COUNT(*) FROM deletions WHERE table_name = 'contacts' AND row_id = 'K1'"))
     }
 
