@@ -51,6 +51,9 @@ class SyncSchemaTest {
         alt.execSQL("CREATE TABLE contacts (id TEXT PRIMARY KEY, place_id TEXT NOT NULL, name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)")
         alt.execSQL("CREATE TABLE contact_numbers (id TEXT PRIMARY KEY, contact_id TEXT NOT NULL, number TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'other', position INTEGER NOT NULL DEFAULT 0)")
         alt.execSQL("INSERT INTO businesses (place_id, name, status, note, updated_at) VALUES ('P1', 'Elektro Meier', 'called', 'Rückruf', '2026-09-07T10:00:00+02:00')")
+        alt.execSQL("INSERT INTO calls (id, place_id, started_at, duration_seconds, kind) VALUES ('C1', 'P1', '2026-09-07T10:00:00+02:00', 42, 'call')")
+        alt.execSQL("INSERT INTO contacts (id, place_id, name, position, updated_at) VALUES ('K1', 'P1', 'Frau Meier', 0, '2026-09-07T10:00:00+02:00')")
+        alt.execSQL("INSERT INTO contact_numbers (id, contact_id, number, kind, position) VALUES ('N1', 'K1', '+4917612345', 'mobile', 0)")
         alt.version = 1
         alt.close()
 
@@ -58,7 +61,25 @@ class SyncSchemaTest {
         db.rawQuery("SELECT note, dirty FROM businesses WHERE place_id = 'P1'", null).use { c ->
             assertTrue(c.moveToFirst())
             assertEquals("Rückruf", c.getString(0))
-            assertEquals(0, c.getInt(1))
+            // A row that existed before this device ever knew about
+            // synchronisation has never been sent anywhere. It must come out
+            // of the migration marked as unsent — the column's own default of
+            // 0 would tell the sync engine there is nothing to upload, and
+            // the device's entire pre-existing stock would never reach the
+            // server while the settings screen quietly reports "0 offen".
+            assertEquals(1, c.getInt(1))
+        }
+        // Not just businesses — every synchronised table's pre-existing stock
+        // must survive the migration marked as unsent.
+        for ((table, id, key) in listOf(
+            Triple("calls", "C1", "id"),
+            Triple("contacts", "K1", "id"),
+            Triple("contact_numbers", "N1", "id"),
+        )) {
+            db.rawQuery("SELECT dirty FROM $table WHERE $key = ?", arrayOf(id)).use { c ->
+                assertTrue("$table row missing after upgrade", c.moveToFirst())
+                assertEquals("$table not marked dirty after upgrade", 1, c.getInt(0))
+            }
         }
     }
 }
