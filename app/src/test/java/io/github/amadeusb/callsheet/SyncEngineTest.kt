@@ -191,6 +191,22 @@ class SyncEngineTest {
     }
 
     @Test
+    fun `a database error during a sync becomes a visible failure instead of crashing the app`() {
+        // SQLiteException is neither HttpFailure, JSONException nor
+        // IOException, so it would otherwise escape the engine, escape the
+        // coroutine in the view model, and take the process down — mid-call,
+        // the realistic case, since a sync starts right after logging one.
+        betrieb("P1")
+        val result = engine.sync(object : Transport {
+            override fun post(payload: JSONObject): JSONObject =
+                throw android.database.sqlite.SQLiteException("disk I/O error")
+        })
+        assertTrue(result is SyncResult.Failed && (result as SyncResult.Failed).kind == FailureKind.UNKNOWN)
+        assertEquals(0, prefs.watermark)
+        assertEquals(1, SyncStore(ctx).pendingCount())
+    }
+
+    @Test
     fun `hitting the round limit while work remains reports Incomplete, not Ok`() {
         prefs.lastSyncAt = "vorher"
         var calls = 0

@@ -78,6 +78,19 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
             return SyncResult.Failed(FailureKind.BAD_RESPONSE, "Die Antwort des Servers ließ sich nicht lesen.")
         } catch (failure: IOException) {
             return SyncResult.Failed(FailureKind.NETWORK, "Kein Netz.")
+        } catch (cancellation: kotlinx.coroutines.CancellationException) {
+            // Not a sync failure — the coroutine is being torn down (e.g. the
+            // screen closed mid-request) and must be allowed to keep
+            // unwinding, or structured concurrency breaks.
+            throw cancellation
+        } catch (unexpected: RuntimeException) {
+            // Nothing here is allowed to reach the caller uncaught. A local
+            // database error (SQLiteException — thrown mid-call, the
+            // realistic case, since a sync starts right after logging one) is
+            // the concrete finding, but the same rule holds for anything else
+            // this class did not anticipate: turn it into a visible failure
+            // instead of taking the process down.
+            return SyncResult.Failed(FailureKind.UNKNOWN, "Unerwarteter Fehler beim Abgleich.")
         } finally {
             running.set(false)
         }

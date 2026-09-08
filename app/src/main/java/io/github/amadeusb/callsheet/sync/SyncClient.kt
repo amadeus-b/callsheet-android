@@ -11,9 +11,12 @@ import java.net.URL
  * to the user directly. RATE_LIMITED and TOO_LARGE are their own kinds
  * because the engine reacts to them differently — see [SyncEngine].
  * BAD_RESPONSE covers a 200 whose body a broken server or an intercepting
- * proxy made unreadable as the JSON the contract promises.
+ * proxy made unreadable as the JSON the contract promises. UNKNOWN covers
+ * anything the engine did not expect at all — a local database error, for
+ * instance — so that it becomes a visible failure instead of taking the app
+ * down.
  */
-enum class FailureKind { NETWORK, AUTH, NOT_FOUND, RATE_LIMITED, TOO_LARGE, BAD_RESPONSE, SERVER }
+enum class FailureKind { NETWORK, AUTH, NOT_FOUND, RATE_LIMITED, TOO_LARGE, BAD_RESPONSE, SERVER, UNKNOWN }
 
 class HttpFailure(val kind: FailureKind, message: String) : IOException(message)
 
