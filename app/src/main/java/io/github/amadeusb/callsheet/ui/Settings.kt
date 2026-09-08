@@ -109,36 +109,6 @@ fun SettingsScreen(
                 .padding(inner)
                 .fillMaxSize(),
         ) {
-            item(key = "import") {
-                Section("Daten einlesen")
-                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                    Text(
-                        text = "Ein erneuter Import aktualisiert nur die Stammdaten. " +
-                            "Status, Notizen, Wiedervorlagen und die Anrufhistorie " +
-                            "bleiben unangetastet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Button(
-                        onClick = onImport,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
-                        shape = RoundedCornerShape(14.dp),
-                    ) {
-                        Icon(Icons.Filled.Add, contentDescription = null)
-                        Spacer(Modifier.width(12.dp))
-                        Text("Datei importieren", style = MaterialTheme.typography.titleMedium)
-                    }
-                }
-            }
-
-            if (lastImportResult != null) {
-                item(key = "import-result") {
-                    Spacer(Modifier.height(12.dp))
-                    ImportSummary(lastImportResult)
-                }
-            }
-
             item(key = "phone-book") {
                 Section("Telefonbuch")
                 PhoneBookBlock(
@@ -285,22 +255,32 @@ fun SettingsScreen(
             }
 
             item(key = "import") {
-                Section("Betriebe importieren")
+                Section("Daten einlesen")
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                     Text(
-                        text = "Liest eine Rechercheliste als JSON ein. Sitzt hier unten " +
-                            "und nicht in der Kopfzeile, weil es selten gebraucht wird — " +
-                            "und weil ein Kreispfeil neben einer App, die abgleichen kann, " +
-                            "wie „synchronisieren“ aussieht.",
+                        text = "Ein erneuter Import aktualisiert nur die Stammdaten. " +
+                            "Status, Notizen, Wiedervorlagen, Termine und die " +
+                            "Anrufhistorie bleiben unangetastet.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
+                    Spacer(Modifier.height(12.dp))
+                    Button(
                         onClick = { confirmImport = true },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
                         shape = RoundedCornerShape(14.dp),
-                    ) { Text("Datei auswählen …") }
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null)
+                        Spacer(Modifier.width(12.dp))
+                        Text("Datei importieren", style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            }
+
+            if (lastImportResult != null) {
+                item(key = "import-result") {
+                    Spacer(Modifier.height(12.dp))
+                    ImportSummary(lastImportResult)
                 }
             }
 
@@ -417,11 +397,11 @@ fun SettingsScreen(
             onDismissRequest = { confirmImport = false },
             title = { Text("Betriebe importieren?") },
             text = {
+                // The section above already says what an import touches. Here
+                // it only has to say what the next tap does, in one line.
                 Text(
-                    "Neue Betriebe kommen dazu. Bei bekannten werden die Stammdaten " +
-                        "aus der Datei überschrieben — Name, Branche, Anschrift, Nummer.\n\n" +
-                        "Deine Arbeit bleibt unangetastet: Status, Notiz, Wiedervorlage, " +
-                        "Termine und Anrufverlauf rührt ein Import nie an."
+                    "Name, Branche, Anschrift und Nummer bekannter Betriebe werden " +
+                        "aus der Datei überschrieben. Neue kommen dazu."
                 )
             },
             confirmButton = {
