@@ -236,6 +236,27 @@ class Repository(context: Context) {
             }
         }
 
+    /**
+     * Appointments starting between [fromMillis] and [toMillis], earliest first.
+     *
+     * Note the lower bound, which [due] does not have. An overdue follow-up is
+     * still work to do — "you never rang back". An appointment from a fortnight
+     * ago is not; it happened, or it did not, and either way it does not belong
+     * under a heading that reads "today".
+     */
+    suspend fun appointmentsDue(fromMillis: Long, toMillis: Long): List<Business> =
+        withContext(Dispatchers.IO) {
+            val sql = "SELECT b.*, $NUMBERS_SUBQUERY FROM businesses b WHERE status <> ? " +
+                "AND appointment_at IS NOT NULL AND appointment_at <> ''"
+            helper.readableDatabase.rawQuery(sql, arrayOf(Status.DO_NOT_CALL.key)).use { c ->
+                allBusinesses(c)
+                    .mapNotNull { b -> Clock.millis(b.appointmentAt)?.let { it to b } }
+                    .filter { it.first in fromMillis..toMillis }
+                    .sortedBy { it.first }
+                    .map { it.second }
+            }
+        }
+
     /** The blocked businesses — only so a mistaken block can be taken back. */
     suspend fun blockedBusinesses(): List<Business> = withContext(Dispatchers.IO) {
         val sql = "SELECT * FROM businesses WHERE status = ? ORDER BY name COLLATE NOCASE"
@@ -285,6 +306,26 @@ class Repository(context: Context) {
     suspend fun setFollowUp(placeId: String, iso: String?) = withContext(Dispatchers.IO) {
         updateBusiness(placeId) {
             if (iso == null) putNull("follow_up_at") else put("follow_up_at", iso)
+        }
+    }
+
+    /**
+     * Sets the appointment, or clears it when [at] is null. All four fields move
+     * together — a time without an end, or an event id without a time, would be
+     * a state nothing else in the app knows how to read.
+     */
+    suspend fun setAppointment(
+        placeId: String,
+        at: String?,
+        endAt: String?,
+        location: String?,
+        eventId: Long?,
+    ) = withContext(Dispatchers.IO) {
+        updateBusiness(placeId) {
+            if (at == null) putNull("appointment_at") else put("appointment_at", at)
+            if (endAt == null) putNull("appointment_end_at") else put("appointment_end_at", endAt)
+            if (location == null) putNull("appointment_location") else put("appointment_location", location)
+            if (eventId == null) putNull("calendar_event_id") else put("calendar_event_id", eventId)
         }
     }
 
@@ -722,12 +763,23 @@ class Repository(context: Context) {
         note = c.text("note"),
         followUpAt = c.text("follow_up_at"),
         updatedAt = c.text("updated_at") ?: "",
+        appointmentAt = c.text("appointment_at"),
+        appointmentEndAt = c.text("appointment_end_at"),
+        appointmentLocation = c.text("appointment_location"),
+        calendarEventId = c.long("calendar_event_id"),
+        latitude = c.decimal("latitude"),
+        longitude = c.decimal("longitude"),
         additionalNumbers = c.int("additional_numbers") ?: 0,
     )
 
     private fun Cursor.text(column: String): String? {
         val i = getColumnIndex(column)
         return if (i < 0 || isNull(i)) null else getString(i)
+    }
+
+    private fun Cursor.long(column: String): Long? {
+        val i = getColumnIndex(column)
+        return if (i < 0 || isNull(i)) null else getLong(i)
     }
 
     private fun Cursor.int(column: String): Int? {

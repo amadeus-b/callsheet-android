@@ -616,6 +616,98 @@ class RepositoryTest {
         )
     }
 
+
+    // -------------------------------------------------------------- Appointment
+
+    @Test
+    fun `an appointment is stored and read back`() = runTest {
+        import("""[{"placeId":"t-1","title":"Gartenbau Merten","phone":"+49 841 111"}]""")
+
+        repo.setAppointment(
+            placeId = "t-1",
+            at = "2026-09-10T14:00:00+02:00",
+            endAt = "2026-09-10T15:00:00+02:00",
+            location = "Zehentstraße 39, 85055 Ingolstadt",
+            eventId = 4711L,
+        )
+
+        val business = repo.business("t-1")!!
+        assertEquals("2026-09-10T14:00:00+02:00", business.appointmentAt)
+        assertEquals("2026-09-10T15:00:00+02:00", business.appointmentEndAt)
+        assertEquals("Zehentstraße 39, 85055 Ingolstadt", business.appointmentLocation)
+        assertEquals(4711L, business.calendarEventId)
+    }
+
+    @Test
+    fun `an appointment can be cleared completely`() = runTest {
+        import("""[{"placeId":"t-2","title":"Gartenbau Merten","phone":"+49 841 111"}]""")
+        repo.setAppointment("t-2", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Irgendwo", 12L)
+
+        repo.setAppointment("t-2", null, null, null, null)
+
+        val business = repo.business("t-2")!!
+        assertNull(business.appointmentAt)
+        assertNull(business.appointmentEndAt)
+        assertNull(business.appointmentLocation)
+        assertNull(business.calendarEventId)
+    }
+
+    @Test
+    fun `a second import leaves the appointment alone`() = runTest {
+        import("""[{"placeId":"t-3","title":"Gartenbau Merten","phone":"+49 841 111"}]""")
+        repo.setAppointment("t-3", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Zehentstraße 39", 99L)
+
+        import("""[{"placeId":"t-3","title":"Gartenbau Merten GmbH","phone":"+49 841 222"}]""")
+
+        val business = repo.business("t-3")!!
+        assertEquals("Gartenbau Merten GmbH", business.name)
+        assertEquals("2026-09-10T14:00:00+02:00", business.appointmentAt)
+        assertEquals(99L, business.calendarEventId)
+    }
+
+    @Test
+    fun `appointmentsDue returns the day's appointments in order`() = runTest {
+        import(
+            """[
+              {"placeId":"t-4","title":"Spaeter","phone":"+49 841 111"},
+              {"placeId":"t-5","title":"Frueher","phone":"+49 841 222"},
+              {"placeId":"t-6","title":"Uebermorgen","phone":"+49 841 333"}
+            ]"""
+        )
+        repo.setAppointment("t-4", "2026-09-10T15:00:00+02:00", "2026-09-10T16:00:00+02:00", null, null)
+        repo.setAppointment("t-5", "2026-09-10T09:00:00+02:00", "2026-09-10T10:00:00+02:00", null, null)
+        repo.setAppointment("t-6", "2026-09-12T09:00:00+02:00", "2026-09-12T10:00:00+02:00", null, null)
+
+        val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
+        val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
+        val due = repo.appointmentsDue(from, until)
+
+        assertEquals(listOf("t-5", "t-4"), due.map { it.placeId })
+    }
+
+    @Test
+    fun `a past appointment is not due today`() = runTest {
+        import("""[{"placeId":"t-9","title":"Vorletzte Woche","phone":"+49 841 111"}]""")
+        repo.setAppointment("t-9", "2026-08-27T09:00:00+02:00", "2026-08-27T10:00:00+02:00", null, null)
+
+        val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
+        val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
+
+        assertTrue(repo.appointmentsDue(from, until).isEmpty())
+    }
+
+    @Test
+    fun `a blocked business never appears in appointmentsDue`() = runTest {
+        import("""[{"placeId":"t-7","title":"Gesperrt","phone":"+49 841 111"}]""")
+        repo.setAppointment("t-7", "2026-09-10T09:00:00+02:00", "2026-09-10T10:00:00+02:00", null, null)
+        repo.setStatus("t-7", Status.DO_NOT_CALL)
+
+        val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
+        val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
+
+        assertTrue(repo.appointmentsDue(from, until).isEmpty())
+    }
+
     private companion object {
         /** Made-up data in the field structure from docs/data-model.md. */
         const val FIRST_IMPORT = """

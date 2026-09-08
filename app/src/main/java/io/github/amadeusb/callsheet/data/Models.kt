@@ -39,6 +39,15 @@ data class Business(
     val note: String?,
     val followUpAt: String?,
     val updatedAt: String,
+    /** The appointment on site. Null when none is set. */
+    val appointmentAt: String? = null,
+    val appointmentEndAt: String? = null,
+    val appointmentLocation: String? = null,
+    /** The linked event in the device calendar. Never synchronised. */
+    val calendarEventId: Long? = null,
+    /** From the import. Nothing reads them yet. */
+    val latitude: Double? = null,
+    val longitude: Double? = null,
     /**
      * How many dialable numbers hang off the contacts (fax excluded). Only the
      * list queries fill this in; everywhere else it stays 0.
@@ -180,6 +189,8 @@ data class ImportedBusiness(
     val isTarget: Boolean,
     val origin: List<String>,
     val collectedAt: String?,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
 )
 
 /**
