@@ -118,6 +118,12 @@ tries again the next time one of those moments comes around. The settings
 screen is where the truth lives — when the last full sync went through, and
 how many changes are still waiting to go up.
 
+The settings screen also carries an **„Alles erneut hochladen"** action,
+behind a confirmation. It marks the entire local stock as unsent, for the two
+situations a normal sync cannot recover from on its own: the server was
+restored from a backup older than this device's own watermark, or the app is
+being pointed at a server that has never seen this device's data at all.
+
 The server itself is a separate project; this repository contains only the
 client side.
 

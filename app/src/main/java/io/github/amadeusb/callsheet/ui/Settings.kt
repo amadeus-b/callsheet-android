@@ -71,9 +71,11 @@ fun SettingsScreen(
     onPushAll: () -> Unit,
     onSaveServer: (String, String) -> Unit,
     onSyncNow: () -> Unit,
+    onReuploadAll: () -> Unit,
 ) {
     var confirm by remember { mutableStateOf<Business?>(null) }
     var accountPicker by remember { mutableStateOf(false) }
+    var confirmReupload by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -193,6 +195,22 @@ fun SettingsScreen(
                             Spacer(Modifier.height(4.dp))
                             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                         }
+
+                        Spacer(Modifier.height(12.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Spacer(Modifier.height(12.dp))
+
+                        OutlinedButton(
+                            onClick = { confirmReupload = true },
+                            enabled = !syncState.running && syncState.url.isNotBlank(),
+                        ) { Text("Alles erneut hochladen") }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "Nötig nach dem Wiedereinspielen eines Server-Backups oder " +
+                                "beim Wechsel auf einen anderen Server.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -284,6 +302,29 @@ fun SettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { accountPicker = false }) { Text("Abbrechen") }
+            },
+        )
+    }
+
+    if (confirmReupload) {
+        AlertDialog(
+            onDismissRequest = { confirmReupload = false },
+            title = { Text("Alles erneut hochladen?") },
+            text = {
+                Text(
+                    "Der gesamte Bestand dieses Geräts wird beim nächsten Abgleich noch " +
+                        "einmal gesendet, auch was der Server schon kennt. Bei vielen " +
+                        "Betrieben kann das eine Weile dauern."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onReuploadAll()
+                    confirmReupload = false
+                }) { Text("Hochladen") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmReupload = false }) { Text("Abbrechen") }
             },
         )
     }

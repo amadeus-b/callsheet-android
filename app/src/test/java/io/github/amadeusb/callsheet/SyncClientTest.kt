@@ -5,9 +5,12 @@ import com.sun.net.httpserver.HttpServer
 import io.github.amadeusb.callsheet.sync.FailureKind
 import io.github.amadeusb.callsheet.sync.HttpFailure
 import io.github.amadeusb.callsheet.sync.SyncClient
+import io.github.amadeusb.callsheet.sync.isAcceptableServerAddress
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -157,5 +160,20 @@ class SyncClientTest {
             respond(exchange, 500, "")
         }
         assertEquals(FailureKind.SERVER, expectFailure(client).kind)
+    }
+
+    @Test
+    fun `an http address is not acceptable — Android would block it as cleartext`() {
+        assertFalse(isAcceptableServerAddress("http://beispiel.invalid"))
+    }
+
+    @Test
+    fun `an https address is acceptable`() {
+        assertTrue(isAcceptableServerAddress("https://beispiel.invalid"))
+    }
+
+    @Test
+    fun `a blank address is acceptable — that is how synchronisation gets turned off`() {
+        assertTrue(isAcceptableServerAddress(""))
     }
 }

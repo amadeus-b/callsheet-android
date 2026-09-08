@@ -186,12 +186,39 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setServer(url: String, token: String) {
-        preferences.serverUrl = url.ifBlank { null }
+        val trimmed = url.ifBlank { null }
+        // Compared against the normalised value already stored — Preferences
+        // trims and drops a trailing slash on the way in — so re-saving the
+        // same address unchanged does not look like a change.
+        val addressChanged = trimmed?.trim()?.trimEnd('/') != preferences.serverUrl
+        preferences.serverUrl = trimmed
         preferences.serverToken = token.ifBlank { null }
-        // A different server is a different watermark — otherwise the app would
-        // believe it had already read a stock it has never seen.
-        preferences.watermark = 0
-        refreshSyncState()
+        if (addressChanged) {
+            // A different server is a different watermark — otherwise the app
+            // would believe it had already read a stock it has never seen —
+            // and a different server has never seen this device's data
+            // either, so everything must go up again.
+            preferences.watermark = 0
+            viewModelScope.launch {
+                withContext(Dispatchers.IO) { syncStore.markAllDirty() }
+                refreshSyncState()
+            }
+        } else {
+            refreshSyncState()
+        }
+    }
+
+    /**
+     * Marks the entire local stock as unsent. For the settings screen, behind
+     * a confirmation — after restoring an older server backup, or before
+     * pointing the app at a server that has never seen this device's data.
+     * The jump in "offen" afterwards is the honest signal that it worked.
+     */
+    fun reuploadAll() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { syncStore.markAllDirty() }
+            refreshSyncState()
+        }
     }
 
     private fun refreshSyncState() {

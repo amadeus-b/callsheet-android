@@ -322,6 +322,41 @@ class SyncStoreTest {
     }
 
     @Test
+    fun `markAllDirty marks every synchronised table, regardless of prior state`() {
+        einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 0)
+        schreibe(
+            "INSERT INTO calls (id, place_id, started_at, duration_seconds, kind, updated_at, dirty) " +
+                "VALUES ('C1', 'P1', '2026-09-07T10:00:00+02:00', 10, 'call', '2026-09-07T10:00:00+02:00', 0)"
+        )
+        schreibe(
+            "INSERT INTO contacts (id, place_id, name, position, updated_at, dirty) " +
+                "VALUES ('K1', 'P1', 'Frau Meier', 0, '2026-09-07T10:00:00+02:00', 0)"
+        )
+        schreibe(
+            "INSERT INTO contact_numbers (id, contact_id, number, kind, position, updated_at, dirty) " +
+                "VALUES ('N1', 'K1', '+4917612345', 'mobile', 0, '2026-09-07T10:00:00+02:00', 0)"
+        )
+        store.markAllDirty()
+        assertEquals(4, store.pendingCount())
+    }
+
+    @Test
+    fun `applyTombstone keeps a local tombstone rewritten while the request was in flight`() {
+        // The same optimistic-lock guard clearPending already has, applied to
+        // the incoming side: a tombstone the server just echoed back must not
+        // erase a local tombstone for the same row that was (re-)written in
+        // the meantime with a different deleted_at — or it never goes out.
+        schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K1', '2026-09-07T12:00:00+02:00')")
+        val antwort = antwort().apply {
+            put("geloescht", JSONArray(listOf(JSONObject().apply {
+                put("table_name", "contacts"); put("row_id", "K1"); put("deleted_at", "2026-09-07T11:00:00+02:00")
+            })))
+        }
+        store.apply(antwort)
+        assertEquals(1, zahl("SELECT COUNT(*) FROM deletions WHERE table_name = 'contacts' AND row_id = 'K1'"))
+    }
+
+    @Test
     fun `timestamps are compared as instants`() {
         assertTrue(Merge.isNewer("2026-09-07T09:00:00+00:00", "2026-09-07T10:00:00+02:00"))
         assertFalse(Merge.isNewer("2026-09-07T10:00:00+02:00", "2026-09-07T10:00:00+02:00"))

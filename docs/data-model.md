@@ -177,6 +177,12 @@ it is compared as an instant in time, never as a string: two equivalent
 timestamps written with a different offset or format must resolve the same
 way.
 
+A device upgrading from before `dirty` existed marks its entire pre-existing
+stock as unsent as part of that migration — the column's own default of 0
+would otherwise tell the sync engine there was nothing to upload. The same
+"mark everything" step is available afterwards from the settings screen, for
+a server restored from an older backup or a switch to a different server.
+
 ## Phone book
 
 So that a call back has a name attached, the app stores contacts and called

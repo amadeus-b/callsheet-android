@@ -24,6 +24,17 @@ interface Transport {
     fun post(payload: JSONObject): JSONObject
 }
 
+/**
+ * Whether a server address is even worth trying. Android blocks cleartext
+ * HTTP from API 28 onward (this app has no network security config opting
+ * back in), so an `http://` address would otherwise fail with a network
+ * error that reads like a connectivity problem rather than the configuration
+ * mistake it is. Blank is accepted — that is how synchronisation gets turned
+ * off.
+ */
+fun isAcceptableServerAddress(url: String): Boolean =
+    url.isBlank() || url.startsWith("https://")
+
 /** One request, one response. No retries here — the engine decides that. */
 class SyncClient(private val url: String, private val token: String) : Transport {
 

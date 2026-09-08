@@ -241,6 +241,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             onPushAll = vm::pushAllToPhoneBook,
             onSaveServer = vm::setServer,
             onSyncNow = { vm.syncNow(quiet = false) },
+            onReuploadAll = vm::reuploadAll,
         )
     }
 

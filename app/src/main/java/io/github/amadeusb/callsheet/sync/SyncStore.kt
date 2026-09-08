@@ -41,6 +41,28 @@ class SyncStore(context: Context) {
         return payload
     }
 
+    /**
+     * Marks every row in the four synchronised tables as unsent, regardless of
+     * whether it changed. Needed when a server's own history no longer lines
+     * up with what this device already sent it — after restoring an older
+     * server backup (its watermark falls below the device's, and the marks
+     * for that period were already cleared the first time they were
+     * acknowledged) or when pointing the app at a server that has never seen
+     * any of this device's data at all.
+     */
+    fun markAllDirty() {
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            for (table in Rows.TABLES) {
+                db.execSQL("UPDATE $table SET dirty = 1")
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun pendingCount(): Int {
         val db = helper.readableDatabase
         var total = 0
@@ -201,7 +223,14 @@ class SyncStore(context: Context) {
         // The tombstone came from the server, so it is already known there.
         // `deletions` also doubles as the outgoing queue — a local copy of
         // the same tombstone must not travel back up as if it were ours.
-        db.delete("deletions", "table_name = ? AND row_id = ?", arrayOf(table, id))
+        // Only clear it if it is exactly the one just acknowledged: one
+        // (re-)written locally while the request was in flight — a different
+        // `deleted_at` — must survive so it still goes out. Same guard as
+        // `clearPending`.
+        db.delete(
+            "deletions", "table_name = ? AND row_id = ? AND deleted_at = ?",
+            arrayOf(table, id, at),
+        )
 
         val localAt = db.rawQuery("SELECT updated_at FROM $table WHERE ${Rows.key(table)} = ?", arrayOf(id))
             .use { if (it.moveToFirst()) it.getString(0) else null }

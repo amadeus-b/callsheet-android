@@ -158,4 +158,19 @@ A sync runs in blocks with a round cap, so a large backlog is worked through
 over several calls rather than one open-ended request. Failures never
 interrupt whatever the user is doing; they surface only in the settings
 screen, as a plain count of what is still waiting to go up and the time of
-the last sync that went all the way through.
+the last sync that went all the way through. No exception is allowed to
+escape the engine — a local database error is turned into the same kind of
+visible failure a network problem would be, rather than taking the app down
+mid-call.
+
+Everything the device already held before it ever knew about synchronisation
+comes out of the version-2 migration marked as unsent — otherwise a device
+upgrading from an earlier build would never upload its existing stock at all.
+The same mark-everything primitive is exposed in the settings screen as
+„Alles erneut hochladen", for the two cases the ordinary dirty tracking cannot
+recover from by itself: a server restored from a backup older than this
+device's watermark (whose marks for that period were already cleared the
+first time they were acknowledged), and pointing the app at a server that has
+never seen this device's data. Saving a genuinely different server address
+resets the watermark and marks everything for the same reason; saving the
+same address again does neither.
