@@ -189,6 +189,12 @@ provider, and the same number on another device would be a different appointment
 or none at all. A second device therefore learns when and where the appointment
 is, and links it to its own calendar the next time it is saved there.
 
+A column added to a table later must be **nullable**. The server fills a gap in
+a row it already holds only where it finds NULL; a column declared NOT NULL with
+a default carries that default on every existing row, which is not a gap and
+cannot be filled. Every appointment column added in schema 3 is nullable for
+this reason.
+
 A device upgrading from before `dirty` existed marks its entire pre-existing
 stock as unsent as part of that migration — the column's own default of 0
 would otherwise tell the sync engine there was nothing to upload. The same

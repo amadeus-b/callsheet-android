@@ -12,12 +12,28 @@ on screen.
    duration after hanging up. If the permission is refused, everything still
    works — the status is then set by hand. It does not ask again.
 2. Put the import file on the device; the download folder will do.
-3. Pick the file through the import button. After reading it, the app reports how
-   many businesses are new, how many were updated and how many have no phone
-   number.
+3. Open **Einstellungen**, scroll to the bottom to **Betriebe importieren**, and
+   pick the file. The app says first what an import does and does not touch;
+   after reading it, it reports how many businesses are new, how many were
+   updated and how many have no phone number.
 
-Importing the same or an extended file later is safe: status, note, follow-up and
-call history stay untouched, only the master data is refreshed.
+Importing the same or an extended file later is safe: status, note, follow-up,
+appointments and call history stay untouched, only the master data is refreshed.
+
+## Synchronising with a server
+
+Optional, and off until an address is entered. Under **Abgleich**, **Server
+verbinden** asks for the address and the access key, then tries them at once:
+either it goes through and the section shows what was last exchanged, or it says
+what went wrong — a rejected key and an address that answers nothing read
+differently, so the message names which of the two to fix.
+
+There is no button to synchronise by hand. It happens every time the app comes
+to the front.
+
+**Alles erneut hochladen** sends this device's entire stock again and starts
+reading the server from the beginning. It is for after a restored server backup
+or a move to a different server, not for everyday use.
 
 ## Before the first call
 
