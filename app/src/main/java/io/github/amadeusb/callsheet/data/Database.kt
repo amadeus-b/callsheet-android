@@ -87,6 +87,11 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             for (table in listOf("businesses", "calls", "contacts", "contact_numbers")) {
                 db.execSQL("ALTER TABLE $table ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("CREATE INDEX idx_${table}_dirty ON $table(dirty)")
+                // A row that existed before synchronisation was added has never
+                // been sent anywhere. Leaving it at the column's default of 0
+                // would tell the sync engine there is nothing to upload — the
+                // device's entire stock would silently never reach the server.
+                db.execSQL("UPDATE $table SET dirty = 1")
             }
             // Calls and phone numbers had no change timestamp of their own. Without
             // one, there would be no way to tell which version is newer for a note
