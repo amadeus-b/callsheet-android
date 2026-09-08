@@ -33,6 +33,15 @@ if [ -n "$(git status --porcelain)" ]; then
     fail "Arbeitsverzeichnis nicht sauber. Erst committen, dann veröffentlichen."
 fi
 
+# Der Release-Commit und der Tag gehören auf main, und der Push weiter unten
+# schiebt den Zweig, auf dem das Skript läuft. Von einem Feature-Zweig aus
+# entstünde also ein Zweig auf origin statt eines Releases; von master aus ginge
+# die lokale Vorgeschichte öffentlich. Beides fällt hier auf, vor dem Bauen.
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$BRANCH" != "main" ]; then
+    fail "Release läuft nur auf main, hier ist es \"$BRANCH\". Erst nach main bringen, dann veröffentlichen."
+fi
+
 CURRENT_VERSION=$(grep '^versionName=' "$VERSION_FILE" | cut -d= -f2)
 CURRENT_CODE=$(grep '^versionCode=' "$VERSION_FILE" | cut -d= -f2)
 
@@ -110,7 +119,9 @@ step "Commit und Tag"
 git add "$VERSION_FILE"
 git commit -m "Release $NEW_VERSION"
 git tag -a "$TAG" -m "Callsheet $NEW_VERSION"
-git push origin HEAD --tags
+# Ausdrücklich main statt HEAD: der Zweig steht oben schon fest, und benannt
+# bleibt es richtig, falls jemand die Prüfung später lockert.
+git push origin main --tags
 
 step "GitHub-Release"
 gh release create "$TAG" "$APK" \
