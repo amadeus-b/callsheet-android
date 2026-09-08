@@ -4,7 +4,9 @@
 
 **Goal:** Give an appointment its own time, duration and location on a business, mirrored into the device calendar, so an on-site visit stops living in a status flag.
 
-**Architecture:** Four working columns and two coordinate columns on `businesses`, behind the app's first schema migration. A `calendar/` package that writes to and reads from `CalendarContract` — the same arrangement `contacts/` already has with `ContactsContract`, where DAVx5 does the protocol. The detail view gains a section and a bottom sheet; the calendar owns the time and wins on read-back.
+**Architecture:** Four working columns and two coordinate columns on `businesses`, behind a schema migration to version 3. A `calendar/` package that writes to and reads from `CalendarContract` — the same arrangement `contacts/` already has with `ContactsContract`, where DAVx5 does the protocol. The detail view gains a section and a bottom sheet; the calendar owns the time and wins on read-back.
+
+**Baseline:** this plan was written against 1.0.2 and is being carried out against **1.1.0**, which added synchronisation with a server of the user's own. Three things follow, and all three are already worked into the tasks below: the schema goes to version **3**, not 2; the appointment fields ride along to the server through `Rows.toJson` while `calendar_event_id` stays on the device; and `Repository.updateBusiness` now marks a row `dirty` by itself, so `setAppointment` needs nothing extra to be uploaded. This work is release **1.2.0**.
 
 **Tech Stack:** Kotlin, Jetpack Compose, Material 3, SQLite through `SQLiteOpenHelper`, `CalendarContract`, JUnit 4 + Robolectric.
 
@@ -24,6 +26,7 @@
 - Commit messages in German, imperative or descriptive, no attribution lines.
 - **Test names in English**, like all 26 that already exist. Only the fixture
   method is German (`fun aufbau()`) — keep that, it is the established name.
+- **Line numbers in this plan are stale.** It was written against 1.0.2; 1.1.0 moved code in nearly every file it touches. Find things by name — a symbol, a nearby comment — not by line.
 - **State writes:** the view model today writes `_state.value = _state.value.copy(...)` and never uses `update`. This plan's snippets use `_state.update { … }`, which is the thread-safe form. Add `import kotlinx.coroutines.flow.update` once in Task 7 and use it consistently from there on; do not convert the existing call sites as part of this work.
 
 ---
@@ -55,7 +58,8 @@ and get checked by hand in Task 15.
 
 | File | Change |
 |---|---|
-| `data/Database.kt` | Six columns, `VERSION` 2, a real `onUpgrade`. |
+| `data/Database.kt` | Six columns, `VERSION` 3, a second `onUpgrade` block. |
+| `sync/Rows.kt` | `calendar_event_id` onto the local-only list. |
 | `data/Models.kt` | Six fields on `Business`, two on `ImportedBusiness`. |
 | `data/Repository.kt` | Read the six columns, `setAppointment`, `appointmentsDue`, coordinates on import. |
 | `data/Importer.kt` | Read `location.lat` / `location.lng`. |
@@ -76,20 +80,41 @@ The order below is deliberate: everything testable without a screen comes first,
 
 **Files:**
 - Modify: `app/src/main/java/io/github/amadeusb/callsheet/data/Database.kt`
+- Modify: `app/src/main/java/io/github/amadeusb/callsheet/sync/Rows.kt`
 - Test: `app/src/test/java/io/github/amadeusb/callsheet/MigrationTest.kt` (create)
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: columns `appointment_at`, `appointment_end_at`, `appointment_location`, `calendar_event_id`, `latitude`, `longitude` on `businesses`; `Database.VERSION == 2`.
+- Produces: columns `appointment_at`, `appointment_end_at`, `appointment_location`, `calendar_event_id`, `latitude`, `longitude` on `businesses`; `Database.VERSION == 3`; `calendar_event_id` in `Rows.LOCAL_ONLY`.
+
+**Version 3, not 2.** Release 1.1.0 took version 2 for the synchronisation
+migration — `dirty` on four tables, `updated_at` on `calls` and
+`contact_numbers`, and the `deletions` table. A device already on 1.1.0 sits at
+version 2, so an `old < 2` block would never run there: the six columns would
+never be created, and the first read would throw on the user's phone rather than
+in a test. The new block is therefore `old < 3`, added *after* the existing one,
+as a second `if` and not an `else if` — a device coming from 1.0.2 has to walk
+through both in order.
+
+**`calendar_event_id` does not synchronise.** `Rows.toJson` sends every column it
+finds except those in `LOCAL_ONLY`, so the three appointment fields and the two
+coordinates travel to the server by themselves, which is what should happen. The
+event id must not: it points into one device's calendar provider, and the same
+number on a second device is somebody else's appointment or nothing at all.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `app/src/test/java/io/github/amadeusb/callsheet/MigrationTest.kt`:
+Create `app/src/test/java/io/github/amadeusb/callsheet/MigrationTest.kt`.
+
+Note the fixture: the version 1 database has to carry **all four** synchronised
+tables, not only `businesses`. The 1.1.0 migration runs first on that path and
+does `ALTER TABLE calls ADD COLUMN dirty` — against a fixture that only builds
+`businesses`, the migration throws and the test fails for a reason that has
+nothing to do with appointments.
 
 ```kotlin
 package io.github.amadeusb.callsheet
 
-import android.content.ContentValues
 import androidx.test.core.app.ApplicationProvider
 import io.github.amadeusb.callsheet.data.Database
 import org.junit.Assert.assertEquals
@@ -101,8 +126,13 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * The app's first migration. A version 1 database carries weeks of phone calls;
- * losing it would be the worst bug this app could have.
+ * The appointment migration, on both roads that lead to it: from the schema that
+ * shipped first, and from the one synchronisation left behind.
+ *
+ * A database in the field carries weeks of phone calls. Losing it would be the
+ * worst bug this app could have, which is why the fixtures below are written out
+ * by hand rather than generated — they have to keep saying what actually
+ * shipped, even after `Database.kt` moves on.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -110,12 +140,21 @@ class MigrationTest {
 
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
 
+    private val appointmentColumns = listOf(
+        "appointment_at", "appointment_end_at", "appointment_location",
+        "calendar_event_id", "latitude", "longitude",
+    )
+
     @Before
     fun aufbau() {
         context.deleteDatabase("callsheet.db")
     }
 
-    /** The version 1 schema, exactly as it shipped. Do not "tidy" this up. */
+    /**
+     * The version 1 schema, as it shipped in 1.0.2. All four synchronised tables:
+     * the 1.1.0 migration alters every one of them on the way past, and would
+     * throw on a fixture that only built `businesses`.
+     */
     private fun createVersionOne() {
         val db = context.openOrCreateDatabase("callsheet.db", 0, null)
         db.execSQL(
@@ -146,25 +185,68 @@ class MigrationTest {
             )
             """.trimIndent()
         )
+        db.execSQL(
+            "CREATE TABLE calls (id TEXT PRIMARY KEY, place_id TEXT NOT NULL, " +
+                "started_at TEXT NOT NULL, duration_seconds INTEGER NOT NULL, outcome TEXT, " +
+                "note TEXT, kind TEXT NOT NULL DEFAULT 'call', contact TEXT)"
+        )
+        db.execSQL(
+            "CREATE TABLE contacts (id TEXT PRIMARY KEY, place_id TEXT NOT NULL, " +
+                "name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"
+        )
+        db.execSQL(
+            "CREATE TABLE contact_numbers (id TEXT PRIMARY KEY, contact_id TEXT NOT NULL, " +
+                "number TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'other', " +
+                "position INTEGER NOT NULL DEFAULT 0)"
+        )
+        db.execSQL(
+            "INSERT INTO businesses (place_id, name, status, note, follow_up_at, updated_at) " +
+                "VALUES ('alt-1', 'Bestandsbetrieb', 'called', 'Rückruf zugesagt', " +
+                "'2026-09-10T09:00:00+02:00', '2026-09-07T12:00:00+02:00')"
+        )
         db.version = 1
-        db.insert("businesses", null, ContentValues().apply {
-            put("place_id", "alt-1")
-            put("name", "Bestandsbetrieb")
-            put("status", "called")
-            put("note", "Rückruf zugesagt")
-            put("follow_up_at", "2026-09-10T09:00:00+02:00")
-            put("updated_at", "2026-09-07T12:00:00+02:00")
-        })
         db.close()
     }
 
+    /**
+     * The version 2 schema, as it shipped in 1.1.0: version 1 plus what
+     * synchronisation added. Only the columns this test reads are spelled out.
+     */
+    private fun createVersionTwo() {
+        createVersionOne()
+        val db = context.openOrCreateDatabase("callsheet.db", 0, null)
+        for (table in listOf("businesses", "calls", "contacts", "contact_numbers")) {
+            db.execSQL("ALTER TABLE $table ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0")
+        }
+        db.execSQL("ALTER TABLE calls ADD COLUMN updated_at TEXT")
+        db.execSQL("ALTER TABLE contact_numbers ADD COLUMN updated_at TEXT")
+        db.execSQL(
+            "CREATE TABLE deletions (table_name TEXT NOT NULL, row_id TEXT NOT NULL, " +
+                "deleted_at TEXT NOT NULL, PRIMARY KEY (table_name, row_id))"
+        )
+        db.execSQL("UPDATE businesses SET dirty = 1")
+        db.version = 2
+        db.close()
+    }
+
+    private fun columnsOfBusinesses(): Set<String> =
+        Database(context).readableDatabase
+            .rawQuery("PRAGMA table_info(businesses)", null).use { c ->
+                generateSequence { if (c.moveToNext()) c.getString(1) else null }.toSet()
+            }
+
+    // --- from version 1, the long road --------------------------------------
+
     @Test
-    fun `the migration keeps the working data`() {
+    fun `an upgrade from version one keeps the working data`() {
         createVersionOne()
 
         val db = Database(context).readableDatabase
 
-        db.rawQuery("SELECT status, note, follow_up_at FROM businesses WHERE place_id = ?", arrayOf("alt-1")).use { c ->
+        db.rawQuery(
+            "SELECT status, note, follow_up_at FROM businesses WHERE place_id = ?",
+            arrayOf("alt-1"),
+        ).use { c ->
             assertTrue(c.moveToFirst())
             assertEquals("called", c.getString(0))
             assertEquals("Rückruf zugesagt", c.getString(1))
@@ -173,17 +255,32 @@ class MigrationTest {
     }
 
     @Test
-    fun `the migration adds the six columns empty`() {
+    fun `an upgrade from version one runs the sync migration too`() {
         createVersionOne()
+
+        val db = Database(context).readableDatabase
+
+        // Both blocks have to run, in order. If `old < 3` were an `else if`, or
+        // sat before the sync block, this row would come out unmarked and the
+        // device's entire stock would never reach the server.
+        db.rawQuery("SELECT dirty FROM businesses WHERE place_id = ?", arrayOf("alt-1")).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals(1, c.getInt(0))
+        }
+        assertTrue(columnsOfBusinesses().containsAll(appointmentColumns))
+    }
+
+    // --- from version 2, the road real devices are on -----------------------
+
+    @Test
+    fun `an upgrade from version two adds the six columns empty`() {
+        createVersionTwo()
 
         val db = Database(context).readableDatabase
 
         db.rawQuery("SELECT * FROM businesses WHERE place_id = ?", arrayOf("alt-1")).use { c ->
             assertTrue(c.moveToFirst())
-            for (column in listOf(
-                "appointment_at", "appointment_end_at", "appointment_location",
-                "calendar_event_id", "latitude", "longitude",
-            )) {
+            for (column in appointmentColumns) {
                 val index = c.getColumnIndex(column)
                 assertTrue("Spalte $column fehlt", index >= 0)
                 assertTrue("Spalte $column ist nicht leer", c.isNull(index))
@@ -192,17 +289,26 @@ class MigrationTest {
     }
 
     @Test
-    fun `a fresh database has the same columns`() {
+    fun `an upgrade from version two leaves synchronisation alone`() {
+        createVersionTwo()
+
         val db = Database(context).readableDatabase
 
-        db.rawQuery("SELECT * FROM businesses LIMIT 0", null).use { c ->
-            for (column in listOf(
-                "appointment_at", "appointment_end_at", "appointment_location",
-                "calendar_event_id", "latitude", "longitude",
-            )) {
-                assertTrue("Spalte $column fehlt", c.getColumnIndex(column) >= 0)
-            }
+        db.rawQuery("SELECT note, dirty FROM businesses WHERE place_id = ?", arrayOf("alt-1")).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("Rückruf zugesagt", c.getString(0))
+            assertEquals(1, c.getInt(1))
         }
+        db.rawQuery("SELECT COUNT(*) FROM deletions", null).use { c ->
+            assertTrue(c.moveToFirst())
+        }
+    }
+
+    // --- and a database that never had to migrate at all ---------------------
+
+    @Test
+    fun `a fresh database has the same columns`() {
+        assertTrue(columnsOfBusinesses().containsAll(appointmentColumns))
     }
 }
 ```
@@ -210,11 +316,13 @@ class MigrationTest {
 - [ ] **Step 2: Run the test and watch it fail**
 
 Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.MigrationTest"`
-Expected: FAIL — `Spalte appointment_at fehlt`, because `onUpgrade` does nothing and `onCreate` has no such column.
+Expected: FAIL — `Spalte appointment_at fehlt`, because `onUpgrade` knows nothing
+about version 3 and `onCreate` has no such column.
 
 - [ ] **Step 3: Add the columns to `onCreate`**
 
-In `Database.kt`, inside the `CREATE TABLE businesses` block, after the `search_text` line:
+In `Database.kt`, inside the `CREATE TABLE businesses` block, after the
+`search_text` line (mind the comma — `search_text` is currently last):
 
 ```kotlin
                 search_text     TEXT,
@@ -223,7 +331,8 @@ In `Database.kt`, inside the `CREATE TABLE businesses` block, after the `search_
                 appointment_at       TEXT,
                 appointment_end_at   TEXT,
                 appointment_location TEXT,
-                -- The linked event in the device calendar, null while none exists.
+                -- The linked event in the device calendar, null while none
+                -- exists. Local to this device — see Rows.LOCAL_ONLY.
                 calendar_event_id    INTEGER,
                 -- Master data from the import, filled like every other imported
                 -- column. Nothing reads them yet.
@@ -233,12 +342,12 @@ In `Database.kt`, inside the `CREATE TABLE businesses` block, after the `search_
 
 - [ ] **Step 4: Write the migration**
 
-Replace `onUpgrade` and bump `VERSION`:
+In `onUpgrade`, **after** the existing `if (old < 2)` block, leaving it untouched:
 
 ```kotlin
-    override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
-        // Never discard working data — only add to it.
-        if (old < 2) {
+        if (old < 3) {
+            // Appointments. Nothing to mark dirty here: the columns arrive
+            // empty, so no existing row has anything new to tell the server.
             db.execSQL("ALTER TABLE businesses ADD COLUMN appointment_at TEXT")
             db.execSQL("ALTER TABLE businesses ADD COLUMN appointment_end_at TEXT")
             db.execSQL("ALTER TABLE businesses ADD COLUMN appointment_location TEXT")
@@ -247,13 +356,15 @@ Replace `onUpgrade` and bump `VERSION`:
             db.execSQL("ALTER TABLE businesses ADD COLUMN longitude REAL")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_businesses_appointment ON businesses(appointment_at)")
         }
-    }
 ```
+
+Two separate `if`s, never `else if`: a device still on 1.0.2 has to walk through
+the synchronisation block and then this one.
 
 And in the companion object:
 
 ```kotlin
-        const val VERSION = 2
+        const val VERSION = 3
 ```
 
 Add the matching index to `onCreate`, next to the other `CREATE INDEX` calls:
@@ -262,22 +373,64 @@ Add the matching index to `onCreate`, next to the other `CREATE INDEX` calls:
         db.execSQL("CREATE INDEX idx_businesses_appointment ON businesses(appointment_at)")
 ```
 
-- [ ] **Step 5: Run the tests and watch them pass**
+- [ ] **Step 5: Keep the event id off the wire**
 
-Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.MigrationTest"`
-Expected: PASS, three tests.
+In `sync/Rows.kt`:
 
-- [ ] **Step 6: Run the whole suite**
+```kotlin
+    /**
+     * Columns that never leave the device.
+     *
+     * `calendar_event_id` points into this device's calendar provider. The same
+     * number on another device is a different appointment, or none — sending it
+     * would make the second device claim an entry it does not own.
+     */
+    private val LOCAL_ONLY = setOf("dirty", "contact_version", "calendar_event_id")
+```
+
+The three appointment fields and the two coordinates are deliberately *not* in
+here: they are work, and work is what synchronisation is for.
+
+Append to `SyncSchemaTest.kt`:
+
+```kotlin
+    @Test
+    fun `the calendar event id stays on the device`() {
+        val row = JSONObject().apply {
+            put("place_id", "P1")
+            put("appointment_at", "2026-09-10T14:00:00+02:00")
+            put("calendar_event_id", 4711)
+        }
+
+        val values = Rows.toValues(row, setOf("place_id", "appointment_at", "calendar_event_id"))
+
+        assertEquals("2026-09-10T14:00:00+02:00", values.getAsString("appointment_at"))
+        assertFalse("calendar_event_id must not come in from the server", values.containsKey("calendar_event_id"))
+    }
+```
+
+with `import io.github.amadeusb.callsheet.sync.Rows`, `import org.json.JSONObject`
+and `import org.junit.Assert.assertFalse`.
+
+- [ ] **Step 6: Run the tests and watch them pass**
+
+Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.MigrationTest" --tests "io.github.amadeusb.callsheet.SyncSchemaTest"`
+Expected: PASS.
+
+- [ ] **Step 7: Run the whole suite**
 
 Run: `./gradlew testDebugUnitTest`
-Expected: PASS. `RepositoryTest` reads `SELECT *` and must be unaffected.
+Expected: PASS. `RepositoryTest` and the sync tests read `SELECT *` and must be
+unaffected.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add app/src/main/java/io/github/amadeusb/callsheet/data/Database.kt \
-        app/src/test/java/io/github/amadeusb/callsheet/MigrationTest.kt
-git commit -m "Datenbank v2: Terminspalten und Koordinaten"
+        app/src/main/java/io/github/amadeusb/callsheet/sync/Rows.kt \
+        app/src/test/java/io/github/amadeusb/callsheet/MigrationTest.kt \
+        app/src/test/java/io/github/amadeusb/callsheet/SyncSchemaTest.kt
+git commit -m "Datenbank v3: Terminspalten und Koordinaten"
 ```
 
 ---
@@ -1466,7 +1619,7 @@ And the picker dialog, next to the address book one:
 
 - [ ] **Step 4: Wire up the call site**
 
-In `MainActivity.kt`, add a launcher next to `contactPermissions` (line 67), built the same way:
+In `MainActivity.kt`, add a launcher next to `contactPermissions`, built the same way:
 
 ```kotlin
     // Calendar permission: only once the user switches the calendar on —
@@ -1478,7 +1631,7 @@ In `MainActivity.kt`, add a launcher next to `contactPermissions` (line 67), bui
     }
 ```
 
-and pass the new parameters where `SettingsScreen` is called (around line 213), mirroring the `onPhoneBook` handler:
+and pass the new parameters where `SettingsScreen` is called, mirroring the `onPhoneBook` handler:
 
 ```kotlin
             calendarEnabled = state.calendarEnabled,
@@ -1716,7 +1869,7 @@ and inside `object Appointment`:
 - [ ] **Step 5: Run the tests and watch them pass**
 
 Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.AppointmentTest"`
-Expected: PASS, twenty-one tests.
+Expected: PASS, seventeen tests — the eleven from Task 4 plus these six.
 
 - [ ] **Step 6: Write the view model actions**
 
@@ -1771,10 +1924,24 @@ Expected: PASS, twenty-one tests.
 
     fun updateAppointmentDraft(draft: AppointmentDraft) {
         val previous = _state.value.appointmentDraft
-        _state.update { it.copy(appointmentDraft = draft.copy(conflict = emptyList())) }
         val previousDay = Clock.todayStart(Clock.millis(previous?.startIso) ?: 0L)
         val newDay = Clock.todayStart(Clock.millis(draft.startIso) ?: return)
-        if (previous == null || previousDay != newDay) {
+        val dayChanged = previous == null || previousDay != newDay
+
+        // On a new day the old day's busy times are dropped straight away.
+        // Keeping them until the reload returns would place yesterday's
+        // appointments against today's midnight — foreign blocks standing at
+        // times nobody is busy.
+        _state.update {
+            it.copy(
+                appointmentDraft = draft.copy(
+                    conflict = emptyList(),
+                    busy = if (dayChanged) emptyList() else draft.busy,
+                )
+            )
+        }
+
+        if (dayChanged) {
             viewModelScope.launch {
                 loadBusy(Clock.millis(draft.startIso)!!, repo.business(draft.placeId)?.calendarEventId)
             }
@@ -1790,7 +1957,8 @@ Expected: PASS, twenty-one tests.
         val draft = _state.value.appointmentDraft ?: return
         viewModelScope.launch {
             val startMillis = Clock.millis(draft.startIso) ?: return@launch
-            val endMillis = startMillis + draft.minutes * 60_000L
+            val endIsoFromDraft = Appointment.endOf(draft.startIso, draft.minutes)
+            val endMillis = Clock.millis(endIsoFromDraft) ?: return@launch
             val business = repo.business(draft.placeId)
             val location = draft.location.trim().ifEmpty { null }
 
@@ -1820,7 +1988,7 @@ Expected: PASS, twenty-one tests.
             // Adopting takes the calendar's values, so the columns written below
             // differ per plan. Every other case writes the draft.
             var atIso = draft.startIso
-            var endIso = Clock.format(endMillis)
+            var endIso = endIsoFromDraft
             var place = location
 
             val eventId: Long? = when (plan) {
@@ -1830,12 +1998,22 @@ Expected: PASS, twenty-one tests.
                         atIso = Clock.format(event.startMillis)
                         endIso = Clock.format(event.endMillis)
                         place = event.location ?: location
+                        plan.eventId
+                    } else {
+                        // Gone between listing the day and pressing save. Linking
+                        // to an id that no longer resolves would leave a business
+                        // pointing at nothing; keep the draft and no link.
+                        null
                     }
-                    plan.eventId
                 }
+                // A failed update usually means the event is gone — deleted in
+                // the calendar between opening the sheet and saving it. Falling
+                // back to a new one is what the user asked for; reporting "could
+                // not be written" and pointing at the permission would be a lie.
                 is SavePlan.Update -> plan.eventId.takeIf {
                     CalendarStore.update(getApplication(), it, fields)
-                }
+                } ?: preferences.calendarId?.let { CalendarStore.insert(getApplication(), it, fields) }
+
                 SavePlan.Create ->
                     preferences.calendarId?.let { CalendarStore.insert(getApplication(), it, fields) }
                 SavePlan.LocalOnly -> null
@@ -1905,15 +2083,16 @@ git commit -m "Termin speichern: Spalten, Status und Kalendereintrag"
 - Consumes: `AppointmentDraft`, `Appointment`, `BusyInterval`, `Clock`.
 - Produces: `@Composable fun AppointmentSheet(draft: AppointmentDraft, onDraft: (AppointmentDraft) -> Unit, onSave: () -> Unit, onLink: (Long) -> Unit, onForce: () -> Unit, onPickDate: () -> Unit, onDismiss: () -> Unit)`
 
-Three things decide whether this screen works, and all three are easy to get
+Four things decide whether this screen works, and all four are easy to get
 wrong:
 
 **The timeline covers the whole day, not eight to eighteen.** `Appointment`
 documents and tests that a Saturday at 18:30 is a legitimate appointment,
 because the customer decided it. A strip that stops at 18 would make the case
 the test celebrates unreachable in the interface. The strip therefore runs 0 to
-24 in its own scroll area, opened at 7:00 — the working day is where it starts,
-not where it ends.
+24 in its own scroll area. It opens on the appointment being set, one hour of
+run-up above it, so changing an evening appointment does not start by hunting
+for it; a fresh one lands in the working day anyway.
 
 **Dragging needs an accumulator.** `detectDragGestures` reports a few pixels per
 frame. Rounding each frame to the nearest quarter hour yields zero every time
@@ -1923,6 +2102,15 @@ snap has to subtract what it consumed.
 **`pointerInput` needs a stable key.** Keying it on anything that changes during
 the drag restarts the recogniser mid-gesture. The key is `Unit`, and the current
 draft reaches the gesture through `rememberUpdatedState` instead of the closure.
+
+**The drag sits inside a vertical scroll, and the two want the same gesture.**
+The block is dragged up and down inside a strip that itself scrolls up and down.
+Compose dispatches to the child first, so `detectDragGestures` gets the chance to
+consume before the scroll container sees it — but this is the classic place for a
+picker to end up scrolling when the user meant to move the appointment. It cannot
+be proved from reading; Step 3 checks it on a device, and if the strip wins,
+`awaitEachGesture` with `awaitFirstDown(requireUnconsumed = false)` is the way
+out.
 
 - [ ] **Step 1: Write the sheet**
 
@@ -1979,8 +2167,8 @@ import kotlin.math.roundToInt
 /** An hour's height. A minute is therefore HOUR_HEIGHT / 60, everywhere. */
 private val HOUR_HEIGHT = 56.dp
 
-/** Where the strip opens. The working day is the common case, not the only one. */
-private const val OPENS_AT_HOUR = 7
+/** How much run-up is shown above the appointment when the strip opens. */
+private const val RUN_UP_HOURS = 1
 
 /** Nobody agrees an appointment at 14:07. */
 private const val SNAP_MINUTES = 15
@@ -1996,6 +2184,11 @@ private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
  *
  * The layout is header, scrolling timeline, footer, rather than one long scroll:
  * the day has to scroll without taking the save button off the screen with it.
+ * That only holds if the timeline is the part that gives way — hence
+ * `weight(1f)` on it and a bounded height on the column around it. Stacked at
+ * their natural heights the pieces come to roughly 700 dp, and the conflict
+ * notice adds another hundred; on an ordinary phone that pushes
+ * "Termin speichern" off the bottom exactly when it is needed most.
  */
 @Composable
 fun AppointmentSheet(
@@ -2009,7 +2202,12 @@ fun AppointmentSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 640.dp)
+                .padding(bottom = 24.dp),
+        ) {
             Text(
                 text = "Termin vor Ort",
                 style = MaterialTheme.typography.titleMedium,
@@ -2029,7 +2227,13 @@ fun AppointmentSheet(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
             }
-            Timeline(draft = draft, onDraft = onDraft, modifier = Modifier.heightIn(max = 300.dp))
+            // weight, not a fixed height: the timeline is what gives way when
+            // the sheet runs out of room, so the save button never does.
+            Timeline(
+                draft = draft,
+                onDraft = onDraft,
+                modifier = Modifier.weight(1f).heightIn(min = 160.dp),
+            )
 
             SectionLabel("Dauer")
             Row(
@@ -2122,12 +2326,14 @@ private fun DayRow(
 }
 
 /**
- * The whole day, an hour to a fixed height, in its own scroll area opened at
- * [OPENS_AT_HOUR].
+ * The whole day, an hour to a fixed height, in its own scroll area.
  *
  * It runs 0 to 24 on purpose. An appointment is what the customer agreed to, so
  * a Saturday at 18:30 has to be reachable — a strip that stopped at 18 would
  * quietly forbid what [Appointment] explicitly allows.
+ *
+ * It opens on the appointment, not on a fixed hour: an evening appointment being
+ * changed must not start with a hunt for its own block.
  */
 @Composable
 private fun Timeline(
@@ -2138,8 +2344,11 @@ private fun Timeline(
     val start = Clock.millis(draft.startIso) ?: return
     val dayStart = Clock.todayStart(start)
     val scroll = rememberScrollState()
-    val openAt = with(LocalDensity.current) { (HOUR_HEIGHT * OPENS_AT_HOUR).roundToPx() }
+    val openHour = (Clock.zdt(start).hour - RUN_UP_HOURS).coerceIn(0, 23)
+    val openAt = with(LocalDensity.current) { (HOUR_HEIGHT * openHour).roundToPx() }
 
+    // Unit, not openAt: the strip is positioned once when the sheet opens.
+    // Re-running it on every drag would fight the user for the scroll position.
     LaunchedEffect(Unit) { scroll.scrollTo(openAt) }
 
     Box(modifier = modifier.fillMaxWidth().verticalScroll(scroll)) {
@@ -2167,11 +2376,12 @@ private fun Timeline(
             }
 
             // Overlapping entries are inset, so a second one behind the first is
-            // visible rather than hidden underneath it.
+            // visible rather than hidden underneath it. The inset is taken off
+            // the width as well, or the block would hang over the right edge.
             draft.busy.forEachIndexed { index, interval ->
                 val overlapsEarlier = draft.busy.take(index).count {
                     interval.startMillis < it.endMillis && it.startMillis < interval.endMillis
-                }
+                }.coerceAtMost(3)
                 val top = ((interval.startMillis - dayStart) / 60_000L).toInt()
                 val length = ((interval.endMillis - interval.startMillis) / 60_000L).toInt()
                 BusyBlock(
@@ -2182,7 +2392,8 @@ private fun Timeline(
                             y = HOUR_HEIGHT / 60 * top.coerceIn(0, 24 * 60),
                         )
                         .height(HOUR_HEIGHT / 60 * length.coerceIn(15, 24 * 60))
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .padding(end = 12.dp * overlapsEarlier),
                 )
             }
 
@@ -2348,7 +2559,9 @@ Install and open the sheet. Confirm each one separately, because each fails
 independently:
 
 1. **Dragging moves the block** and settles on quarter hours. Drag slowly: a slow
-   drag is what a per-frame rounding bug fails.
+   drag is what a per-frame rounding bug fails. While dragging the block, the
+   strip behind it must stay put — if it scrolls instead, the child is losing the
+   gesture to the scroll container.
 2. **The handle changes the length** and cannot go below 15 minutes.
 3. **The strip reaches 18:30 on a Saturday.** Scroll down, place an appointment
    there, save, and confirm it is stored at 18:30 and not corrected.
@@ -2386,7 +2599,7 @@ In `BusinessDetail.kt`, add to `BusinessDetailScreen`'s parameters, next to `onF
     onRemoveAppointment: () -> Unit,
 ```
 
-No map callback: `BusinessDetailScreen` already takes `onOpenUrl` (`BusinessDetail.kt:89`), and `MainActivity.openUrl` (`MainActivity.kt:101`) is a bare `ACTION_VIEW` on `Uri.parse` wrapped in `runCatching`. A `geo:` URI passes through it unchanged. One callback, one failure mode, nothing new to wire.
+No map callback: `BusinessDetailScreen` already takes `onOpenUrl`, and `MainActivity.openUrl` is a bare `ACTION_VIEW` on `Uri.parse` wrapped in `runCatching`. A `geo:` URI passes through it unchanged. One callback, one failure mode, nothing new to wire.
 
 - [ ] **Step 2: Add the section**
 
@@ -2523,7 +2736,9 @@ In `MainActivity.kt`, where the detail screen is rendered, add after it:
                 }
 ```
 
-`onPickDate` opens a date picker built like the follow-up's (`BusinessDetail.kt:321`). Declare its flag next to the other dialog state in the same composable and keep the draft's time of day:
+`onPickDate` opens a date picker built like the follow-up's — find it by searching `BusinessDetail.kt` for `DatePickerDialog` rather than by line number; 1.1.0 moved everything in these files. Declare its flag next to the other dialog state in the same composable and keep the draft's time of day.
+
+Imports needed in `MainActivity.kt`: `androidx.compose.material3.DatePicker`, `.DatePickerDialog`, `.rememberDatePickerState`, `.TextButton`, `androidx.compose.runtime.getValue`, `.mutableStateOf`, `.remember`, `.setValue`, `java.time.Instant`, `java.time.ZoneOffset`.
 
 ```kotlin
     var appointmentDate by remember { mutableStateOf(false) }
@@ -2733,14 +2948,15 @@ and inside `object Appointment`:
     }
 
     /** Within a minute counts as the same moment. */
-    private fun near(a: Long?, b: Long): Boolean = a != null && kotlin.math.abs(a - b) < 60_000L
-    }
+    private fun near(a: Long?, b: Long): Boolean = a != null && abs(a - b) < 60_000L
 ```
+
+Add `import kotlin.math.abs` at the top of `Appointment.kt`.
 
 - [ ] **Step 4: Run the tests and watch them pass**
 
 Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.AppointmentTest"`
-Expected: PASS, sixteen tests.
+Expected: PASS, twenty-two tests.
 
 - [ ] **Step 5: Write the read-back in the view model**
 
@@ -2805,7 +3021,7 @@ Expected: PASS, sixteen tests.
     }
 ```
 
-`loadDetail(placeId)` (`CallsheetViewModel.kt:440`) is the existing refresh path — reuse it rather than adding a second one.
+`loadDetail(placeId)` is the existing refresh path — reuse it rather than adding a second one.
 
 - [ ] **Step 6: Call it when a business opens**
 
@@ -2848,7 +3064,7 @@ In `BusinessDetail.kt`, in `MasterData`, replace the address rows with:
         }
 ```
 
-`MasterData` already receives `onOpenUrl` (`BusinessDetail.kt:188`), so nothing new is threaded through.
+`MasterData` already receives `onOpenUrl`, so nothing new is threaded through.
 
 This also drops the two-line address in favour of the one-liner `Appointment.address` produces, which is what goes into the calendar — one formatting rule instead of two that can drift.
 
@@ -2857,7 +3073,7 @@ This also drops the two-line address in favour of the one-liner `Appointment.add
 The spec asked for the street in the work list row. Do not add it, and change the
 spec instead.
 
-The second line is not the city — it is `industry · city` (`Components.kt:122`),
+The second line is not the city — it is `industry · city`,
 one line, `maxLines = 1` with an ellipsis, and there is already a third line for
 the contact. A fourth datum turns "Garten- und Landschaftsbau · Ingolstadt" into
 "Garten- und Landschaftsb…", which trades the industry — the thing the list is
@@ -2897,7 +3113,7 @@ git commit -m "Anschrift öffnet die Karten-App"
 
 - [ ] **Step 1: Load them**
 
-In `showToday()`, next to the existing `due` call:
+In `loadToday()` (`CallsheetViewModel.kt:198`), next to the existing `due` call — `now` is already there:
 
 ```kotlin
             val appointments = repo.appointmentsDue(
@@ -2910,7 +3126,7 @@ and carry it into the state as `appointmentsToday = appointments`. Add `val appo
 
 - [ ] **Step 2: Teach `BusinessRow` to show an appointment**
 
-`BusinessRow` (`Components.kt:99`) already takes `showFollowUp: Boolean = false`.
+`BusinessRow` already takes `showFollowUp: Boolean = false`.
 Add its sibling next to it:
 
 ```kotlin
@@ -3007,6 +3223,11 @@ DAVx5, the appointment reaches the server the same way; the app itself speaks
 - Busy times for the picker are read from every visible calendar, and only read.
 ```
 
+The synchronisation section needs a sentence too: the appointment's time, end
+and location travel to the server like every other working field, while
+`calendar_event_id` stays on the device — it names an entry in *this* phone's
+calendar and would mean something else on another one.
+
 - [ ] **Step 2: `docs/usage.md`**
 
 Add a section on agreeing an appointment: the section in the detail view, the sheet, what the duration does, what happens when something already occupies the slot, and that moving it in the calendar is picked up by itself.
@@ -3025,7 +3246,14 @@ setting is turned on, and works without it.
 
 - [ ] **Step 4: `CHANGELOG.md`**
 
-Add an entry in the file's existing style and language, describing the appointment, the calendar mirroring, the usable address, and the database migration.
+A **`## 1.2.0`** section, directly above the existing `## 1.1.0` — this is the
+next minor after synchronisation, not a correction to it. Written in the file's
+own style and language, covering the appointment with its time and length, the
+mirroring into the device calendar, the address that opens a map application,
+and the fact that appointments synchronise while the calendar link does not.
+
+Do not touch `version.properties`: `tools/release.sh` raises `versionCode` and
+writes `versionName` itself, and a hand-edited value would collide with it.
 
 - [ ] **Step 5: Commit**
 
