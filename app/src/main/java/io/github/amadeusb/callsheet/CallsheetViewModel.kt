@@ -24,12 +24,19 @@ import io.github.amadeusb.callsheet.contacts.AddressBookAccount
 import io.github.amadeusb.callsheet.contacts.ContactStore
 import io.github.amadeusb.callsheet.contacts.Preferences
 import io.github.amadeusb.callsheet.contacts.PhoneBook
+import io.github.amadeusb.callsheet.sync.FailureKind
+import io.github.amadeusb.callsheet.sync.SyncClient
+import io.github.amadeusb.callsheet.sync.SyncEngine
+import io.github.amadeusb.callsheet.sync.SyncResult
+import io.github.amadeusb.callsheet.sync.SyncStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.InputStream
 import java.util.UUID
 
@@ -92,14 +99,29 @@ data class State(
     val saving: Boolean = false,
 )
 
+/** What the settings screen shows about synchronisation. */
+data class SyncUiState(
+    val url: String = "",
+    val token: String = "",
+    val lastSyncAt: String? = null,
+    val pending: Int = 0,
+    val running: Boolean = false,
+    val error: String? = null,
+)
+
 class CallsheetViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repo = Repository(application)
     private val preferences = Preferences(application)
     private val store = ContactStore(application, repo, preferences)
+    private val syncStore = SyncStore(application)
+    private val syncEngine = SyncEngine(syncStore, preferences)
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+
+    private val _syncState = MutableStateFlow(SyncUiState())
+    val syncState: StateFlow<SyncUiState> = _syncState.asStateFlow()
 
     /** What was dialled last — the basis for the log entry that follows. */
     private data class DialAttempt(val number: String, val label: String, val from: Long)
@@ -111,6 +133,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         refreshList()
+        refreshSyncState()
         _state.value = _state.value.copy(
             phoneBookEnabled = preferences.phoneBookEnabled,
             phoneBookAccount = preferences.account,
@@ -120,6 +143,59 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 allIndustries = repo.industries(),
                 allCities = repo.cities(),
                 outsideBusinessHours = Clock.outsideBusinessHours(),
+            )
+        }
+    }
+
+    // --- Synchronisation ----------------------------------------------------
+
+    /**
+     * Runs a sync when a server is configured. Errors stay in the settings screen:
+     * in the middle of a call, a network hiccup is not worth a message.
+     */
+    fun syncNow(quiet: Boolean = true) {
+        val url = preferences.serverUrl ?: return
+        val token = preferences.serverToken ?: return
+        if (_syncState.value.running) return
+
+        viewModelScope.launch {
+            _syncState.value = _syncState.value.copy(running = true)
+            val result = withContext(Dispatchers.IO) { syncEngine.sync(SyncClient(url, token)) }
+            val error = when (result) {
+                is SyncResult.Failed ->
+                    if (quiet && (result.kind == FailureKind.NETWORK || result.kind == FailureKind.RATE_LIMITED)) {
+                        null
+                    } else {
+                        result.message
+                    }
+                else -> null
+            }
+            _syncState.value = _syncState.value.copy(running = false, error = error)
+            refreshSyncState()
+            if (result is SyncResult.Ok) {
+                refreshList()
+                loadToday()
+            }
+        }
+    }
+
+    fun setServer(url: String, token: String) {
+        preferences.serverUrl = url.ifBlank { null }
+        preferences.serverToken = token.ifBlank { null }
+        // A different server is a different watermark — otherwise the app would
+        // believe it had already read a stock it has never seen.
+        preferences.watermark = 0
+        refreshSyncState()
+    }
+
+    private fun refreshSyncState() {
+        viewModelScope.launch {
+            val pending = withContext(Dispatchers.IO) { syncStore.pendingCount() }
+            _syncState.value = _syncState.value.copy(
+                url = preferences.serverUrl.orEmpty(),
+                token = preferences.serverToken.orEmpty(),
+                lastSyncAt = preferences.lastSyncAt,
+                pending = pending,
             )
         }
     }
@@ -548,6 +624,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             val open = _state.value.pendingCall
             if (open != null) {
                 repo.completeCall(open, outcome = status.label, note = note)
+                // The call just wrapped up is the moment the most valuable
+                // change happens — worth a sync attempt on its own.
+                syncNow()
             } else {
                 repo.logCall(
                     CallEntry(

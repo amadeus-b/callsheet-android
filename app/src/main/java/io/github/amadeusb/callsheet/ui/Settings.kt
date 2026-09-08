@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -41,11 +42,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.data.Business
 import io.github.amadeusb.callsheet.contacts.AddressBookAccount
+import io.github.amadeusb.callsheet.data.Clock
 import io.github.amadeusb.callsheet.data.ImportResult
+import io.github.amadeusb.callsheet.SyncUiState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,6 +61,7 @@ fun SettingsScreen(
     addressBookAccounts: List<AddressBookAccount>,
     phoneBookHint: String?,
     pushing: Boolean,
+    syncState: SyncUiState,
     onBack: () -> Unit,
     onUnblock: (Business) -> Unit,
     onImport: () -> Unit,
@@ -64,6 +69,8 @@ fun SettingsScreen(
     onAccount: (AddressBookAccount) -> Unit,
     onLoadAccounts: () -> Unit,
     onPushAll: () -> Unit,
+    onSaveServer: (String, String) -> Unit,
+    onSyncNow: () -> Unit,
 ) {
     var confirm by remember { mutableStateOf<Business?>(null) }
     var accountPicker by remember { mutableStateOf(false) }
@@ -134,6 +141,60 @@ fun SettingsScreen(
                     },
                     onPushAll = onPushAll,
                 )
+            }
+
+            item(key = "sync") {
+                Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Abgleich", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(8.dp))
+
+                        var url by remember(syncState.url) { mutableStateOf(syncState.url) }
+                        var token by remember(syncState.token) { mutableStateOf(syncState.token) }
+
+                        OutlinedTextField(
+                            value = url,
+                            onValueChange = { url = it },
+                            label = { Text("Serveradresse") },
+                            placeholder = { Text("https://…") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = token,
+                            onValueChange = { token = it },
+                            label = { Text("Zugangsschlüssel") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(12.dp))
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { onSaveServer(url, token) }) { Text("Speichern") }
+                            OutlinedButton(
+                                onClick = onSyncNow,
+                                enabled = !syncState.running && url.isNotBlank(),
+                            ) { Text(if (syncState.running) "Läuft…" else "Jetzt abgleichen") }
+                        }
+                        Spacer(Modifier.height(8.dp))
+
+                        Text(
+                            text = if (syncState.url.isBlank()) {
+                                "Kein Server eingetragen — die App arbeitet nur auf diesem Gerät."
+                            } else {
+                                "Zuletzt abgeglichen: ${Clock.readable(syncState.lastSyncAt)} · " +
+                                    "${syncState.pending} offen"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        syncState.error?.let {
+                            Spacer(Modifier.height(4.dp))
+                            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
             }
 
             item(key = "blocked-header") {

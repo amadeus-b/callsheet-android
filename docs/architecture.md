@@ -128,17 +128,34 @@ overcautious.
   calls happen is the caller's decision, and whether the caller ID is withheld
   is a SIM setting the app cannot see.
 
-## Outlook: synchronisation
+## Synchronisation
 
-No server is built, but one is prepared for. The data model is laid out so it
-could sit unchanged on a server: `updated_at` on every record, `calls` as a
-pure append table with device-generated UUIDs.
+Off by default; nothing changes about the app's behaviour until a server
+address and access key are entered in the settings screen. With none entered,
+`INTERNET` sits in the manifest unused.
 
-That would allow a sync with last-write-wins at record level — calls are only
-ever appended on both sides and deduplicated by UUID, so they can never collide.
-The accepted trade-off is that the older change loses when the same business is
-edited on both sides between two syncs; field-level resolution would be cleaner
-but triples the logic.
+One endpoint carries the whole exchange: a block of changed rows goes up, a
+block comes back down, in both directions along with any tombstones. The client
+marks a row `dirty` the moment it changes and only clears that mark once the
+server has confirmed the exact version it sent — a row that changed again while
+the request was in flight stays marked and goes up on the next round.
 
-The `INTERNET` permission in the manifest is reserved for that case and unused
-today.
+Resolution is last-write-wins at record level, decided by comparing
+`updated_at` as instants, not as strings, so that timezone offset or
+formatting can never flip an outcome. `calls` is the one exception: it is
+append-only on both sides, entries are matched by their device-generated UUID,
+and only the outcome and note fields — never the time, duration, kind or
+contact — travel from a later write, so the record of when and how long a call
+ran never gets rewritten. A block, once set on a business, is never lifted by
+an incoming row; the merge always keeps `do_not_call` if either side holds it.
+
+Progress is tracked by a watermark: a plain, ever-increasing number the server
+hands back, not a timestamp. The client stores it and asks the server for
+everything past it next time — a number sidesteps clock drift between device
+and server entirely.
+
+A sync runs in blocks with a round cap, so a large backlog is worked through
+over several calls rather than one open-ended request. Failures never
+interrupt whatever the user is doing; they surface only in the settings
+screen, as a plain count of what is still waiting to go up and the time of
+the last sync that went all the way through.

@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun App(vm: CallsheetViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val syncState by vm.syncState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // The business just dialled — only remembered until the app comes back
@@ -114,6 +115,16 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                     vm.evaluateCall(context, id)
                 }
             }
+        }
+        lifecycle.lifecycle.addObserver(observer)
+        onDispose { lifecycle.lifecycle.removeObserver(observer) }
+    }
+
+    // Beim Start und bei jeder Rückkehr in den Vordergrund. Kein Hintergrunddienst:
+    // die App gleicht ab, wenn sie ohnehin läuft.
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) vm.syncNow()
         }
         lifecycle.lifecycle.addObserver(observer)
         onDispose { lifecycle.lifecycle.removeObserver(observer) }
@@ -209,6 +220,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             addressBookAccounts = state.addressBookAccounts,
             phoneBookHint = state.phoneBookHint,
             pushing = state.saving,
+            syncState = syncState,
             onBack = { vm.back() },
             onUnblock = vm::unblock,
             onImport = { filePicker.launch(arrayOf("application/json", "text/plain", "*/*")) },
@@ -227,6 +239,8 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             onAccount = vm::setAddressBookAccount,
             onLoadAccounts = vm::loadAddressBookAccounts,
             onPushAll = vm::pushAllToPhoneBook,
+            onSaveServer = vm::setServer,
+            onSyncNow = { vm.syncNow(quiet = false) },
         )
     }
 

@@ -67,7 +67,7 @@ How the data gets in and what the daily flow looks like is covered in the
 |---|---|
 | `READ_CALL_LOG` | call duration after hanging up; optional, the app runs without it |
 | `READ_CONTACTS`, `WRITE_CONTACTS` | writing contacts into the phone book; optional |
-| `INTERNET` | declared but unused — reserved for a later sync |
+| `INTERNET` | used for synchronisation when a server is configured |
 
 That is the complete list from the manifest. Dialling goes through `ACTION_DIAL`,
 which needs no permission: the dialler opens with the number filled in and you
@@ -79,7 +79,7 @@ You need a JDK 17 or newer and the Android SDK; how to set both up without root
 is described in [docs/development.md](docs/development.md).
 
 ```bash
-./gradlew testDebugUnitTest      # 92 unit tests
+./gradlew testDebugUnitTest      # 149 unit tests
 ./gradlew assembleRelease        # app/build/outputs/apk/release/
 ```
 
@@ -104,12 +104,22 @@ Compose, Lifecycle and `core-ktx`, and that is all.
 
 The restraint is deliberate: every library has to pay for itself.
 
-## No synchronisation yet
+## Synchronisation
 
-The data model already carries what a sync would need — `updated_at` on every
-record, `calls` as an append-only table with device-generated UUIDs. The logic
-itself does not exist: there is no server, and no code in this repository talks
-to one.
+Off by default. Enter a server address and access key in the settings screen
+and the app keeps businesses, contacts, calls and follow-ups in step with that
+server; leave both fields empty and nothing changes about how the app behaves —
+it works only on the device, as before.
+
+Once configured, a sync runs on its own — when the app starts, when it returns
+to the foreground, and right after a call is logged. There is no background
+service and no schedule to configure. A failed attempt is silent: the app
+tries again the next time one of those moments comes around. The settings
+screen is where the truth lives — when the last full sync went through, and
+how many changes are still waiting to go up.
+
+The server itself is a separate project; this repository contains only the
+client side.
 
 ## Privacy
 

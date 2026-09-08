@@ -53,8 +53,8 @@ their own filter and can be reviewed.
 
 ## Tables
 
-Two core tables, laid out the way a server would hold them, so synchronisation
-can be bolted on without a migration.
+Two core tables, laid out the way the server holds them, so a row travels
+between the two without translation.
 
 ### `businesses`
 
@@ -83,7 +83,8 @@ Working fields, **never overwritten by an import**:
 status          TEXT NOT NULL DEFAULT 'new'
 note            TEXT
 follow_up_at    TEXT            -- ISO-8601 with a time, not just a date
-updated_at      TEXT NOT NULL   -- ISO-8601, for later synchronisation
+updated_at      TEXT NOT NULL   -- ISO-8601
+dirty           INTEGER NOT NULL DEFAULT 0   -- 1 while a change is waiting to sync
 ```
 
 `is_target` = 1 when the industry does **not** end in `(kein Ziel)` **and** a
@@ -118,6 +119,8 @@ outcome           TEXT               -- the status set afterwards
 note              TEXT
 kind              TEXT NOT NULL      -- 'call' | 'note' (no dial attempt)
 contact           TEXT               -- who was called, "Frau Meier · Mobil"
+updated_at        TEXT               -- ISO-8601, set once the outcome is recorded
+dirty             INTEGER NOT NULL DEFAULT 0
 ```
 
 ### `contacts` and `contact_numbers`
@@ -136,6 +139,7 @@ email            TEXT
 note             TEXT
 position         INTEGER NOT NULL
 updated_at       TEXT NOT NULL
+dirty            INTEGER NOT NULL DEFAULT 0
 contact_version  INTEGER            -- RawContacts.VERSION at the last merge
 
 contact_numbers
@@ -144,10 +148,34 @@ contact_id  TEXT NOT NULL
 number      TEXT NOT NULL           -- E.164
 kind        TEXT NOT NULL           -- mobile | work | main | home | fax | other
 position    INTEGER NOT NULL
+updated_at  TEXT
+dirty       INTEGER NOT NULL DEFAULT 0
 ```
 
 The imported `businesses.contact_name` field stays alongside them: it is master
 data from the research and the import keeps maintaining it.
+
+### `deletions`
+
+A tombstone table, so a deletion made on one side does not come back with the
+next sync. Contacts and their numbers are the only rows the app ever deletes.
+
+```
+table_name  TEXT NOT NULL
+row_id      TEXT NOT NULL
+deleted_at  TEXT NOT NULL           -- ISO-8601
+PRIMARY KEY (table_name, row_id)
+```
+
+## Synchronisation
+
+`dirty` marks a row as changed since the last successful sync; it is cleared
+only once the server has confirmed the exact version that was sent, so a row
+touched again while a request is in flight stays marked. Wherever a timestamp
+decides which side wins — `updated_at` on a row, `deleted_at` on a tombstone —
+it is compared as an instant in time, never as a string: two equivalent
+timestamps written with a different offset or format must resolve the same
+way.
 
 ## Phone book
 
