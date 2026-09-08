@@ -1,6 +1,7 @@
 package io.github.amadeusb.callsheet.contacts
 
 import android.content.Context
+import io.github.amadeusb.callsheet.calling.Appointment
 
 /**
  * The app's handful of settings. SharedPreferences on purpose: three values
@@ -48,6 +49,25 @@ class Preferences(context: Context) {
         get() = store.getString(LAST_SYNC_AT, null)
         set(value) = store.edit().putString(LAST_SYNC_AT, value).apply()
 
+    /** Whether appointments get mirrored into the device calendar at all. */
+    var calendarEnabled: Boolean
+        get() = store.getBoolean(CALENDAR_ENABLED, false)
+        set(value) = store.edit().putBoolean(CALENDAR_ENABLED, value).apply()
+
+    /** The chosen calendar that gets written to. */
+    var calendarId: Long?
+        get() = store.getLong(CALENDAR_ID, NO_CALENDAR).takeIf { it != NO_CALENDAR }
+        set(value) = store.edit().putLong(CALENDAR_ID, value ?: NO_CALENDAR).apply()
+
+    /**
+     * The duration a fresh appointment starts at, in minutes. It follows the
+     * last appointment saved — a setting that tunes itself instead of one to go
+     * looking for.
+     */
+    var appointmentMinutes: Int
+        get() = store.getInt(APPOINTMENT_MINUTES, Appointment.DEFAULT_MINUTES)
+        set(value) = store.edit().putInt(APPOINTMENT_MINUTES, value).apply()
+
     private companion object {
         const val PHONE_BOOK_ENABLED = "phone_book_enabled"
         const val ACCOUNT_NAME = "phone_book_account_name"
@@ -56,5 +76,9 @@ class Preferences(context: Context) {
         const val SERVER_TOKEN = "server_token"
         const val WATERMARK = "sync_watermark"
         const val LAST_SYNC_AT = "last_sync_at"
+        const val CALENDAR_ENABLED = "calendar_enabled"
+        const val CALENDAR_ID = "calendar_id"
+        const val APPOINTMENT_MINUTES = "appointment_minutes"
+        const val NO_CALENDAR = -1L
     }
 }
