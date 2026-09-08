@@ -39,7 +39,9 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
                 updated_at      TEXT NOT NULL,
                 -- Name and city in lower case. SQLite only lower-cases ASCII;
                 -- without this column "müller" would not find "Müller".
-                search_text     TEXT
+                search_text     TEXT,
+                -- Set on every local write, cleared once the server has it.
+                dirty           INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent()
         )
@@ -56,12 +58,15 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
                 -- attempt or was recorded without calling anyone.
                 kind             TEXT NOT NULL DEFAULT 'call',
                 -- Who was called, e.g. "Frau Meier · Mobil".
-                contact          TEXT
+                contact          TEXT,
+                updated_at       TEXT,
+                dirty            INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent()
         )
         db.execSQL(TABLE_CONTACTS)
         db.execSQL(TABLE_NUMBERS)
+        db.execSQL(TABLE_DELETIONS)
         db.execSQL("CREATE INDEX idx_businesses_status ON businesses(status)")
         db.execSQL("CREATE INDEX idx_businesses_industry ON businesses(industry)")
         db.execSQL("CREATE INDEX idx_businesses_is_target ON businesses(is_target)")
@@ -70,16 +75,38 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         db.execSQL("CREATE INDEX idx_calls_place_id ON calls(place_id)")
         db.execSQL(INDEX_CONTACTS)
         db.execSQL(INDEX_NUMBERS)
+        db.execSQL("CREATE INDEX idx_businesses_dirty ON businesses(dirty)")
+        db.execSQL("CREATE INDEX idx_calls_dirty ON calls(dirty)")
+        db.execSQL("CREATE INDEX idx_contacts_dirty ON contacts(dirty)")
+        db.execSQL("CREATE INDEX idx_contact_numbers_dirty ON contact_numbers(dirty)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
-        // Never discard working data — only add to it. No migrations exist yet;
-        // the schema below is the first one that shipped.
+        // Never discard working data — only add to it.
+        if (old < 2) {
+            for (table in listOf("businesses", "calls", "contacts", "contact_numbers")) {
+                db.execSQL("ALTER TABLE $table ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("CREATE INDEX idx_${table}_dirty ON $table(dirty)")
+            }
+            // Anrufe und Rufnummern hatten keinen eigenen Änderungszeitpunkt. Ohne
+            // ihn liesse sich für eine nachgetragene Notiz nicht entscheiden, welche
+            // Fassung die jüngere ist. Der Bestand erbt seinen Anrufzeitpunkt, damit
+            // keine Zeile ohne Wert dasteht.
+            db.execSQL("ALTER TABLE calls ADD COLUMN updated_at TEXT")
+            db.execSQL("UPDATE calls SET updated_at = started_at WHERE updated_at IS NULL")
+            db.execSQL("ALTER TABLE contact_numbers ADD COLUMN updated_at TEXT")
+            db.execSQL(
+                "UPDATE contact_numbers SET updated_at = " +
+                    "(SELECT updated_at FROM contacts WHERE contacts.id = contact_numbers.contact_id) " +
+                    "WHERE updated_at IS NULL"
+            )
+            db.execSQL(TABLE_DELETIONS)
+        }
     }
 
     companion object {
         const val NAME = "callsheet.db"
-        const val VERSION = 1
+        const val VERSION = 2
 
         /**
          * Contacts only ever come into being inside the app, never from an
@@ -98,7 +125,8 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
                 updated_at      TEXT NOT NULL,
                 -- Version of the phone book entry at the last merge. A higher
                 -- number there means the phone book was edited since.
-                contact_version INTEGER
+                contact_version INTEGER,
+                dirty           INTEGER NOT NULL DEFAULT 0
             )
         """
 
@@ -109,7 +137,9 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
                 contact_id TEXT NOT NULL,
                 number     TEXT NOT NULL,
                 kind       TEXT NOT NULL DEFAULT 'other',
-                position   INTEGER NOT NULL DEFAULT 0
+                position   INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT,
+                dirty      INTEGER NOT NULL DEFAULT 0
             )
         """
 
@@ -118,5 +148,18 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
 
         private const val INDEX_NUMBERS =
             "CREATE INDEX idx_contact_numbers_contact ON contact_numbers(contact_id)"
+
+        /**
+         * Tombstones. Contacts and their numbers are the only rows the app deletes;
+         * without a marker a deletion would come back with the next sync.
+         */
+        private const val TABLE_DELETIONS = """
+            CREATE TABLE deletions (
+                table_name TEXT NOT NULL,
+                row_id     TEXT NOT NULL,
+                deleted_at TEXT NOT NULL,
+                PRIMARY KEY (table_name, row_id)
+            )
+        """
     }
 }
