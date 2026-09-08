@@ -161,6 +161,12 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             _syncState.value = _syncState.value.copy(running = true)
             val result = withContext(Dispatchers.IO) { syncEngine.sync(SyncClient(url, token)) }
+            // NETWORK and RATE_LIMITED stay silent on an automatic run — both are
+            // common and self-healing, and showing them here would make the
+            // settings screen look broken most of the time; every other kind,
+            // including SERVER and TOO_LARGE, is shown even when quiet, because
+            // none of them gets better on its own and "shown" only ever means one
+            // line in the settings — it interrupts nothing.
             val error = when (result) {
                 is SyncResult.Failed ->
                     if (quiet && (result.kind == FailureKind.NETWORK || result.kind == FailureKind.RATE_LIMITED)) {

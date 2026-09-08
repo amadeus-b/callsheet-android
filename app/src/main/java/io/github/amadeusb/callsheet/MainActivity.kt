@@ -120,8 +120,8 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
         onDispose { lifecycle.lifecycle.removeObserver(observer) }
     }
 
-    // Beim Start und bei jeder Rückkehr in den Vordergrund. Kein Hintergrunddienst:
-    // die App gleicht ab, wenn sie ohnehin läuft.
+    // On start and on every return to the foreground. No background service:
+    // the app syncs whenever it is running anyway.
     androidx.compose.runtime.DisposableEffect(lifecycle) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_START) vm.syncNow()
