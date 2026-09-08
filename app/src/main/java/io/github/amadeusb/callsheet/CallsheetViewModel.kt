@@ -12,6 +12,7 @@ import io.github.amadeusb.callsheet.calendar.EventFields
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
 import io.github.amadeusb.callsheet.calling.CallFlow
+import io.github.amadeusb.callsheet.calling.ReadBack
 import io.github.amadeusb.callsheet.calling.SavePlan
 import io.github.amadeusb.callsheet.calling.CallLogReader
 import io.github.amadeusb.callsheet.calling.FollowUp
@@ -348,6 +349,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             pendingCall = if (switching) null else _state.value.pendingCall,
         )
         loadDetail(placeId)
+        // No loop: syncAppointment only ever calls loadDetail, never back here.
+        syncAppointment(placeId)
     }
 
     fun showToday() {
@@ -713,6 +716,65 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             }
             loadDetail(draft.placeId)
+        }
+    }
+
+    /**
+     * Brings a linked appointment back in line with the calendar.
+     *
+     * The calendar wins: that is where an appointment gets moved, on a laptop or
+     * in the car. The same rule the phone book already follows for names and
+     * numbers.
+     *
+     * A deleted event is the only case that speaks up, because it is the only
+     * one that needs a decision.
+     */
+    private fun syncAppointment(placeId: String) {
+        viewModelScope.launch {
+            val business = repo.business(placeId) ?: return@launch
+            val eventId = business.calendarEventId ?: return@launch
+            if (!CalendarStore.canRead(getApplication())) return@launch
+
+            val event = CalendarStore.read(getApplication(), eventId)
+            val decision = Appointment.readBack(
+                currentAt = business.appointmentAt,
+                currentEnd = business.appointmentEndAt,
+                currentLocation = business.appointmentLocation,
+                eventStartMillis = event?.startMillis,
+                eventEndMillis = event?.endMillis,
+                eventLocation = event?.location,
+            )
+
+            when (decision) {
+                is ReadBack.Unchanged -> Unit
+
+                is ReadBack.Updated -> {
+                    repo.setAppointment(
+                        placeId, decision.startIso, decision.endIso, decision.location, eventId,
+                    )
+                    loadDetail(placeId)
+                }
+
+                is ReadBack.Gone -> {
+                    repo.setAppointment(placeId, null, null, null, null)
+                    // Only the status this appointment set gets taken back. A
+                    // business that has since been declined or blocked keeps
+                    // that — deleting an entry in the calendar is not
+                    // permission to undo a decision made on the phone.
+                    val reset = business.status == Status.APPOINTMENT
+                    if (reset) repo.setStatus(placeId, Status.CALLED)
+                    _state.update {
+                        it.copy(
+                            hint = if (reset) {
+                                "Der Termin wurde im Kalender gelöscht. Status zurück auf „Angerufen“."
+                            } else {
+                                "Der Termin wurde im Kalender gelöscht. Der Status bleibt, wie er ist."
+                            }
+                        )
+                    }
+                    loadDetail(placeId)
+                }
+            }
         }
     }
 

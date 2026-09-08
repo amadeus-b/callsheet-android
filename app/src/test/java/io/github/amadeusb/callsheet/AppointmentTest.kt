@@ -2,6 +2,7 @@ package io.github.amadeusb.callsheet
 
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
+import io.github.amadeusb.callsheet.calling.ReadBack
 import io.github.amadeusb.callsheet.calling.SavePlan
 import io.github.amadeusb.callsheet.data.Clock
 import org.junit.Assert.assertEquals
@@ -201,5 +202,69 @@ class AppointmentTest {
         )
 
         assertEquals(SavePlan.Adopt(7L), plan)
+    }
+
+    // --- readBack -----------------------------------------------------------
+
+    private val at = "2026-09-10T14:00:00+02:00"
+    private val until = "2026-09-10T15:00:00+02:00"
+
+    @Test
+    fun `a difference of seconds still counts as unchanged`() {
+        val outcome = Appointment.readBack(
+            currentAt = at, currentEnd = until, currentLocation = null,
+            eventStartMillis = millis(2026, 9, 10, 14) + 30_000L,
+            eventEndMillis = millis(2026, 9, 10, 15) + 30_000L,
+            eventLocation = null,
+        )
+
+        assertEquals(ReadBack.Unchanged, outcome)
+    }
+
+    @Test
+    fun `an untouched appointment yields Unchanged`() {
+        val outcome = Appointment.readBack(
+            currentAt = at, currentEnd = until, currentLocation = "Zehentstraße 39",
+            eventStartMillis = millis(2026, 9, 10, 14),
+            eventEndMillis = millis(2026, 9, 10, 15),
+            eventLocation = "Zehentstraße 39",
+        )
+
+        assertEquals(ReadBack.Unchanged, outcome)
+    }
+
+    @Test
+    fun `a moved appointment yields Updated`() {
+        val outcome = Appointment.readBack(
+            currentAt = at, currentEnd = until, currentLocation = "Zehentstraße 39",
+            eventStartMillis = millis(2026, 9, 10, 16),
+            eventEndMillis = millis(2026, 9, 10, 17),
+            eventLocation = "Zehentstraße 39",
+        ) as ReadBack.Updated
+
+        assertEquals(millis(2026, 9, 10, 16), Clock.millis(outcome.startIso))
+        assertEquals("Zehentstraße 39", outcome.location)
+    }
+
+    @Test
+    fun `a relocated appointment yields Updated`() {
+        val outcome = Appointment.readBack(
+            currentAt = at, currentEnd = until, currentLocation = "Zehentstraße 39",
+            eventStartMillis = millis(2026, 9, 10, 14),
+            eventEndMillis = millis(2026, 9, 10, 15),
+            eventLocation = "Im Büro",
+        ) as ReadBack.Updated
+
+        assertEquals("Im Büro", outcome.location)
+    }
+
+    @Test
+    fun `a deleted appointment yields Gone`() {
+        val outcome = Appointment.readBack(
+            currentAt = at, currentEnd = until, currentLocation = null,
+            eventStartMillis = null, eventEndMillis = null, eventLocation = null,
+        )
+
+        assertEquals(ReadBack.Gone, outcome)
     }
 }
