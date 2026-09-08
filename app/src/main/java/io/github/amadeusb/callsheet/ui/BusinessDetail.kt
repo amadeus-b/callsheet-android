@@ -234,6 +234,7 @@ fun BusinessDetailScreen(
             items(contacts, key = { it.id }) { contact ->
                 ContactCard(
                     contact = contact,
+                    business = business,
                     onEdit = { onContact(contact.id) },
                     onDial = onDial,
                     onOpenUrl = onOpenUrl,
@@ -492,7 +493,9 @@ private fun MasterData(
         // One formatting rule, not two: this is the same line that goes into the
         // calendar event, so the two cannot drift apart.
         Appointment.address(business.street, business.postalCode, business.city)?.let { address ->
-            DataRow("Anschrift", address) { onOpenUrl(geoUri(address)) }
+            DataRow("Anschrift", address) {
+                geoUri(business, address)?.let(onOpenUrl)
+            }
         }
 
         business.website?.takeIf { it.isNotBlank() }?.let { site ->
@@ -592,6 +595,28 @@ private fun SaveBar(
  * number, which the business's own coordinates do not always do.
  */
 internal fun geoUri(address: String): String = "geo:0,0?q=" + Uri.encode(address)
+
+/**
+ * The same, but for a business whose coordinates are known.
+ *
+ * `geo:lat,lng?q=lat,lng(Name)` puts the map on the point itself and labels the
+ * pin. The address form leaves the map application to geocode a string, which
+ * lands on the street rather than the yard often enough to matter when the yard
+ * is behind it.
+ *
+ * Falls back to the address when there are no coordinates — hand-entered
+ * businesses have none, and neither has anything imported before the columns
+ * existed.
+ */
+internal fun geoUri(business: Business, address: String?): String? {
+    val lat = business.latitude
+    val lng = business.longitude
+    if (lat != null && lng != null) {
+        val label = Uri.encode("$lat,$lng(${business.name})")
+        return "geo:$lat,$lng?q=$label"
+    }
+    return address?.takeIf { it.isNotBlank() }?.let { geoUri(it) }
+}
 
 /**
  * The appointment on site. Sits above the follow-up because the two are the
@@ -814,6 +839,8 @@ private fun PhoneRow(
 @Composable
 private fun ContactCard(
     contact: Contact,
+    /** The business this contact belongs to — a contact has no address of its own. */
+    business: Business,
     onEdit: () -> Unit,
     onDial: (DialTarget) -> Unit,
     onOpenUrl: (String) -> Unit,
@@ -868,6 +895,24 @@ private fun ContactCard(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .clickable { onOpenUrl("mailto:$mail") }
+                        .padding(vertical = 8.dp, horizontal = 16.dp),
+                )
+            }
+
+            // A contact has no address of its own — this is the business's, and
+            // the wording has to say so. "Route" alone would read as the
+            // person's own address, which the app does not hold and should not
+            // appear to.
+            val address = Appointment.address(business.street, business.postalCode, business.city)
+            geoUri(business, address)?.let { uri ->
+                Text(
+                    text = "Route zum Betrieb" + (address?.let { " · $it" } ?: ""),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .clickable { onOpenUrl(uri) }
                         .padding(vertical = 8.dp, horizontal = 16.dp),
                 )
             }

@@ -4,6 +4,30 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.3.1
+
+- **The address opens the map on the point**, not on a search for the street.
+  The coordinates from the import file were being stored and read by nothing;
+  they now put the pin where the business is and give it a name. Businesses
+  entered by hand, and anything imported before the columns existed, still fall
+  back to searching for the address.
+- **A contact card carries the route too**, labelled as the business's address —
+  a contact has none of its own, and the app should not appear to hold a private
+  one.
+- One section for importing, at the foot of the settings, instead of two doing
+  the same thing in different places.
+- The synchronisation section looks like every other section instead of a card
+  of its own, and the notes about a missing calendar or address book are no
+  longer red: nothing has gone wrong and nothing is lost.
+- **An upload shows how far it has come.** Determinate while there is something
+  to send, indeterminate while only fetching — the server does not say in
+  advance how much it holds, and a bar built on a number nobody has would be an
+  invention.
+- **Jetzt abgleichen** is back next to the connection, now that there is a bar
+  to watch. **Alles erneut hochladen** stands beside it with the difference
+  spelled out: the first exchanges what changed, the second queues the whole
+  stock again and is for a restored server backup.
+
 ## 1.3.0
 
 - **Date, start and end sit on one line in the appointment sheet**, each one a
