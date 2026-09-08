@@ -167,8 +167,10 @@ class BusinessFormTest {
 
         val forPhoneBook = repo.businessesForPhoneBook().map { it.placeId }
         assertTrue(forPhoneBook.contains(id))
-        // The imported stock has a number too, but it is research material.
-        assertFalse(forPhoneBook.contains("P1"))
+        // The imported stock goes in as well. It used to be held back as
+        // research material, which left the businesses most likely to ring
+        // first showing up as a bare number.
+        assertTrue(forPhoneBook.contains("P1"))
     }
 
     @Test

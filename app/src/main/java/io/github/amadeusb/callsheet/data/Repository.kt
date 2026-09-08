@@ -453,20 +453,25 @@ class Repository(context: Context) {
         }
 
     /**
-     * Every business that belongs in the phone book: one with a contact, one
-     * with a recorded call, or a hand-entered one that has a number.
+     * Every business the phone should be able to put a name to: all of them that
+     * have a number.
      *
-     * The imported stock stays out on purpose — it is research material, not an
-     * address book. Only what was worked on or typed in by hand is a number the
-     * phone should be able to put a name to.
+     * This used to be the worked-on stock only — a business with a contact, with
+     * a recorded call, or hand-entered. That covered a call back after a call,
+     * and nothing else: a business ringing first still came up as a bare number.
+     * Research material is exactly the stock most likely to ring out of the
+     * blue, so it belongs in the phone book too.
+     *
+     * Blocked businesses stay out, here as everywhere. It is the ground rule
+     * (see the note at the top of this file), and it matters more now than it
+     * did: the filter that used to keep most of the stock out happened to keep
+     * blocked ones out with it.
      */
     suspend fun businessesForPhoneBook(): List<Business> = withContext(Dispatchers.IO) {
-        val sql = "SELECT b.* FROM businesses b WHERE " +
-            "EXISTS (SELECT 1 FROM contacts a WHERE a.place_id = b.place_id) OR " +
-            "EXISTS (SELECT 1 FROM calls r WHERE r.place_id = b.place_id) OR " +
-            "(b.place_id LIKE ? AND b.phone IS NOT NULL AND b.phone <> '') " +
+        val sql = "SELECT b.* FROM businesses b " +
+            "WHERE b.status <> ? AND b.phone IS NOT NULL AND b.phone <> '' " +
             "ORDER BY b.name COLLATE NOCASE"
-        helper.readableDatabase.rawQuery(sql, arrayOf("$MANUAL_PREFIX%")).use { c ->
+        helper.readableDatabase.rawQuery(sql, arrayOf(Status.DO_NOT_CALL.key)).use { c ->
             allBusinesses(c)
         }
     }

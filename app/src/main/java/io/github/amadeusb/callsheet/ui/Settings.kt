@@ -492,9 +492,10 @@ private fun PhoneBookBlock(
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Text(
-            text = "Ansprechpartner, angerufene und selbst erfasste Betriebe werden " +
-                "im Telefonbuch abgelegt. Damit zeigt das Telefon bei einem " +
-                "Rückruf den Namen. " +
+            text = "Jeder Betrieb mit Telefonnummer wird im Telefonbuch abgelegt, " +
+                "dazu die erfassten Ansprechpartner. Damit zeigt das Telefon " +
+                "einen Namen, auch wenn dort zuerst angerufen wird. Gesperrte " +
+                "Betriebe bleiben draußen. " +
                 "Was du im Telefonbuch änderst, übernimmt die App beim nächsten " +
                 "Öffnen der Akte.",
             style = MaterialTheme.typography.bodySmall,
@@ -542,7 +543,7 @@ private fun PhoneBookBlock(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
                     shape = RoundedCornerShape(14.dp),
                 ) {
-                    Text(if (pushing) "Überträgt …" else "Alle bekannten Kontakte übertragen")
+                    Text(if (pushing) "Überträgt …" else "Alle Betriebe ins Telefonbuch übertragen")
                 }
             }
         }

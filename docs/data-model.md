@@ -206,7 +206,9 @@ speaks **no** CardDAV and needs no credentials.
 - The app recognises its own entries by `RawContacts.SOURCE_ID`: it holds the
   contact's id, or the business's `place_id`. Other people's contacts are never
   touched.
-- Writing happens when a contact is saved and after the first call to a business.
+- Every business that has a number goes in, together with the contacts saved by
+  hand. Blocked businesses stay out. Writing happens when a contact is saved,
+  after a call, and on demand from the settings.
 - The other direction: opening a record reads the app's own entries back. If
   `RawContacts.VERSION` has moved on, the phone book wins for name, email and
   numbers. Role and note stay as they are in the app.

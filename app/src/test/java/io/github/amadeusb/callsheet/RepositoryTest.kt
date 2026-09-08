@@ -617,6 +617,32 @@ class RepositoryTest {
     }
 
 
+    // --------------------------------------------------------------- PhoneBook
+
+    @Test
+    fun `every business with a number belongs in the phone book`() = runTest {
+        import(
+            """[
+              {"placeId":"p-1","title":"Mit Nummer","phone":"+49 841 111"},
+              {"placeId":"p-2","title":"Ohne Nummer"},
+              {"placeId":"p-3","title":"Auch mit Nummer","phone":"+49 841 222"}
+            ]"""
+        )
+
+        val forBook = repo.businessesForPhoneBook()
+
+        assertEquals(listOf("p-3", "p-1"), forBook.map { it.placeId }.sortedDescending())
+        assertEquals(2, forBook.size)
+    }
+
+    @Test
+    fun `a blocked business never reaches the phone book`() = runTest {
+        import("""[{"placeId":"p-4","title":"Gesperrt","phone":"+49 841 111"}]""")
+        repo.setStatus("p-4", Status.DO_NOT_CALL)
+
+        assertTrue(repo.businessesForPhoneBook().isEmpty())
+    }
+
     // -------------------------------------------------------------- Appointment
 
     @Test
