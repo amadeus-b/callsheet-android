@@ -76,12 +76,14 @@ fun SettingsScreen(
     onPickCalendar: (CalendarAccount) -> Unit,
     onLoadCalendars: () -> Unit,
     onPushAll: () -> Unit,
-    onSaveServer: (String, String) -> Unit,
-    onSyncNow: () -> Unit,
+    onOpenServerDialog: () -> Unit,
+    onCloseServerDialog: () -> Unit,
+    onConnectServer: (String, String) -> Unit,
     onReuploadAll: () -> Unit,
 ) {
     var confirm by remember { mutableStateOf<Business?>(null) }
     var accountPicker by remember { mutableStateOf(false) }
+    var confirmImport by remember { mutableStateOf(false) }
     var calendarPicker by remember { mutableStateOf(false) }
     var confirmReupload by remember { mutableStateOf(false) }
 
@@ -172,50 +174,49 @@ fun SettingsScreen(
                         Text("Abgleich", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(8.dp))
 
-                        var url by remember(syncState.url) { mutableStateOf(syncState.url) }
-                        var token by remember(syncState.token) { mutableStateOf(syncState.token) }
-
-                        OutlinedTextField(
-                            value = url,
-                            onValueChange = { url = it },
-                            label = { Text("Serveradresse") },
-                            placeholder = { Text("https://…") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = token,
-                            onValueChange = { token = it },
-                            label = { Text("Zugangsschlüssel") },
-                            visualTransformation = PasswordVisualTransformation(),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(Modifier.height(12.dp))
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { onSaveServer(url, token) }) { Text("Speichern") }
-                            OutlinedButton(
-                                onClick = onSyncNow,
-                                enabled = !syncState.running && url.isNotBlank(),
-                            ) { Text(if (syncState.running) "Läuft…" else "Jetzt abgleichen") }
+                        // A state, not two input fields. Fields that always look
+                        // the same, with a Save button that is always enabled,
+                        // say nothing about whether anything is connected.
+                        if (syncState.url.isBlank()) {
+                            Text(
+                                text = "Kein Server eingetragen — die App arbeitet nur auf diesem Gerät.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            Text(
+                                text = syncState.url.removePrefix("https://"),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "Zuletzt abgeglichen: ${Clock.readable(syncState.lastSyncAt)} · " +
+                                    "${syncState.pending} offen",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
-                        Spacer(Modifier.height(8.dp))
-
-                        Text(
-                            text = if (syncState.url.isBlank()) {
-                                "Kein Server eingetragen — die App arbeitet nur auf diesem Gerät."
-                            } else {
-                                "Zuletzt abgeglichen: ${Clock.readable(syncState.lastSyncAt)} · " +
-                                    "${syncState.pending} offen"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        syncState.error?.let {
+                        (syncState.connectError ?: syncState.error)?.let { message ->
                             Spacer(Modifier.height(4.dp))
-                            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                text = message,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                         }
+
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = onOpenServerDialog,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            shape = RoundedCornerShape(14.dp),
+                        ) {
+                            Text(if (syncState.url.isBlank()) "Server verbinden" else "Verbindung ändern")
+                        }
+
+                        // No "sync now": it runs by itself every time the app
+                        // comes to the front. A button for it would only ever be
+                        // pressed by somebody who does not know that.
 
                         Spacer(Modifier.height(12.dp))
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -281,6 +282,26 @@ fun SettingsScreen(
                     ) { Text("Zurücknehmen") }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+
+            item(key = "import") {
+                Section("Betriebe importieren")
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    Text(
+                        text = "Liest eine Rechercheliste als JSON ein. Sitzt hier unten " +
+                            "und nicht in der Kopfzeile, weil es selten gebraucht wird — " +
+                            "und weil ein Kreispfeil neben einer App, die abgleichen kann, " +
+                            "wie „synchronisieren“ aussieht.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { confirmImport = true },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(14.dp),
+                    ) { Text("Datei auswählen …") }
+                }
             }
 
             item(key = "footer") { Spacer(Modifier.height(24.dp)) }
@@ -387,6 +408,84 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmReupload = false }) { Text("Abbrechen") }
+            },
+        )
+    }
+
+    if (confirmImport) {
+        AlertDialog(
+            onDismissRequest = { confirmImport = false },
+            title = { Text("Betriebe importieren?") },
+            text = {
+                Text(
+                    "Neue Betriebe kommen dazu. Bei bekannten werden die Stammdaten " +
+                        "aus der Datei überschrieben — Name, Branche, Anschrift, Nummer.\n\n" +
+                        "Deine Arbeit bleibt unangetastet: Status, Notiz, Wiedervorlage, " +
+                        "Termine und Anrufverlauf rührt ein Import nie an."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmImport = false
+                    onImport()
+                }) { Text("Datei auswählen") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmImport = false }) { Text("Abbrechen") }
+            },
+        )
+    }
+
+    if (syncState.dialogOpen) {
+        var url by remember { mutableStateOf(syncState.url) }
+        // Prefilled with the stored key, shown as dots. Untouched, it stays what
+        // it was — nobody should retype sixty characters to correct an address.
+        var token by remember { mutableStateOf(syncState.token) }
+        AlertDialog(
+            onDismissRequest = onCloseServerDialog,
+            title = { Text("Server verbinden") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text("Serveradresse") },
+                        placeholder = { Text("https://…") },
+                        singleLine = true,
+                        enabled = !syncState.connecting,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = token,
+                        onValueChange = { token = it },
+                        label = { Text("Zugangsschlüssel") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        enabled = !syncState.connecting,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    syncState.connectError?.let { message ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { onConnectServer(url, token) },
+                    enabled = !syncState.connecting,
+                ) { Text(if (syncState.connecting) "Verbindet …" else "Speichern und verbinden") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = onCloseServerDialog,
+                    enabled = !syncState.connecting,
+                ) { Text("Abbrechen") }
             },
         )
     }

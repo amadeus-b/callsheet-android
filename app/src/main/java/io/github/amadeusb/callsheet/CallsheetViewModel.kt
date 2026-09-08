@@ -149,7 +149,16 @@ data class SyncUiState(
     val pending: Int = 0,
     val running: Boolean = false,
     val error: String? = null,
-)
+    /** The connection dialog is open. */
+    val dialogOpen: Boolean = false,
+    /** A connection attempt from that dialog is under way. */
+    val connecting: Boolean = false,
+    /** Why the last attempt failed. Null once one has succeeded. */
+    val connectError: String? = null,
+) {
+    /** A server is configured and the last exchange with it went through. */
+    val connected: Boolean get() = url.isNotBlank() && connectError == null
+}
 
 class CallsheetViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -220,6 +229,70 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 else -> null
             }
             _syncState.value = _syncState.value.copy(running = false, error = error)
+            refreshSyncState()
+            if (result is SyncResult.Ok) {
+                refreshList()
+                loadToday()
+            }
+        }
+    }
+
+    fun openServerDialog() {
+        _syncState.value = _syncState.value.copy(dialogOpen = true, connectError = null)
+    }
+
+    fun closeServerDialog() {
+        _syncState.value = _syncState.value.copy(dialogOpen = false, connecting = false)
+    }
+
+    /**
+     * Stores the connection and tries it at once.
+     *
+     * Saving without trying was the old behaviour, and it left the screen
+     * looking the same whether the details were right or a digit was wrong —
+     * there was nothing to see either way. An attempt turns the two fields into
+     * an answer: it went through, or here is why it did not.
+     *
+     * The details are kept even when the attempt fails. A wrong address should
+     * not cost the user a sixty-character key typed on a phone.
+     */
+    fun connectServer(url: String, token: String) {
+        val trimmed = url.trim().ifBlank { null }
+        val complaint = when {
+            trimmed == null -> "Ohne Adresse lässt sich nichts verbinden."
+            !isAcceptableServerAddress(trimmed) ->
+                "Nur eine Adresse, die mit https:// beginnt, wird angenommen — Android blockiert unverschlüsselte Verbindungen."
+            token.isBlank() -> "Ohne Zugangsschlüssel weist der Server jede Anfrage ab."
+            else -> null
+        }
+        if (complaint != null) {
+            _syncState.value = _syncState.value.copy(connectError = complaint, connecting = false)
+            return
+        }
+
+        viewModelScope.launch {
+            _syncState.value = _syncState.value.copy(connecting = true, connectError = null)
+            // A different server is a different watermark — otherwise the app
+            // would believe it had already read a stock it has never seen — and
+            // a different server has never seen this device's data either, so
+            // everything must go up again.
+            val addressChanged = trimmed!!.trimEnd('/') != preferences.serverUrl
+            preferences.serverUrl = trimmed
+            preferences.serverToken = token
+            if (addressChanged) withContext(Dispatchers.IO) { syncEngine.resetForFullResync() }
+
+            val result = withContext(Dispatchers.IO) {
+                syncEngine.sync(SyncClient(preferences.serverUrl!!, token))
+            }
+            val failure = (result as? SyncResult.Failed)?.message
+            _syncState.value = _syncState.value.copy(
+                connecting = false,
+                connectError = failure,
+                // Only a success closes it. A failure keeps the fields on the
+                // screen, next to the reason — that is where they get fixed.
+                dialogOpen = failure != null,
+                error = null,
+            )
             refreshSyncState()
             if (result is SyncResult.Ok) {
                 refreshList()

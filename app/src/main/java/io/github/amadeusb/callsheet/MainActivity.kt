@@ -249,7 +249,6 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             onDial = vm::queryNumbers,
             onOpen = { vm.openBusiness(it.placeId) },
             onToday = vm::showToday,
-            onImport = { filePicker.launch(arrayOf("application/json", "text/plain", "*/*")) },
             onSettings = vm::showSettings,
             onNewBusiness = vm::showBusinessForm,
         )
@@ -374,8 +373,9 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             onPickCalendar = vm::pickCalendar,
             onLoadCalendars = vm::loadCalendars,
             onPushAll = vm::pushAllToPhoneBook,
-            onSaveServer = vm::setServer,
-            onSyncNow = { vm.syncNow(quiet = false) },
+            onOpenServerDialog = vm::openServerDialog,
+            onCloseServerDialog = vm::closeServerDialog,
+            onConnectServer = vm::connectServer,
             onReuploadAll = vm::reuploadAll,
         )
     }

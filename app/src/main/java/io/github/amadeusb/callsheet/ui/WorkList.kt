@@ -22,7 +22,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -67,7 +66,6 @@ fun WorkListScreen(
     onDial: (Business) -> Unit,
     onOpen: (Business) -> Unit,
     onToday: () -> Unit,
-    onImport: () -> Unit,
     onSettings: () -> Unit,
     onNewBusiness: () -> Unit,
 ) {
@@ -80,9 +78,6 @@ fun WorkListScreen(
                 actions = {
                     IconButton(onClick = onToday) {
                         Icon(Icons.Filled.DateRange, contentDescription = "Heute")
-                    }
-                    IconButton(onClick = onImport) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Datei importieren")
                     }
                     IconButton(onClick = onSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Einstellungen")
