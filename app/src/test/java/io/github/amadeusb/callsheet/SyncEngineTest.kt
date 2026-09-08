@@ -249,6 +249,15 @@ class SyncEngineTest {
     }
 
     @Test
+    fun `resetForFullResync marks the stock as unsent and drops the watermark to zero`() {
+        betrieb("P1")
+        prefs.watermark = 42
+        engine.resetForFullResync()
+        assertEquals(0, prefs.watermark)
+        assertEquals(1, SyncStore(ctx).pendingCount())
+    }
+
+    @Test
     fun `hitting the round limit while work remains reports Incomplete, not Ok`() {
         prefs.lastSyncAt = "vorher"
         var calls = 0

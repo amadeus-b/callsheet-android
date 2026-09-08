@@ -205,9 +205,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             // would believe it had already read a stock it has never seen —
             // and a different server has never seen this device's data
             // either, so everything must go up again.
-            preferences.watermark = 0
             viewModelScope.launch {
-                withContext(Dispatchers.IO) { syncStore.markAllDirty() }
+                withContext(Dispatchers.IO) { syncEngine.resetForFullResync() }
                 refreshSyncState()
             }
         } else {
@@ -216,14 +215,18 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /**
-     * Marks the entire local stock as unsent. For the settings screen, behind
-     * a confirmation — after restoring an older server backup, or before
-     * pointing the app at a server that has never seen this device's data.
-     * The jump in "offen" afterwards is the honest signal that it worked.
+     * Marks the entire local stock as unsent and resets the watermark to
+     * zero. For the settings screen, behind a confirmation — after restoring
+     * an older server backup, or before pointing the app at a server that
+     * has never seen this device's data. In the restore case the watermark
+     * reset matters just as much as the marking: the server's own counter
+     * now sits below this device's, and without the reset the app would
+     * never fetch what the server writes in between. The jump in "offen"
+     * afterwards is the honest signal that it worked.
      */
     fun reuploadAll() {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { syncStore.markAllDirty() }
+            withContext(Dispatchers.IO) { syncEngine.resetForFullResync() }
             refreshSyncState()
         }
     }

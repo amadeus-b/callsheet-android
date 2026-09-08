@@ -313,7 +313,8 @@ fun SettingsScreen(
             text = {
                 Text(
                     "Der gesamte Bestand dieses Geräts wird beim nächsten Abgleich noch " +
-                        "einmal gesendet, auch was der Server schon kennt. Bei vielen " +
+                        "einmal gesendet, auch was der Server schon kennt. Außerdem wird " +
+                        "der gesamte Bestand des Servers noch einmal geholt. Bei vielen " +
                         "Betrieben kann das eine Weile dauern."
                 )
             },

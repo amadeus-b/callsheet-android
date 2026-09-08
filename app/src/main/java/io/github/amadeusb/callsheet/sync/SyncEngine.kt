@@ -109,6 +109,22 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
         }
     }
 
+    /**
+     * Marks the entire local stock as unsent and drops the watermark back to
+     * zero. Both must happen together: the watermark only moves forward on
+     * its own (see [sync] above), so after pointing the app at a server that
+     * has never seen this device before, or after an older server backup was
+     * restored — its own counter now sits below this device's — a watermark
+     * left in place would make the app believe it already received
+     * everything up to a point the server has since forgotten, and whatever
+     * the server writes in between would never be fetched. Marking the stock
+     * without resetting the watermark leaves exactly that hole.
+     */
+    fun resetForFullResync() {
+        store.markAllDirty()
+        prefs.watermark = 0
+    }
+
     /** How many rows [payload] actually carried — across the four tables and the deletions. */
     private fun sentCount(payload: JSONObject): Int {
         var total = payload.optJSONArray("geloescht")?.length() ?: 0
