@@ -563,7 +563,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     fun openAppointment(placeId: String) {
         viewModelScope.launch {
             val business = repo.business(placeId) ?: return@launch
-            val start = business.appointmentAt ?: FollowUp.inTwoDays()
+            val start = business.appointmentAt ?: Appointment.snapToQuarter(FollowUp.inTwoDays())
             val minutes = if (business.appointmentAt != null) {
                 Appointment.minutesBetween(business.appointmentAt, business.appointmentEndAt)
             } else {

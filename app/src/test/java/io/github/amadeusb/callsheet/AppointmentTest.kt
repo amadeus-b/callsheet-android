@@ -23,6 +23,22 @@ class AppointmentTest {
         eventId = eventId,
     )
 
+    // --- snapToQuarter ------------------------------------------------------
+
+    @Test
+    fun `a proposed time is snapped up to the next quarter`() {
+        val snapped = Appointment.snapToQuarter("2026-09-10T16:32:00+02:00")
+
+        assertEquals(millis(2026, 9, 10, 16, 45), Clock.millis(snapped))
+    }
+
+    @Test
+    fun `a time already on a quarter is left alone`() {
+        val iso = "2026-09-10T16:45:00+02:00"
+
+        assertEquals(iso, Appointment.snapToQuarter(iso))
+    }
+
     // --- endOf / minutesBetween --------------------------------------------
 
     @Test

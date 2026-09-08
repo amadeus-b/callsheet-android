@@ -77,6 +77,20 @@ object Appointment {
 
     private val time: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
+    /**
+     * Rounds a moment up to the next quarter hour.
+     *
+     * The picker snaps every drag to fifteen minutes, so a proposed start of
+     * 16:32 would be a time the user cannot reproduce by hand — the one value on
+     * the screen that does not obey the screen's own rule.
+     */
+    fun snapToQuarter(iso: String): String {
+        val millis = Clock.millis(iso) ?: return iso
+        val quarter = 15 * 60_000L
+        val rest = Math.floorMod(millis, quarter)
+        return if (rest == 0L) iso else Clock.format(millis + (quarter - rest))
+    }
+
     /** The end of an appointment starting at [startIso] and running [minutes]. */
     fun endOf(startIso: String, minutes: Int): String {
         val start = Clock.millis(startIso) ?: return startIso

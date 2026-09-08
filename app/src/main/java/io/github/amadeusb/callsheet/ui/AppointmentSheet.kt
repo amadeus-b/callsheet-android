@@ -85,10 +85,13 @@ fun AppointmentSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        // The sheet takes the height it can get. The timeline is the reason
+        // this screen exists, and a strip showing two hours is worth less than
+        // no strip at all — it looks like the day is empty.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 640.dp)
+                .fillMaxHeight()
                 .padding(bottom = 24.dp),
         ) {
             Text(
@@ -100,22 +103,20 @@ fun AppointmentSheet(
             SectionLabel("Tag")
             DayRow(draft = draft, onDraft = onDraft, onPickDate = onPickDate)
 
-            SectionLabel("Uhrzeit")
-            if (!draft.calendarReadable) {
-                Text(
-                    text = "Kalender nicht freigegeben — belegte Zeiten werden nicht " +
-                        "angezeigt. Der Termin wird trotzdem gespeichert.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
-            }
+            // The missing permission rides along in the label rather than in a
+            // paragraph of its own: it still has to be said — an empty strip
+            // otherwise reads as "the day is free" — but not at the price of
+            // three lines taken from the strip itself.
+            SectionLabel(
+                if (draft.calendarReadable) "Uhrzeit"
+                else "Uhrzeit · Kalender nicht freigegeben"
+            )
             // weight, not a fixed height: the timeline is what gives way when
             // the sheet runs out of room, so the save button never does.
             Timeline(
                 draft = draft,
                 onDraft = onDraft,
-                modifier = Modifier.weight(1f).heightIn(min = 160.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 320.dp),
             )
 
             SectionLabel("Dauer")

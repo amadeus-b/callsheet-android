@@ -4,6 +4,17 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.2.1
+
+- The appointment sheet uses the full height of the screen. It was capped, which
+  left the day strip about two hours tall — a strip that short reads as an empty
+  day rather than as a strip.
+- The note about a missing calendar permission moved into the section heading.
+  It still has to be said, so that an empty strip is not mistaken for a free day,
+  but it no longer costs three lines of the strip it is talking about.
+- A proposed appointment time starts on a quarter hour, like every time the
+  picker produces when dragged.
+
 ## 1.2.0
 
 - **Appointment on site.** A visit now has a time, a length and an address of
