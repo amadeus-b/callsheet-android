@@ -373,6 +373,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             onPickCalendar = vm::pickCalendar,
             onLoadCalendars = vm::loadCalendars,
             onPushAll = vm::pushAllToPhoneBook,
+            onSyncNow = { vm.syncNow(quiet = false) },
             onOpenServerDialog = vm::openServerDialog,
             onCloseServerDialog = vm::closeServerDialog,
             onConnectServer = vm::connectServer,

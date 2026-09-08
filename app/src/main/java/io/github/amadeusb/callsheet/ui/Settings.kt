@@ -77,6 +77,7 @@ fun SettingsScreen(
     onPickCalendar: (CalendarAccount) -> Unit,
     onLoadCalendars: () -> Unit,
     onPushAll: () -> Unit,
+    onSyncNow: () -> Unit,
     onOpenServerDialog: () -> Unit,
     onCloseServerDialog: () -> Unit,
     onConnectServer: (String, String) -> Unit,
@@ -85,7 +86,6 @@ fun SettingsScreen(
     var confirm by remember { mutableStateOf<Business?>(null) }
     var accountPicker by remember { mutableStateOf(false) }
     var confirmImport by remember { mutableStateOf(false) }
-    var repairOpen by remember { mutableStateOf(false) }
     var calendarPicker by remember { mutableStateOf(false) }
     var confirmReupload by remember { mutableStateOf(false) }
 
@@ -209,38 +209,35 @@ fun SettingsScreen(
                     // comes to the front. A button for it would only ever be
                     // pressed by somebody who does not know that.
 
-                    // Changes go up by themselves; this is a repair tool, not a
-                    // step. Out of the way, because the one case still left for
-                    // it is a restored server backup — a different server now
-                    // resets on its own when the address changes.
+                    // Two buttons that look alike and are not. The one on the
+                    // left exchanges what has changed; the one on the right
+                    // queues everything again, which is a repair and not a
+                    // thorough version of its neighbour. The line underneath is
+                    // the only thing that says so — do not drop it.
                     if (syncState.url.isNotBlank()) {
                         Spacer(Modifier.height(12.dp))
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        TextButton(
-                            onClick = { repairOpen = !repairOpen },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                text = if (repairOpen) "Wenn etwas nicht stimmt ▴"
-                                else "Wenn etwas nicht stimmt ▾",
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                        }
-                        if (repairOpen) {
-                            Text(
-                                text = "Änderungen gehen von allein hoch, bei jedem Öffnen der " +
-                                    "App. Der Knopf hier ist nur für den Fall, dass auf dem " +
-                                    "Server ein älteres Backup eingespielt wurde — dann hält " +
-                                    "die App fälschlich alles für gesendet.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = onSyncNow,
+                                enabled = !syncState.running,
+                            ) { Text(if (syncState.running) "Läuft …" else "Jetzt abgleichen") }
                             OutlinedButton(
                                 onClick = { confirmReupload = true },
                                 enabled = !syncState.running,
                             ) { Text("Alles erneut hochladen") }
                         }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "Abgleichen tauscht aus, was sich geändert hat — das " +
+                                "geschieht ohnehin bei jedem Öffnen der App. Erneut " +
+                                "hochladen stellt den gesamten Bestand noch einmal in die " +
+                                "Warteschlange; nötig nur, wenn auf dem Server ein älteres " +
+                                "Backup eingespielt wurde.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
