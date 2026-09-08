@@ -201,7 +201,11 @@ work:
 - The address row in the detail view becomes tappable and fires a `geo:` intent
   carrying the coordinates and the address as a query, so whichever map
   application is installed can take it. `DataRow` already accepts an `onClick`.
-- The work list row shows the street as well as the city.
+- The work list row stays as it is. The street was going to go in, until the row
+  turned out to already carry `industry · city` on one ellipsised line with the
+  contact below it — a fourth datum costs the industry, which is what the list is
+  sorted and filtered by, and buys half a street name. Routing happens where the
+  address is tappable and in the calendar entry, both of which are above.
 - `appointment_location` goes into `EVENT_LOCATION`, so navigation starts from
   the calendar entry.
 

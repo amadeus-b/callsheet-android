@@ -22,6 +22,8 @@
 - **minSdk 30, compileSdk 37.** Kotlin 2.4.20, AGP 9.4.0.
 - Tests: `./gradlew testDebugUnitTest`. A single class: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.<Class>"`.
 - Commit messages in German, imperative or descriptive, no attribution lines.
+- **Test names in English**, like all 26 that already exist. Only the fixture
+  method is German (`fun aufbau()`) — keep that, it is the established name.
 - **State writes:** the view model today writes `_state.value = _state.value.copy(...)` and never uses `update`. This plan's snippets use `_state.update { … }`, which is the thread-safe form. Add `import kotlinx.coroutines.flow.update` once in Task 7 and use it consistently from there on; do not convert the existing call sites as part of this work.
 
 ---
@@ -59,8 +61,8 @@ and get checked by hand in Task 15.
 | `data/Importer.kt` | Read `location.lat` / `location.lng`. |
 | `contacts/Preferences.kt` | `calendarEnabled`, `calendarId`, `appointmentMinutes`. |
 | `ui/BusinessDetail.kt` | The `Termin vor Ort` section, the tappable address, the sheet's host. |
-| `ui/Components.kt` | Street in the work list row. |
 | `ui/Settings.kt` | Calendar picker beside the address book picker. |
+| `ui/Components.kt` | `showAppointment` on the business row, for "Today". |
 | `ui/Today.kt` | An appointments group above the follow-ups. |
 | `CallsheetViewModel.kt` | State and actions for the appointment. |
 | `app/src/main/AndroidManifest.xml` | `READ_CALENDAR`, `WRITE_CALENDAR`, a `geo:` query entry. |
@@ -157,7 +159,7 @@ class MigrationTest {
     }
 
     @Test
-    fun `die Migration erhält die Arbeitsdaten`() {
+    fun `the migration keeps the working data`() {
         createVersionOne()
 
         val db = Database(context).readableDatabase
@@ -171,7 +173,7 @@ class MigrationTest {
     }
 
     @Test
-    fun `die Migration legt die sechs Spalten leer an`() {
+    fun `the migration adds the six columns empty`() {
         createVersionOne()
 
         val db = Database(context).readableDatabase
@@ -190,7 +192,7 @@ class MigrationTest {
     }
 
     @Test
-    fun `eine frische Datenbank hat dieselben Spalten`() {
+    fun `a fresh database has the same columns`() {
         val db = Database(context).readableDatabase
 
         db.rawQuery("SELECT * FROM businesses LIMIT 0", null).use { c ->
@@ -292,7 +294,7 @@ git commit -m "Datenbank v2: Terminspalten und Koordinaten"
 - Produces:
   - `Business.appointmentAt: String?`, `.appointmentEndAt: String?`, `.appointmentLocation: String?`, `.calendarEventId: Long?`, `.latitude: Double?`, `.longitude: Double?`
   - `suspend fun Repository.setAppointment(placeId: String, at: String?, endAt: String?, location: String?, eventId: Long?)`
-  - `suspend fun Repository.appointmentsDue(toMillis: Long): List<Business>`
+  - `suspend fun Repository.appointmentsDue(fromMillis: Long, toMillis: Long): List<Business>`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -302,7 +304,7 @@ Append to `RepositoryTest.kt`, inside the class:
     // -------------------------------------------------------------- Appointment
 
     @Test
-    fun `ein Termin wird gespeichert und wieder gelesen`() = runTest {
+    fun `an appointment is stored and read back`() = runTest {
         import("""[{"placeId":"t-1","title":"Gartenbau Merten","phone":"+49 841 111"}]""")
 
         repo.setAppointment(
@@ -321,7 +323,7 @@ Append to `RepositoryTest.kt`, inside the class:
     }
 
     @Test
-    fun `ein Termin laesst sich vollstaendig entfernen`() = runTest {
+    fun `an appointment can be cleared completely`() = runTest {
         import("""[{"placeId":"t-2","title":"Gartenbau Merten","phone":"+49 841 111"}]""")
         repo.setAppointment("t-2", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Irgendwo", 12L)
 
@@ -335,7 +337,7 @@ Append to `RepositoryTest.kt`, inside the class:
     }
 
     @Test
-    fun `ein zweiter Import laesst den Termin unberuehrt`() = runTest {
+    fun `a second import leaves the appointment alone`() = runTest {
         import("""[{"placeId":"t-3","title":"Gartenbau Merten","phone":"+49 841 111"}]""")
         repo.setAppointment("t-3", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Zehentstraße 39", 99L)
 
@@ -348,7 +350,7 @@ Append to `RepositoryTest.kt`, inside the class:
     }
 
     @Test
-    fun `appointmentsDue liefert faellige Termine chronologisch`() = runTest {
+    fun `appointmentsDue returns the day's appointments in order`() = runTest {
         import(
             """[
               {"placeId":"t-4","title":"Spaeter","phone":"+49 841 111"},
@@ -360,21 +362,34 @@ Append to `RepositoryTest.kt`, inside the class:
         repo.setAppointment("t-5", "2026-09-10T09:00:00+02:00", "2026-09-10T10:00:00+02:00", null, null)
         repo.setAppointment("t-6", "2026-09-12T09:00:00+02:00", "2026-09-12T10:00:00+02:00", null, null)
 
-        val bis = Clock.millis("2026-09-11T00:00:00+02:00")!!
-        val faellig = repo.appointmentsDue(bis)
+        val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
+        val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
+        val due = repo.appointmentsDue(from, until)
 
-        assertEquals(listOf("t-5", "t-4"), faellig.map { it.placeId })
+        assertEquals(listOf("t-5", "t-4"), due.map { it.placeId })
     }
 
     @Test
-    fun `ein gesperrter Betrieb taucht in appointmentsDue nicht auf`() = runTest {
+    fun `a past appointment is not due today`() = runTest {
+        import("""[{"placeId":"t-9","title":"Vorletzte Woche","phone":"+49 841 111"}]""")
+        repo.setAppointment("t-9", "2026-08-27T09:00:00+02:00", "2026-08-27T10:00:00+02:00", null, null)
+
+        val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
+        val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
+
+        assertTrue(repo.appointmentsDue(from, until).isEmpty())
+    }
+
+    @Test
+    fun `a blocked business never appears in appointmentsDue`() = runTest {
         import("""[{"placeId":"t-7","title":"Gesperrt","phone":"+49 841 111"}]""")
         repo.setAppointment("t-7", "2026-09-10T09:00:00+02:00", "2026-09-10T10:00:00+02:00", null, null)
         repo.setStatus("t-7", Status.DO_NOT_CALL)
 
-        val bis = Clock.millis("2026-09-11T00:00:00+02:00")!!
+        val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
+        val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
 
-        assertTrue(repo.appointmentsDue(bis).isEmpty())
+        assertTrue(repo.appointmentsDue(from, until).isEmpty())
     }
 ```
 
@@ -457,15 +472,22 @@ In `Repository.kt`, in the writing section after `setFollowUp`:
 And in the reading section, next to `due`:
 
 ```kotlin
-    /** Every appointment starting by [toMillis], earliest first. */
-    suspend fun appointmentsDue(toMillis: Long = System.currentTimeMillis()): List<Business> =
+    /**
+     * Appointments starting between [fromMillis] and [toMillis], earliest first.
+     *
+     * Note the lower bound, which [due] does not have. An overdue follow-up is
+     * still work to do — "you never rang back". An appointment from a fortnight
+     * ago is not; it happened, or it did not, and either way it does not belong
+     * under a heading that reads "today".
+     */
+    suspend fun appointmentsDue(fromMillis: Long, toMillis: Long): List<Business> =
         withContext(Dispatchers.IO) {
             val sql = "SELECT b.*, $NUMBERS_SUBQUERY FROM businesses b WHERE status <> ? " +
                 "AND appointment_at IS NOT NULL AND appointment_at <> ''"
             helper.readableDatabase.rawQuery(sql, arrayOf(Status.DO_NOT_CALL.key)).use { c ->
                 allBusinesses(c)
                     .mapNotNull { b -> Clock.millis(b.appointmentAt)?.let { it to b } }
-                    .filter { it.first <= toMillis }
+                    .filter { it.first in fromMillis..toMillis }
                     .sortedBy { it.first }
                     .map { it.second }
             }
@@ -501,43 +523,28 @@ git commit -m "Termin am Betrieb: lesen, schreiben, fällige Termine"
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `ImporterTest.kt`, inside the class (match the file's existing parse helper — if it parses through `Importer.parse`, use that; the assertion is on the resulting `ImportedBusiness`):
+The API is `Importer.read(text: String): List<ImportedBusiness>` (`Importer.kt:23`) — it takes the text, not a stream. Append to `ImporterTest.kt`:
 
 ```kotlin
     @Test
-    fun `Koordinaten werden aus location gelesen`() {
+    fun `coordinates are read from location`() {
         val json = """
             [{"placeId":"k-1","title":"Gartenbau Merten",
               "location":{"lat":48.8059466,"lng":11.4058554}}]
         """.trimIndent()
 
-        val betrieb = Importer.parse(json.byteInputStream()).single()
+        val business = Importer.read(json).single()
 
-        assertEquals(48.8059466, betrieb.latitude!!, 0.0000001)
-        assertEquals(11.4058554, betrieb.longitude!!, 0.0000001)
+        assertEquals(48.8059466, business.latitude!!, 0.0000001)
+        assertEquals(11.4058554, business.longitude!!, 0.0000001)
     }
 
     @Test
-    fun `ein fehlendes location-Feld ergibt keine Koordinaten`() {
-        val json = """[{"placeId":"k-2","title":"Ohne Ort"}]"""
+    fun `a missing location field yields no coordinates`() {
+        val business = Importer.read("""[{"placeId":"k-2","title":"Ohne Ort"}]""").single()
 
-        val betrieb = Importer.parse(json.byteInputStream()).single()
-
-        assertNull(betrieb.latitude)
-        assertNull(betrieb.longitude)
-    }
-```
-
-If `Importer` exposes no `parse` returning `List<ImportedBusiness>`, go through the repository instead and assert on `repo.business(...)`:
-
-```kotlin
-    @Test
-    fun `Koordinaten landen in der Datenbank`() = runTest {
-        import("""[{"placeId":"k-1","title":"Merten","location":{"lat":48.8059466,"lng":11.4058554}}]""")
-
-        val betrieb = repo.business("k-1")!!
-        assertEquals(48.8059466, betrieb.latitude!!, 0.0000001)
-        assertEquals(11.4058554, betrieb.longitude!!, 0.0000001)
+        assertNull(business.latitude)
+        assertNull(business.longitude)
     }
 ```
 
@@ -557,20 +564,11 @@ In `Importer.kt`, in `one(o: JSONObject)`, before the `return`:
 and in the `ImportedBusiness(...)` call, after `collectedAt`:
 
 ```kotlin
-            latitude = location?.decimalOrNull("lat"),
-            longitude = location?.decimalOrNull("lng"),
+            latitude = location?.decimal("lat"),
+            longitude = location?.decimal("lng"),
 ```
 
-Add the helper next to the other `JSONObject` helpers:
-
-```kotlin
-    /** A decimal or null; `JSONObject.NULL` and absent keys both count as absent. */
-    private fun JSONObject.decimalOrNull(key: String): Double? {
-        if (!has(key) || isNull(key)) return null
-        val value = optDouble(key, Double.NaN)
-        return if (value.isNaN()) null else value
-    }
-```
+No new helper: `private fun JSONObject.decimal(key: String): Double?` already sits at `Importer.kt:93` and does exactly this, `JSONObject.NULL` handling included.
 
 - [ ] **Step 4: Write them into the database**
 
@@ -606,7 +604,7 @@ git commit -m "Koordinaten aus der Importdatei übernehmen"
 **Interfaces:**
 - Consumes: `Clock`.
 - Produces:
-  - `data class BusyInterval(val startMillis: Long, val endMillis: Long, val title: String)`
+  - `data class BusyInterval(val startMillis: Long, val endMillis: Long, val title: String, val eventId: Long? = null)`
   - `Appointment.DEFAULT_MINUTES: Int` (60), `Appointment.DURATIONS: List<Int>` (30, 60, 90, 120)
   - `Appointment.endOf(startIso: String, minutes: Int): String`
   - `Appointment.minutesBetween(startIso: String?, endIso: String?): Int`
@@ -637,42 +635,43 @@ class AppointmentTest {
     private fun millis(year: Int, month: Int, day: Int, hour: Int, minute: Int = 0): Long =
         ZonedDateTime.of(year, month, day, hour, minute, 0, 0, Clock.zone).toInstant().toEpochMilli()
 
-    private fun busy(fromHour: Int, toHour: Int, title: String) = BusyInterval(
+    private fun busy(fromHour: Int, toHour: Int, title: String, eventId: Long? = null) = BusyInterval(
         startMillis = millis(2026, 9, 10, fromHour),
         endMillis = millis(2026, 9, 10, toHour),
         title = title,
+        eventId = eventId,
     )
 
     // --- endOf / minutesBetween --------------------------------------------
 
     @Test
-    fun `endOf addiert die Dauer`() {
-        val ende = Appointment.endOf("2026-09-10T14:00:00+02:00", 90)
+    fun `endOf adds the duration`() {
+        val end = Appointment.endOf("2026-09-10T14:00:00+02:00", 90)
 
-        assertEquals(millis(2026, 9, 10, 15, 30), Clock.millis(ende))
+        assertEquals(millis(2026, 9, 10, 15, 30), Clock.millis(end))
     }
 
     @Test
-    fun `endOf korrigiert nicht auf Werktage`() {
+    fun `endOf does not correct onto a workday`() {
         // Samstag, 18:30 — als Termin ausdrücklich erlaubt. Anders als bei der
         // Wiedervorlage entscheidet hier der Kunde, nicht die App.
-        val ende = Appointment.endOf("2026-09-12T18:30:00+02:00", 60)
+        val end = Appointment.endOf("2026-09-12T18:30:00+02:00", 60)
 
-        assertEquals(millis(2026, 9, 12, 19, 30), Clock.millis(ende))
+        assertEquals(millis(2026, 9, 12, 19, 30), Clock.millis(end))
     }
 
     @Test
-    fun `minutesBetween liest die Dauer zurueck`() {
-        val dauer = Appointment.minutesBetween(
+    fun `minutesBetween reads the duration back`() {
+        val minutes = Appointment.minutesBetween(
             "2026-09-10T14:00:00+02:00",
             "2026-09-10T15:30:00+02:00",
         )
 
-        assertEquals(90, dauer)
+        assertEquals(90, minutes)
     }
 
     @Test
-    fun `minutesBetween faellt ohne Ende auf die Voreinstellung zurueck`() {
+    fun `minutesBetween falls back to the default without an end`() {
         assertEquals(Appointment.DEFAULT_MINUTES, Appointment.minutesBetween("2026-09-10T14:00:00+02:00", null))
         assertEquals(Appointment.DEFAULT_MINUTES, Appointment.minutesBetween(null, null))
     }
@@ -680,48 +679,48 @@ class AppointmentTest {
     // --- overlapping --------------------------------------------------------
 
     @Test
-    fun `eine Ueberschneidung wird gefunden`() {
-        val belegt = listOf(busy(9, 10, "Baustelle Nord"), busy(16, 17, "Steuerbüro"))
+    fun `an overlap is found`() {
+        val busyTimes = listOf(busy(9, 10, "Baustelle Nord"), busy(16, 17, "Steuerbüro"))
 
-        val treffer = Appointment.overlapping(
+        val hits = Appointment.overlapping(
             millis(2026, 9, 10, 9, 30),
             millis(2026, 9, 10, 10, 30),
-            belegt,
+            busyTimes,
         )
 
-        assertEquals(listOf("Baustelle Nord"), treffer.map { it.title })
+        assertEquals(listOf("Baustelle Nord"), hits.map { it.title })
     }
 
     @Test
-    fun `direkt aneinander liegende Termine ueberschneiden sich nicht`() {
-        val belegt = listOf(busy(9, 10, "Baustelle Nord"))
+    fun `back-to-back appointments do not overlap`() {
+        val busyTimes = listOf(busy(9, 10, "Baustelle Nord"))
 
-        val treffer = Appointment.overlapping(
+        val hits = Appointment.overlapping(
             millis(2026, 9, 10, 10),
             millis(2026, 9, 10, 11),
-            belegt,
+            busyTimes,
         )
 
-        assertTrue(treffer.isEmpty())
+        assertTrue(hits.isEmpty())
     }
 
     @Test
-    fun `ein umschlossener Termin zaehlt als Ueberschneidung`() {
-        val belegt = listOf(busy(9, 10, "Baustelle Nord"))
+    fun `an enclosed appointment counts as an overlap`() {
+        val busyTimes = listOf(busy(9, 10, "Baustelle Nord"))
 
-        val treffer = Appointment.overlapping(
+        val hits = Appointment.overlapping(
             millis(2026, 9, 10, 8),
             millis(2026, 9, 10, 12),
-            belegt,
+            busyTimes,
         )
 
-        assertEquals(1, treffer.size)
+        assertEquals(1, hits.size)
     }
 
     // --- address ------------------------------------------------------------
 
     @Test
-    fun `die Anschrift wird einzeilig zusammengesetzt`() {
+    fun `the address is joined onto one line`() {
         assertEquals(
             "Zehentstraße 39, 85055 Ingolstadt",
             Appointment.address("Zehentstraße 39", "85055", "Ingolstadt"),
@@ -729,7 +728,7 @@ class AppointmentTest {
     }
 
     @Test
-    fun `fehlende Teile der Anschrift fallen weg`() {
+    fun `missing parts of the address drop out`() {
         assertEquals("Ingolstadt", Appointment.address(null, null, "Ingolstadt"))
         assertEquals("Zehentstraße 39", Appointment.address("Zehentstraße 39", null, null))
         assertNull(Appointment.address(null, null, null))
@@ -739,7 +738,7 @@ class AppointmentTest {
     // --- readableRange ------------------------------------------------------
 
     @Test
-    fun `der Zeitraum wird deutsch dargestellt`() {
+    fun `the range reads in German`() {
         assertEquals(
             "Do, 10.09. · 14:00 – 15:00",
             Appointment.readableRange("2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00"),
@@ -747,7 +746,7 @@ class AppointmentTest {
     }
 
     @Test
-    fun `ohne Termin steht ein Gedankenstrich`() {
+    fun `without an appointment there is a dash`() {
         assertEquals("—", Appointment.readableRange(null, null))
     }
 }
@@ -774,6 +773,12 @@ data class BusyInterval(
     val startMillis: Long,
     val endMillis: Long,
     val title: String,
+    /**
+     * The calendar event behind it. Without this, the conflict question could
+     * not offer to link an appointment that already exists — it would only be
+     * able to refuse or duplicate.
+     */
+    val eventId: Long? = null,
 )
 
 /**
@@ -854,7 +859,7 @@ object Appointment {
 Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.AppointmentTest"`
 Expected: PASS, eleven tests.
 
-If `der Zeitraum wird deutsch dargestellt` fails on the weekday abbreviation, the JVM locale data is producing something other than `Do`. Do not weaken the assertion — fix the pattern to match the actual German short form and note what it produced.
+If `the range reads in German` fails on the weekday abbreviation, the JVM locale data is producing something other than `Do`. Do not weaken the assertion — fix the pattern to match the actual German short form and note what it produced.
 
 - [ ] **Step 5: Commit**
 
@@ -897,29 +902,29 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class PreferencesTest {
 
-    private val prefs = Preferences(ApplicationProvider.getApplicationContext())
+    private val preferences = Preferences(ApplicationProvider.getApplicationContext())
 
     @Test
-    fun `frische Einstellungen haben keinen Kalender und 60 Minuten`() {
-        assertFalse(prefs.calendarEnabled)
-        assertNull(prefs.calendarId)
-        assertEquals(60, prefs.appointmentMinutes)
+    fun `fresh settings have no calendar and 60 minutes`() {
+        assertFalse(preferences.calendarEnabled)
+        assertNull(preferences.calendarId)
+        assertEquals(60, preferences.appointmentMinutes)
     }
 
     @Test
-    fun `die gewaehlte Dauer wird gemerkt`() {
-        prefs.appointmentMinutes = 90
+    fun `the chosen duration is remembered`() {
+        preferences.appointmentMinutes = 90
 
-        assertEquals(90, prefs.appointmentMinutes)
+        assertEquals(90, preferences.appointmentMinutes)
     }
 
     @Test
-    fun `der Kalender laesst sich setzen und wieder loeschen`() {
-        prefs.calendarId = 7L
-        assertEquals(7L, prefs.calendarId)
+    fun `the calendar can be set and cleared`() {
+        preferences.calendarId = 7L
+        assertEquals(7L, preferences.calendarId)
 
-        prefs.calendarId = null
-        assertNull(prefs.calendarId)
+        preferences.calendarId = null
+        assertNull(preferences.calendarId)
     }
 }
 ```
@@ -1241,8 +1246,13 @@ object BusyTimes {
                         CalendarContract.Instances.END,
                         CalendarContract.Instances.TITLE,
                         CalendarContract.Instances.ALL_DAY,
+                        CalendarContract.Instances.EVENT_ID,
                     ),
-                    null, null,
+                    // "Every visible calendar" has to be said in the query, not
+                    // only in the comment: a calendar the user has switched off
+                    // is one they have decided not to be shown.
+                    "${CalendarContract.Instances.VISIBLE} = 1",
+                    null,
                     "${CalendarContract.Instances.BEGIN} ASC",
                 )?.use { c ->
                     while (c.moveToNext()) {
@@ -1253,6 +1263,7 @@ object BusyTimes {
                                 startMillis = c.getLong(0),
                                 endMillis = c.getLong(1),
                                 title = c.getString(2)?.ifBlank { null } ?: "Termin",
+                                eventId = c.getLong(4),
                             )
                         )
                     }
@@ -1278,8 +1289,12 @@ events on the same day, in different calendars:
    every writable calendar and none of the read-only ones.
 2. Insert an event through the app and find it in the calendar application, with
    the right day, time, length and location.
-3. Confirm `BusyTimes.forDay` returns both events, in order, with their titles —
-   including the one in the calendar the app does *not* write to.
+3. Confirm `BusyTimes.forDay` returns both events, in order, with their titles
+   and a non-null `eventId` — including the one in the calendar the app does
+   *not* write to. Without the id, **Verknüpfen** has nothing to link to and the
+   conflict dialog can only offer two of its three answers.
+   Then hide one of the calendars in the calendar application and confirm its
+   entry disappears from the result.
 4. Confirm an all-day entry does not appear in the result.
 5. Delete the event in the calendar application, then confirm `read` returns null
    rather than throwing.
@@ -1316,7 +1331,6 @@ In `CallsheetViewModel.kt`, in `data class State`, after `phoneBookHint`:
     val calendarEnabled: Boolean = false,
     val calendar: CalendarAccount? = null,
     val calendars: List<CalendarAccount> = emptyList(),
-    val calendarHint: String? = null,
 ```
 
 Imports: `io.github.amadeusb.callsheet.calendar.CalendarAccount`, `io.github.amadeusb.callsheet.calendar.CalendarStore`.
@@ -1330,27 +1344,27 @@ In `CallsheetViewModel`, next to the phone book actions:
     fun loadCalendars() {
         viewModelScope.launch {
             val found = CalendarStore.calendars(getApplication())
-            val chosen = prefs.calendarId?.let { id -> found.firstOrNull { it.id == id } }
+            val chosen = preferences.calendarId?.let { id -> found.firstOrNull { it.id == id } }
             _state.update { it.copy(calendars = found, calendar = chosen) }
         }
     }
 
     fun setCalendarEnabled(enabled: Boolean) {
-        prefs.calendarEnabled = enabled
+        preferences.calendarEnabled = enabled
         _state.update { it.copy(calendarEnabled = enabled) }
         if (enabled) loadCalendars()
     }
 
     fun pickCalendar(calendar: CalendarAccount) {
-        prefs.calendarId = calendar.id
+        preferences.calendarId = calendar.id
         _state.update { it.copy(calendar = calendar) }
     }
 ```
 
-Find where the existing code reads `prefs.phoneBookEnabled` into the initial state and add the calendar equivalents alongside:
+Find where the existing code reads `preferences.phoneBookEnabled` into the initial state and add the calendar equivalents alongside:
 
 ```kotlin
-            calendarEnabled = prefs.calendarEnabled,
+            calendarEnabled = preferences.calendarEnabled,
 ```
 
 - [ ] **Step 3: Add the block to the settings screen**
@@ -1506,14 +1520,23 @@ git commit -m "Einstellungen: Kalender wählen"
 ### Task 8: Saving an appointment, end to end
 
 **Files:**
+- Modify: `app/src/main/java/io/github/amadeusb/callsheet/calling/Appointment.kt`
 - Modify: `app/src/main/java/io/github/amadeusb/callsheet/CallsheetViewModel.kt`
+- Test: `app/src/test/java/io/github/amadeusb/callsheet/AppointmentTest.kt`
 
 **Interfaces:**
 - Consumes: `Repository.setAppointment`, `CalendarStore`, `BusyTimes`, `Appointment`, `Preferences.appointmentMinutes`.
 - Produces:
-  - `data class AppointmentDraft(val placeId: String, val startIso: String, val minutes: Int, val location: String, val busy: List<BusyInterval>, val conflict: List<BusyInterval> = emptyList())`
-  - `State.appointmentDraft: AppointmentDraft?`
-  - `CallsheetViewModel.openAppointment(placeId: String)`, `.updateAppointmentDraft(AppointmentDraft)`, `.pickAppointmentDay(dayStartMillis: Long)`, `.saveAppointment(linkExisting: Long? = null, force: Boolean = false)`, `.dismissAppointment()`, `.removeAppointment(placeId: String)`
+  - `data class AppointmentDraft(...)` on `State.appointmentDraft`
+  - `sealed interface SavePlan` with `Conflict(with: List<BusyInterval>)`, `Adopt(eventId: Long)`, `Update(eventId: Long)`, `Create`, `LocalOnly`
+  - `Appointment.plan(startMillis, endMillis, busy, ownEventId, linkExisting, force, calendarEnabled): SavePlan`
+  - `CallsheetViewModel.openAppointment(placeId)`, `.updateAppointmentDraft(draft)`, `.saveAppointment(linkExisting: Long? = null, force: Boolean = false)`, `.dismissAppointment()`, `.removeAppointment(placeId)`
+
+Saving makes four decisions — is the window free, is there an event to adopt, is
+there one to update, is the calendar on at all. They go into a pure function so
+they can be tested; the view model only carries out the answer. Without that
+split, the orchestration is exactly the untested part where the two worst bugs of
+this feature would live.
 
 - [ ] **Step 1: Add the draft to the state**
 
@@ -1529,7 +1552,11 @@ data class AppointmentDraft(
     val startIso: String,
     val minutes: Int,
     val location: String,
-    /** Everything already taken on that day, for the timeline. */
+    /**
+     * Everything already taken on that day, for the timeline. The business's own
+     * event is filtered out: it would otherwise collide with itself on every
+     * change, and the conflict question would be unanswerable.
+     */
     val busy: List<BusyInterval> = emptyList(),
     /** What the chosen window runs into. Empty means it is free. */
     val conflict: List<BusyInterval> = emptyList(),
@@ -1549,19 +1576,160 @@ and in `State`:
     val appointmentDraft: AppointmentDraft? = null,
 ```
 
-- [ ] **Step 2: Write the actions**
+- [ ] **Step 2: Write the failing tests for the save decision**
+
+Append to `AppointmentTest.kt`:
+
+```kotlin
+    // --- plan ---------------------------------------------------------------
+
+    private val slotStart = millis(2026, 9, 10, 14)
+    private val slotEnd = millis(2026, 9, 10, 15)
+
+    @Test
+    fun `a free slot with the calendar on creates an event`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd, busy = emptyList(),
+            ownEventId = null, linkExisting = null, force = false, calendarEnabled = true,
+        )
+
+        assertEquals(SavePlan.Create, plan)
+    }
+
+    @Test
+    fun `a free slot with the calendar off writes only the columns`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd, busy = emptyList(),
+            ownEventId = null, linkExisting = null, force = false, calendarEnabled = false,
+        )
+
+        assertEquals(SavePlan.LocalOnly, plan)
+    }
+
+    @Test
+    fun `an existing own event is updated, not duplicated`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd, busy = emptyList(),
+            ownEventId = 42L, linkExisting = null, force = false, calendarEnabled = true,
+        )
+
+        assertEquals(SavePlan.Update(42L), plan)
+    }
+
+    @Test
+    fun `a taken slot asks before writing anything`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd,
+            busy = listOf(busy(14, 15, "Steuerbüro")),
+            ownEventId = null, linkExisting = null, force = false, calendarEnabled = true,
+        )
+
+        assertTrue(plan is SavePlan.Conflict)
+        assertEquals(listOf("Steuerbüro"), (plan as SavePlan.Conflict).with.map { it.title })
+    }
+
+    @Test
+    fun `force writes into a taken slot anyway`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd,
+            busy = listOf(busy(14, 15, "Steuerbüro")),
+            ownEventId = null, linkExisting = null, force = true, calendarEnabled = true,
+        )
+
+        assertEquals(SavePlan.Create, plan)
+    }
+
+    @Test
+    fun `linking beats the conflict and never creates`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd,
+            busy = listOf(busy(14, 15, "Steuerbüro")),
+            ownEventId = null, linkExisting = 7L, force = false, calendarEnabled = true,
+        )
+
+        assertEquals(SavePlan.Adopt(7L), plan)
+    }
+```
+
+Add `import io.github.amadeusb.callsheet.calling.SavePlan`.
+
+- [ ] **Step 3: Run the tests and watch them fail**
+
+Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.AppointmentTest"`
+Expected: FAIL to compile — `plan` does not exist.
+
+- [ ] **Step 4: Write the decision**
+
+In `calling/Appointment.kt`:
+
+```kotlin
+/** What saving an appointment should do about the calendar. */
+sealed interface SavePlan {
+    /** The window is taken and nobody has said what to do about it yet. */
+    data class Conflict(val with: List<BusyInterval>) : SavePlan
+
+    /**
+     * Take over an appointment that is already in the calendar. Its time and
+     * place win and the event is left untouched — the app only records that the
+     * two are the same thing. Writing the draft over it would rename and move
+     * somebody else's entry, which is the one thing this feature must never do.
+     */
+    data class Adopt(val eventId: Long) : SavePlan
+
+    /** Write the draft over the event this business already owns. */
+    data class Update(val eventId: Long) : SavePlan
+
+    /** Create a new event. */
+    data object Create : SavePlan
+
+    /** Columns only — the calendar is switched off or out of reach. */
+    data object LocalOnly : SavePlan
+}
+```
+
+and inside `object Appointment`:
+
+```kotlin
+    /**
+     * What saving should do. The order matters: an explicit instruction from the
+     * user beats a conflict, and a conflict beats everything else.
+     */
+    fun plan(
+        startMillis: Long,
+        endMillis: Long,
+        busy: List<BusyInterval>,
+        ownEventId: Long?,
+        linkExisting: Long?,
+        force: Boolean,
+        calendarEnabled: Boolean,
+    ): SavePlan {
+        if (linkExisting != null) return SavePlan.Adopt(linkExisting)
+        if (!force) {
+            val clash = overlapping(startMillis, endMillis, busy)
+            if (clash.isNotEmpty()) return SavePlan.Conflict(clash)
+        }
+        if (!calendarEnabled) return SavePlan.LocalOnly
+        return if (ownEventId != null) SavePlan.Update(ownEventId) else SavePlan.Create
+    }
+```
+
+- [ ] **Step 5: Run the tests and watch them pass**
+
+Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.AppointmentTest"`
+Expected: PASS, twenty-one tests.
+
+- [ ] **Step 6: Write the view model actions**
 
 ```kotlin
     /** Opens the sheet, prefilled from the business and the last duration used. */
     fun openAppointment(placeId: String) {
         viewModelScope.launch {
             val business = repo.business(placeId) ?: return@launch
-            val start = business.appointmentAt
-                ?: FollowUp.inTwoDays()
+            val start = business.appointmentAt ?: FollowUp.inTwoDays()
             val minutes = if (business.appointmentAt != null) {
                 Appointment.minutesBetween(business.appointmentAt, business.appointmentEndAt)
             } else {
-                prefs.appointmentMinutes
+                preferences.appointmentMinutes
             }
             val location = business.appointmentLocation
                 ?: Appointment.address(business.street, business.postalCode, business.city)
@@ -1577,15 +1745,23 @@ and in `State`:
                     )
                 )
             }
-            loadBusy(Clock.millis(start)!!)
+            loadBusy(Clock.millis(start)!!, business.calendarEventId)
         }
     }
 
-    /** Reads the busy times for the day containing [millis]. */
-    private fun loadBusy(millis: Long) {
+    /**
+     * Reads the busy times for the day containing [millis].
+     *
+     * [ownEventId] drops out of the result. An appointment being changed is
+     * already in the calendar, so leaving it in would make every save collide
+     * with itself — and the conflict question would offer to link an appointment
+     * to itself.
+     */
+    private fun loadBusy(millis: Long, ownEventId: Long?) {
         viewModelScope.launch {
             val dayStart = Clock.todayStart(millis)
             val busy = BusyTimes.forDay(getApplication(), dayStart)
+                .filter { it.eventId == null || it.eventId != ownEventId }
             _state.update { state ->
                 val draft = state.appointmentDraft ?: return@update state
                 state.copy(appointmentDraft = draft.copy(busy = busy, conflict = emptyList()))
@@ -1596,41 +1772,43 @@ and in `State`:
     fun updateAppointmentDraft(draft: AppointmentDraft) {
         val previous = _state.value.appointmentDraft
         _state.update { it.copy(appointmentDraft = draft.copy(conflict = emptyList())) }
-        val dayChanged = previous == null ||
-            Clock.todayStart(Clock.millis(previous.startIso) ?: 0L) !=
-            Clock.todayStart(Clock.millis(draft.startIso) ?: 0L)
-        if (dayChanged) loadBusy(Clock.millis(draft.startIso) ?: return)
+        val previousDay = Clock.todayStart(Clock.millis(previous?.startIso) ?: 0L)
+        val newDay = Clock.todayStart(Clock.millis(draft.startIso) ?: return)
+        if (previous == null || previousDay != newDay) {
+            viewModelScope.launch {
+                loadBusy(Clock.millis(draft.startIso)!!, repo.business(draft.placeId)?.calendarEventId)
+            }
+        }
     }
 
     fun dismissAppointment() {
         _state.update { it.copy(appointmentDraft = null) }
     }
 
-    /**
-     * Writes the appointment: the four columns, the status, and the calendar
-     * event.
-     *
-     * When something already occupies the window and neither [force] nor
-     * [linkExisting] says what to do about it, nothing is written — the draft
-     * comes back carrying the conflict, and the sheet asks.
-     */
+    /** Writes the appointment: the four columns, the status, and the calendar. */
     fun saveAppointment(linkExisting: Long? = null, force: Boolean = false) {
         val draft = _state.value.appointmentDraft ?: return
         viewModelScope.launch {
             val startMillis = Clock.millis(draft.startIso) ?: return@launch
-            val endIso = Appointment.endOf(draft.startIso, draft.minutes)
-            val endMillis = Clock.millis(endIso)!!
-
-            if (linkExisting == null && !force) {
-                val clash = Appointment.overlapping(startMillis, endMillis, draft.busy)
-                if (clash.isNotEmpty()) {
-                    _state.update { it.copy(appointmentDraft = draft.copy(conflict = clash)) }
-                    return@launch
-                }
-            }
-
+            val endMillis = startMillis + draft.minutes * 60_000L
             val business = repo.business(draft.placeId)
             val location = draft.location.trim().ifEmpty { null }
+
+            val plan = Appointment.plan(
+                startMillis = startMillis,
+                endMillis = endMillis,
+                busy = draft.busy,
+                ownEventId = business?.calendarEventId,
+                linkExisting = linkExisting,
+                force = force,
+                calendarEnabled = preferences.calendarEnabled,
+            )
+
+            if (plan is SavePlan.Conflict) {
+                _state.update { it.copy(appointmentDraft = draft.copy(conflict = plan.with)) }
+                return@launch
+            }
+
             val fields = EventFields(
                 title = "Ortstermin ${business?.name ?: ""}".trim(),
                 startMillis = startMillis,
@@ -1639,29 +1817,38 @@ and in `State`:
                 description = business?.phone,
             )
 
-            val eventId = when {
-                linkExisting != null -> linkExisting.also {
+            // Adopting takes the calendar's values, so the columns written below
+            // differ per plan. Every other case writes the draft.
+            var atIso = draft.startIso
+            var endIso = Clock.format(endMillis)
+            var place = location
+
+            val eventId: Long? = when (plan) {
+                is SavePlan.Adopt -> {
+                    val event = CalendarStore.read(getApplication(), plan.eventId)
+                    if (event != null) {
+                        atIso = Clock.format(event.startMillis)
+                        endIso = Clock.format(event.endMillis)
+                        place = event.location ?: location
+                    }
+                    plan.eventId
+                }
+                is SavePlan.Update -> plan.eventId.takeIf {
                     CalendarStore.update(getApplication(), it, fields)
                 }
-                !prefs.calendarEnabled -> null
-                else -> {
-                    val existing = business?.calendarEventId
-                    if (existing != null && CalendarStore.read(getApplication(), existing) != null) {
-                        CalendarStore.update(getApplication(), existing, fields)
-                        existing
-                    } else {
-                        prefs.calendarId?.let { CalendarStore.insert(getApplication(), it, fields) }
-                    }
-                }
+                SavePlan.Create ->
+                    preferences.calendarId?.let { CalendarStore.insert(getApplication(), it, fields) }
+                SavePlan.LocalOnly -> null
+                is SavePlan.Conflict -> null // already returned above
             }
 
-            prefs.appointmentMinutes = draft.minutes
-            repo.setAppointment(draft.placeId, draft.startIso, endIso, location, eventId)
+            preferences.appointmentMinutes = draft.minutes
+            repo.setAppointment(draft.placeId, atIso, endIso, place, eventId)
             repo.setStatus(draft.placeId, Status.APPOINTMENT)
             _state.update {
                 it.copy(
                     appointmentDraft = null,
-                    hint = if (prefs.calendarEnabled && eventId == null) {
+                    hint = if (preferences.calendarEnabled && plan !is SavePlan.LocalOnly && eventId == null) {
                         "Termin gespeichert. Der Kalendereintrag konnte nicht " +
                             "geschrieben werden — prüfe die Berechtigung und den " +
                             "gewählten Kalender in den Einstellungen."
@@ -1672,51 +1859,38 @@ and in `State`:
         }
     }
 
-    /** Removes the appointment and its calendar event. */
+    /**
+     * Removes the appointment and its calendar event.
+     *
+     * The status only falls back when it is still `appointment`. A business set
+     * to `declined` or `do_not_call` in the meantime keeps that — those are
+     * decisions the user made, and removing an appointment is not permission to
+     * undo them.
+     */
     fun removeAppointment(placeId: String) {
         viewModelScope.launch {
-            repo.business(placeId)?.calendarEventId?.let {
-                CalendarStore.delete(getApplication(), it)
-            }
+            val business = repo.business(placeId) ?: return@launch
+            business.calendarEventId?.let { CalendarStore.delete(getApplication(), it) }
             repo.setAppointment(placeId, null, null, null, null)
-            repo.setStatus(placeId, Status.CALLED)
+            if (business.status == Status.APPOINTMENT) repo.setStatus(placeId, Status.CALLED)
             loadDetail(placeId)
         }
     }
 ```
 
-Imports to add: `io.github.amadeusb.callsheet.calendar.BusyTimes`, `.CalendarStore`, `.EventFields`, `io.github.amadeusb.callsheet.calling.Appointment`, `.BusyInterval`.
+Imports to add: `io.github.amadeusb.callsheet.calendar.BusyTimes`, `.CalendarStore`, `.EventFields`, `io.github.amadeusb.callsheet.calling.Appointment`, `.BusyInterval`, `.SavePlan`, `kotlinx.coroutines.flow.update`.
 
-- [ ] **Step 3: Prove that cancelling changes nothing**
+- [ ] **Step 7: Build**
 
-Append to `RepositoryTest.kt` — the guarantee is at the repository level, since
-`dismissAppointment` writes nothing at all:
+Run: `./gradlew assembleDebug testDebugUnitTest`
+Expected: BUILD SUCCESSFUL, tests PASS.
 
-```kotlin
-    @Test
-    fun `ein Betrieb ohne Termin bleibt ohne Termin`() = runTest {
-        import("""[{"placeId":"t-8","title":"Unberührt","phone":"+49 841 111"}]""")
-
-        val business = repo.business("t-8")!!
-        assertNull(business.appointmentAt)
-        assertNull(business.calendarEventId)
-        assertEquals(Status.NEW, business.status)
-    }
-```
-
-Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.RepositoryTest"`
-Expected: PASS.
-
-- [ ] **Step 4: Build**
-
-Run: `./gradlew assembleDebug`
-Expected: BUILD SUCCESSFUL.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add app/src/main/java/io/github/amadeusb/callsheet/CallsheetViewModel.kt \
-        app/src/test/java/io/github/amadeusb/callsheet/RepositoryTest.kt
+        app/src/main/java/io/github/amadeusb/callsheet/calling/Appointment.kt \
+        app/src/test/java/io/github/amadeusb/callsheet/AppointmentTest.kt
 git commit -m "Termin speichern: Spalten, Status und Kalendereintrag"
 ```
 
@@ -1731,44 +1905,40 @@ git commit -m "Termin speichern: Spalten, Status und Kalendereintrag"
 - Consumes: `AppointmentDraft`, `Appointment`, `BusyInterval`, `Clock`.
 - Produces: `@Composable fun AppointmentSheet(draft: AppointmentDraft, onDraft: (AppointmentDraft) -> Unit, onSave: () -> Unit, onLink: (Long) -> Unit, onForce: () -> Unit, onPickDate: () -> Unit, onDismiss: () -> Unit)`
 
-Note `onLink` takes a `Long`, but `BusyInterval` carries no event id. Extend `BusyInterval` in `calling/Appointment.kt` with `val eventId: Long? = null` and fill it in `BusyTimes` from `CalendarContract.Instances.EVENT_ID`; `AppointmentTest` keeps compiling because the parameter has a default. Do this first, in this task, and confirm by hand — alongside the Task 6 walkthrough — that a busy interval read from the calendar carries a non-null `eventId`. Without it, **Verknüpfen** has nothing to link to and the conflict dialog can only offer two of its three answers.
+Three things decide whether this screen works, and all three are easy to get
+wrong:
 
-- [ ] **Step 1: Extend `BusyInterval` and `BusyTimes`**
+**The timeline covers the whole day, not eight to eighteen.** `Appointment`
+documents and tests that a Saturday at 18:30 is a legitimate appointment,
+because the customer decided it. A strip that stops at 18 would make the case
+the test celebrates unreachable in the interface. The strip therefore runs 0 to
+24 in its own scroll area, opened at 7:00 — the working day is where it starts,
+not where it ends.
 
-In `calling/Appointment.kt`:
+**Dragging needs an accumulator.** `detectDragGestures` reports a few pixels per
+frame. Rounding each frame to the nearest quarter hour yields zero every time
+and the block never moves. The pixels have to add up across the gesture, and the
+snap has to subtract what it consumed.
 
-```kotlin
-data class BusyInterval(
-    val startMillis: Long,
-    val endMillis: Long,
-    val title: String,
-    /** The calendar event behind it, so an existing entry can be linked. */
-    val eventId: Long? = null,
-)
-```
+**`pointerInput` needs a stable key.** Keying it on anything that changes during
+the drag restarts the recogniser mid-gesture. The key is `Unit`, and the current
+draft reaches the gesture through `rememberUpdatedState` instead of the closure.
 
-In `calendar/BusyTimes.kt`, add `CalendarContract.Instances.EVENT_ID` to the projection and read it into `eventId`.
+- [ ] **Step 1: Write the sheet**
 
-- [ ] **Step 2: Run the appointment tests**
-
-Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.AppointmentTest"`
-Expected: PASS — the added `eventId` has a default, so nothing there changes.
-
-- [ ] **Step 3: Write the sheet**
-
-Create `app/src/main/java/io/github/amadeusb/callsheet/ui/AppointmentSheet.kt`. The timeline runs 8 to 18 at a fixed 56 dp per hour, so a minute has a constant height and the blocks can be positioned by offset:
+Create `app/src/main/java/io/github/amadeusb/callsheet/ui/AppointmentSheet.kt`:
 
 ```kotlin
 package io.github.amadeusb.callsheet.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -1786,6 +1956,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -1798,15 +1974,28 @@ import io.github.amadeusb.callsheet.calling.BusyInterval
 import io.github.amadeusb.callsheet.data.Clock
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
 
-private const val FIRST_HOUR = 8
-private const val LAST_HOUR = 18
+/** An hour's height. A minute is therefore HOUR_HEIGHT / 60, everywhere. */
 private val HOUR_HEIGHT = 56.dp
+
+/** Where the strip opens. The working day is the common case, not the only one. */
+private const val OPENS_AT_HOUR = 7
+
+/** Nobody agrees an appointment at 14:07. */
+private const val SNAP_MINUTES = 15
+
+private val dayFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EE", Locale.GERMAN)
+private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.")
+private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
 /**
  * Setting an appointment on site. A sheet rather than a screen, so the business
  * stays visible behind it — the conversation that produced the appointment is
  * usually still going.
+ *
+ * The layout is header, scrolling timeline, footer, rather than one long scroll:
+ * the day has to scroll without taking the save button off the screen with it.
  */
 @Composable
 fun AppointmentSheet(
@@ -1820,12 +2009,7 @@ fun AppointmentSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 24.dp),
-        ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
             Text(
                 text = "Termin vor Ort",
                 style = MaterialTheme.typography.titleMedium,
@@ -1836,7 +2020,16 @@ fun AppointmentSheet(
             DayRow(draft = draft, onDraft = onDraft, onPickDate = onPickDate)
 
             SectionLabel("Uhrzeit")
-            Timeline(draft = draft, onDraft = onDraft)
+            if (!draft.calendarReadable) {
+                Text(
+                    text = "Kalender nicht freigegeben — belegte Zeiten werden nicht " +
+                        "angezeigt. Der Termin wird trotzdem gespeichert.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
+            Timeline(draft = draft, onDraft = onDraft, modifier = Modifier.heightIn(max = 300.dp))
 
             SectionLabel("Dauer")
             Row(
@@ -1861,7 +2054,7 @@ fun AppointmentSheet(
             )
 
             if (draft.conflict.isNotEmpty()) {
-                ConflictNotice(draft = draft, onLink = onLink, onForce = onForce)
+                ConflictNotice(draft = draft, onDraft = onDraft, onLink = onLink, onForce = onForce)
             }
 
             Spacer(Modifier.height(16.dp))
@@ -1878,11 +2071,7 @@ fun AppointmentSheet(
         }
     }
 }
-```
 
-The remaining composables go in the same file:
-
-```kotlin
 @Composable
 private fun SectionLabel(text: String) {
     Text(
@@ -1893,13 +2082,9 @@ private fun SectionLabel(text: String) {
     )
 }
 
-private val dayFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EE", Locale.GERMAN)
-private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.")
-private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
-
 /**
  * The next five days, starting with the one the draft is on. Picking a day keeps
- * the time of day — you have usually agreed the hour before the date.
+ * the time of day — the hour is usually agreed before the date.
  */
 @Composable
 private fun DayRow(
@@ -1937,112 +2122,155 @@ private fun DayRow(
 }
 
 /**
- * The day from 8 to 18, an hour to a fixed height, so a minute has a constant
- * size and every block can be placed by offset alone.
+ * The whole day, an hour to a fixed height, in its own scroll area opened at
+ * [OPENS_AT_HOUR].
+ *
+ * It runs 0 to 24 on purpose. An appointment is what the customer agreed to, so
+ * a Saturday at 18:30 has to be reachable — a strip that stopped at 18 would
+ * quietly forbid what [Appointment] explicitly allows.
  */
 @Composable
-private fun Timeline(draft: AppointmentDraft, onDraft: (AppointmentDraft) -> Unit) {
-    if (!draft.calendarReadable) {
-        Text(
-            text = "Kalender nicht freigegeben — belegte Zeiten werden nicht " +
-                "angezeigt. Der Termin wird trotzdem gespeichert.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
-    }
-
+private fun Timeline(
+    draft: AppointmentDraft,
+    onDraft: (AppointmentDraft) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val start = Clock.millis(draft.startIso) ?: return
     val dayStart = Clock.todayStart(start)
-    val density = LocalDensity.current
-    val perMinute = HOUR_HEIGHT / 60
-    val minutesFromTop = { millis: Long ->
-        ((millis - dayStart) / 60_000L).toInt() - FIRST_HOUR * 60
-    }
+    val scroll = rememberScrollState()
+    val openAt = with(LocalDensity.current) { (HOUR_HEIGHT * OPENS_AT_HOUR).roundToPx() }
 
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 44.dp, end = 16.dp)
-            .height(HOUR_HEIGHT * (LAST_HOUR - FIRST_HOUR)),
-    ) {
-        // The hours themselves.
-        (FIRST_HOUR until LAST_HOUR).forEach { hour ->
-            Box(modifier = Modifier.offset(y = HOUR_HEIGHT * (hour - FIRST_HOUR))) {
-                Text(
-                    text = "%02d".format(hour),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.offset(x = (-32).dp, y = (-6).dp),
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(MaterialTheme.colorScheme.outlineVariant),
-                )
+    LaunchedEffect(Unit) { scroll.scrollTo(openAt) }
+
+    Box(modifier = modifier.fillMaxWidth().verticalScroll(scroll)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 44.dp, end = 16.dp)
+                .height(HOUR_HEIGHT * 24),
+        ) {
+            (0 until 24).forEach { hour ->
+                Box(modifier = Modifier.offset(y = HOUR_HEIGHT * hour)) {
+                    Text(
+                        text = "%02d".format(hour),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.offset(x = (-32).dp, y = (-6).dp),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant),
+                    )
+                }
             }
-        }
 
-        // What is already taken.
-        draft.busy.forEach { interval ->
-            val top = minutesFromTop(interval.startMillis)
-            val length = ((interval.endMillis - interval.startMillis) / 60_000L).toInt()
-            if (top + length > 0 && top < (LAST_HOUR - FIRST_HOUR) * 60) {
+            // Overlapping entries are inset, so a second one behind the first is
+            // visible rather than hidden underneath it.
+            draft.busy.forEachIndexed { index, interval ->
+                val overlapsEarlier = draft.busy.take(index).count {
+                    interval.startMillis < it.endMillis && it.startMillis < interval.endMillis
+                }
+                val top = ((interval.startMillis - dayStart) / 60_000L).toInt()
+                val length = ((interval.endMillis - interval.startMillis) / 60_000L).toInt()
                 BusyBlock(
                     interval = interval,
                     modifier = Modifier
-                        .offset(y = perMinute * top.coerceAtLeast(0))
-                        .height(perMinute * length.coerceAtMost(12 * 60))
+                        .offset(
+                            x = 12.dp * overlapsEarlier,
+                            y = HOUR_HEIGHT / 60 * top.coerceIn(0, 24 * 60),
+                        )
+                        .height(HOUR_HEIGHT / 60 * length.coerceIn(15, 24 * 60))
                         .fillMaxWidth(),
                 )
             }
-        }
 
-        // The appointment being set: drag to move, drag the handle to resize.
-        // Everything snaps to a quarter of an hour — nobody agrees 14:07.
-        val top = minutesFromTop(start)
+            DraftBlock(draft = draft, dayStart = dayStart, onDraft = onDraft)
+        }
+    }
+}
+
+/**
+ * The appointment being set: drag the block to move it, drag the handle to
+ * change its length.
+ *
+ * Both gestures accumulate. `detectDragGestures` reports a few pixels per frame,
+ * so rounding each frame on its own would round to zero and nothing would ever
+ * move. The accumulator adds the frames up and gives back only what it has
+ * already turned into a step.
+ */
+@Composable
+private fun DraftBlock(
+    draft: AppointmentDraft,
+    dayStart: Long,
+    onDraft: (AppointmentDraft) -> Unit,
+) {
+    // The gesture outlives any single recomposition, so it must not close over
+    // the draft it started with.
+    val current by rememberUpdatedState(draft)
+    val emit by rememberUpdatedState(onDraft)
+    var carriedMinutes by remember { mutableFloatStateOf(0f) }
+    var carriedLength by remember { mutableFloatStateOf(0f) }
+
+    val start = Clock.millis(draft.startIso) ?: return
+    val top = ((start - dayStart) / 60_000L).toInt()
+
+    Box(
+        modifier = Modifier
+            .offset(y = HOUR_HEIGHT / 60 * top)
+            .height(HOUR_HEIGHT / 60 * draft.minutes)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.primaryContainer)
+            .pointerInput(Unit) {
+                val perMinute = HOUR_HEIGHT.toPx() / 60f
+                detectDragGestures(
+                    onDragEnd = { carriedMinutes = 0f },
+                    onDragCancel = { carriedMinutes = 0f },
+                ) { change, amount ->
+                    change.consume()
+                    carriedMinutes += amount.y / perMinute
+                    val steps = (carriedMinutes / SNAP_MINUTES).roundToInt()
+                    if (steps != 0) {
+                        carriedMinutes -= steps * SNAP_MINUTES
+                        val moved = Clock.millis(current.startIso)!! +
+                            steps * SNAP_MINUTES * 60_000L
+                        emit(current.copy(startIso = Clock.format(moved)))
+                    }
+                }
+            },
+    ) {
+        Text(
+            text = "${Clock.zdt(start).format(timeFormat)} – " +
+                Clock.zdt(start + draft.minutes * 60_000L).format(timeFormat),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        )
         Box(
             modifier = Modifier
-                .offset(y = perMinute * top)
-                .height(perMinute * draft.minutes)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer)
-                .pointerInput(draft.startIso) {
-                    detectDragGestures { change, dragAmount ->
+                .align(Alignment.BottomCenter)
+                .width(48.dp)
+                .height(10.dp)
+                .background(MaterialTheme.colorScheme.primary)
+                .pointerInput(Unit) {
+                    val perMinute = HOUR_HEIGHT.toPx() / 60f
+                    detectDragGestures(
+                        onDragEnd = { carriedLength = 0f },
+                        onDragCancel = { carriedLength = 0f },
+                    ) { change, amount ->
                         change.consume()
-                        val minutes = with(density) { (dragAmount.y.toDp() / perMinute).toInt() }
-                        val snapped = ((minutes + 7) / 15) * 15
-                        if (snapped != 0) {
-                            onDraft(draft.copy(startIso = Clock.format(start + snapped * 60_000L)))
+                        carriedLength += amount.y / perMinute
+                        val steps = (carriedLength / SNAP_MINUTES).roundToInt()
+                        if (steps != 0) {
+                            carriedLength -= steps * SNAP_MINUTES
+                            val length = current.minutes + steps * SNAP_MINUTES
+                            emit(current.copy(minutes = length.coerceAtLeast(SNAP_MINUTES)))
                         }
                     }
                 },
-        ) {
-            Text(
-                text = "${Clock.zdt(start).format(timeFormat)} – " +
-                    Clock.zdt(start + draft.minutes * 60_000L).format(timeFormat),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            )
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .width(32.dp)
-                    .height(6.dp)
-                    .background(MaterialTheme.colorScheme.primary)
-                    .pointerInput(draft.minutes) {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            val minutes = with(density) { (dragAmount.y.toDp() / perMinute).toInt() }
-                            val snapped = ((draft.minutes + minutes + 7) / 15) * 15
-                            onDraft(draft.copy(minutes = snapped.coerceAtLeast(15)))
-                        }
-                    },
-            )
-        }
+        )
     }
 }
 
@@ -2053,10 +2281,12 @@ private fun BusyBlock(interval: BusyInterval, modifier: Modifier = Modifier) {
             .clip(RoundedCornerShape(6.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
+        // fillMaxHeight, not a fixed one: a half-hour block would otherwise grow
+        // a bar an hour tall sticking out of its own card.
         Box(
             modifier = Modifier
                 .width(3.dp)
-                .height(HOUR_HEIGHT)
+                .fillMaxHeight()
                 .background(MaterialTheme.colorScheme.outline),
         )
         Text(
@@ -2107,34 +2337,32 @@ private fun ConflictNotice(
 }
 ```
 
-The `ConflictNotice` call in `AppointmentSheet` therefore reads:
-
-```kotlin
-            if (draft.conflict.isNotEmpty()) {
-                ConflictNotice(draft = draft, onDraft = onDraft, onLink = onLink, onForce = onForce)
-            }
-```
-
-and the `Timeline` handles the missing-permission case itself, so the separate
-notice sketched in the sheet body is not needed.
-
-- [ ] **Step 4: Build**
+- [ ] **Step 2: Build**
 
 Run: `./gradlew assembleDebug`
 Expected: BUILD SUCCESSFUL.
 
-- [ ] **Step 5: Check by hand**
+- [ ] **Step 3: Check the three hard parts by hand**
 
-Install, open a business, set an appointment. Check: the busy blocks show their titles; dragging snaps to quarter hours; the duration chips change the block's height; saving closes the sheet; the appointment appears in the calendar application with the address in its location field.
+Install and open the sheet. Confirm each one separately, because each fails
+independently:
 
-- [ ] **Step 6: Commit**
+1. **Dragging moves the block** and settles on quarter hours. Drag slowly: a slow
+   drag is what a per-frame rounding bug fails.
+2. **The handle changes the length** and cannot go below 15 minutes.
+3. **The strip reaches 18:30 on a Saturday.** Scroll down, place an appointment
+   there, save, and confirm it is stored at 18:30 and not corrected.
+4. Two overlapping foreign appointments are both visible, one inset behind the
+   other.
+5. A 30-minute foreign appointment has a colour bar the height of its own card.
+6. The block titles are readable — that is the whole reason this variant was
+   chosen over a grid.
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add app/src/main/java/io/github/amadeusb/callsheet/ui/AppointmentSheet.kt \
-        app/src/main/java/io/github/amadeusb/callsheet/calling/Appointment.kt \
-        app/src/main/java/io/github/amadeusb/callsheet/calendar/BusyTimes.kt \
-        app/src/main/java/io/github/amadeusb/callsheet/CallsheetViewModel.kt
-git commit -m "Terminpicker: Zeitleiste, Dauer, Ort"
+git add app/src/main/java/io/github/amadeusb/callsheet/ui/AppointmentSheet.kt
+git commit -m "Terminpicker: Zeitleiste über den ganzen Tag, Dauer, Ort"
 ```
 
 ---
@@ -2147,7 +2375,7 @@ git commit -m "Terminpicker: Zeitleiste, Dauer, Ort"
 
 **Interfaces:**
 - Consumes: `Business.appointmentAt` and friends, `Appointment.readableRange`, `AppointmentSheet`.
-- Produces: an `AppointmentBlock` composable and the `onAppointment` / `onRemoveAppointment` / `onOpenMap` callbacks on `BusinessDetailScreen`.
+- Produces: an `AppointmentBlock` composable and the `onAppointment` / `onRemoveAppointment` callbacks on `BusinessDetailScreen`. The map goes through the existing `onOpenUrl`.
 
 - [ ] **Step 1: Add the callbacks**
 
@@ -2156,8 +2384,9 @@ In `BusinessDetail.kt`, add to `BusinessDetailScreen`'s parameters, next to `onF
 ```kotlin
     onAppointment: () -> Unit,
     onRemoveAppointment: () -> Unit,
-    onOpenMap: (String) -> Unit,
 ```
+
+No map callback: `BusinessDetailScreen` already takes `onOpenUrl` (`BusinessDetail.kt:89`), and `MainActivity.openUrl` (`MainActivity.kt:101`) is a bare `ACTION_VIEW` on `Uri.parse` wrapped in `runCatching`. A `geo:` URI passes through it unchanged. One callback, one failure mode, nothing new to wire.
 
 - [ ] **Step 2: Add the section**
 
@@ -2170,7 +2399,7 @@ Directly before the existing `item(key = "follow-up")`:
                     business = business,
                     onSet = onAppointment,
                     onRemove = { removeAppointment = true },
-                    onOpenMap = onOpenMap,
+                    onOpenUrl = onOpenUrl,
                 )
             }
 ```
@@ -2216,7 +2445,7 @@ private fun AppointmentBlock(
     business: Business,
     onSet: () -> Unit,
     onRemove: () -> Unit,
-    onOpenMap: (String) -> Unit,
+    onOpenUrl: (String) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         val set = business.appointmentAt
@@ -2251,7 +2480,7 @@ private fun AppointmentBlock(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
-                        .clickable { onOpenMap(where) }
+                        .clickable { onOpenUrl(geoUri(where)) }
                         .padding(vertical = 4.dp),
                 )
             }
@@ -2294,16 +2523,50 @@ In `MainActivity.kt`, where the detail screen is rendered, add after it:
                 }
 ```
 
-`onPickDate` opens a `DatePickerDialog` in the same style as the follow-up's (`BusinessDetail.kt:321`); on confirm, take the chosen date, keep the draft's time of day, and call `updateAppointmentDraft`.
-
-`onOpenMap` builds the intent:
+`onPickDate` opens a date picker built like the follow-up's (`BusinessDetail.kt:321`). Declare its flag next to the other dialog state in the same composable and keep the draft's time of day:
 
 ```kotlin
-    private fun openMap(address: String) {
-        val uri = Uri.parse("geo:0,0?q=" + Uri.encode(address))
-        val intent = Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { startActivity(intent) }
+    var appointmentDate by remember { mutableStateOf(false) }
+
+    if (appointmentDate) {
+        val draft = state.appointmentDraft
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = Clock.millis(draft?.startIso),
+        )
+        DatePickerDialog(
+            onDismissRequest = { appointmentDate = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    val picked = pickerState.selectedDateMillis
+                    if (draft != null && picked != null) {
+                        // The picker returns midnight UTC. Only the date is
+                        // taken from it; the time of day stays as agreed.
+                        val date = Instant.ofEpochMilli(picked).atZone(ZoneOffset.UTC).toLocalDate()
+                        val time = Clock.zdt(Clock.millis(draft.startIso)!!).toLocalTime()
+                        viewModel.updateAppointmentDraft(
+                            draft.copy(startIso = Clock.format(date.atTime(time).atZone(Clock.zone)))
+                        )
+                    }
+                    appointmentDate = false
+                }) { Text("Übernehmen") }
+            },
+            dismissButton = {
+                TextButton(onClick = { appointmentDate = false }) { Text("Abbrechen") }
+            },
+        ) { DatePicker(state = pickerState) }
     }
+```
+
+The address goes through the existing `onOpenUrl`. Put the URI builder next to
+`AppointmentBlock` in `BusinessDetail.kt`, so both callers use one rule:
+
+```kotlin
+/**
+ * An address as a map application takes it. `geo:0,0?q=` rather than
+ * coordinates: the query lets the map do the geocoding and land on the door
+ * number, which the business's own coordinates do not always do.
+ */
+internal fun geoUri(address: String): String = "geo:0,0?q=" + Uri.encode(address)
 ```
 
 - [ ] **Step 5: Build and check by hand**
@@ -2352,50 +2615,62 @@ Append to `AppointmentTest.kt`:
     private val until = "2026-09-10T15:00:00+02:00"
 
     @Test
-    fun `ein unveraenderter Termin ergibt Unchanged`() {
-        val ergebnis = Appointment.readBack(
+    fun `a difference of seconds still counts as unchanged`() {
+        val outcome = Appointment.readBack(
+            currentAt = at, currentEnd = until, currentLocation = null,
+            eventStartMillis = millis(2026, 9, 10, 14) + 30_000L,
+            eventEndMillis = millis(2026, 9, 10, 15) + 30_000L,
+            eventLocation = null,
+        )
+
+        assertEquals(ReadBack.Unchanged, outcome)
+    }
+
+    @Test
+    fun `an untouched appointment yields Unchanged`() {
+        val outcome = Appointment.readBack(
             currentAt = at, currentEnd = until, currentLocation = "Zehentstraße 39",
             eventStartMillis = millis(2026, 9, 10, 14),
             eventEndMillis = millis(2026, 9, 10, 15),
             eventLocation = "Zehentstraße 39",
         )
 
-        assertEquals(ReadBack.Unchanged, ergebnis)
+        assertEquals(ReadBack.Unchanged, outcome)
     }
 
     @Test
-    fun `ein verschobener Termin ergibt Updated`() {
-        val ergebnis = Appointment.readBack(
+    fun `a moved appointment yields Updated`() {
+        val outcome = Appointment.readBack(
             currentAt = at, currentEnd = until, currentLocation = "Zehentstraße 39",
             eventStartMillis = millis(2026, 9, 10, 16),
             eventEndMillis = millis(2026, 9, 10, 17),
             eventLocation = "Zehentstraße 39",
         ) as ReadBack.Updated
 
-        assertEquals(millis(2026, 9, 10, 16), Clock.millis(ergebnis.startIso))
-        assertEquals("Zehentstraße 39", ergebnis.location)
+        assertEquals(millis(2026, 9, 10, 16), Clock.millis(outcome.startIso))
+        assertEquals("Zehentstraße 39", outcome.location)
     }
 
     @Test
-    fun `ein umgezogener Termin ergibt Updated`() {
-        val ergebnis = Appointment.readBack(
+    fun `a relocated appointment yields Updated`() {
+        val outcome = Appointment.readBack(
             currentAt = at, currentEnd = until, currentLocation = "Zehentstraße 39",
             eventStartMillis = millis(2026, 9, 10, 14),
             eventEndMillis = millis(2026, 9, 10, 15),
             eventLocation = "Im Büro",
         ) as ReadBack.Updated
 
-        assertEquals("Im Büro", ergebnis.location)
+        assertEquals("Im Büro", outcome.location)
     }
 
     @Test
-    fun `ein geloeschter Termin ergibt Gone`() {
-        val ergebnis = Appointment.readBack(
+    fun `a deleted appointment yields Gone`() {
+        val outcome = Appointment.readBack(
             currentAt = at, currentEnd = until, currentLocation = null,
             eventStartMillis = null, eventEndMillis = null, eventLocation = null,
         )
 
-        assertEquals(ReadBack.Gone, ergebnis)
+        assertEquals(ReadBack.Gone, outcome)
     }
 ```
 
@@ -2443,19 +2718,29 @@ and inside `object Appointment`:
         eventLocation: String?,
     ): ReadBack {
         if (eventStartMillis == null || eventEndMillis == null) return ReadBack.Gone
-        val startIso = Clock.format(eventStartMillis)
-        val endIso = Clock.format(eventEndMillis)
-        val same = startIso == currentAt &&
-            endIso == currentEnd &&
-            eventLocation == currentLocation
-        return if (same) ReadBack.Unchanged else ReadBack.Updated(startIso, endIso, eventLocation)
+        // Compared in milliseconds, not as text. A provider that rounds DTSTART
+        // to the minute, or hands back a different second resolution, would
+        // otherwise look "moved" on every single open and rewrite updated_at
+        // for ever.
+        val sameTime = near(Clock.millis(currentAt), eventStartMillis) &&
+            near(Clock.millis(currentEnd), eventEndMillis)
+        val samePlace = eventLocation?.trim().orEmpty() == currentLocation?.trim().orEmpty()
+        return if (sameTime && samePlace) {
+            ReadBack.Unchanged
+        } else {
+            ReadBack.Updated(Clock.format(eventStartMillis), Clock.format(eventEndMillis), eventLocation)
+        }
+    }
+
+    /** Within a minute counts as the same moment. */
+    private fun near(a: Long?, b: Long): Boolean = a != null && kotlin.math.abs(a - b) < 60_000L
     }
 ```
 
 - [ ] **Step 4: Run the tests and watch them pass**
 
 Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.AppointmentTest"`
-Expected: PASS, fifteen tests.
+Expected: PASS, sixteen tests.
 
 - [ ] **Step 5: Write the read-back in the view model**
 
@@ -2498,9 +2783,20 @@ Expected: PASS, fifteen tests.
 
                 is ReadBack.Gone -> {
                     repo.setAppointment(placeId, null, null, null, null)
-                    repo.setStatus(placeId, Status.CALLED)
+                    // Only the status this appointment set gets taken back. A
+                    // business that has since been declined or blocked keeps
+                    // that — deleting an entry in the calendar is not
+                    // permission to undo a decision made on the phone.
+                    val reset = business.status == Status.APPOINTMENT
+                    if (reset) repo.setStatus(placeId, Status.CALLED)
                     _state.update {
-                        it.copy(hint = "Der Termin wurde im Kalender gelöscht. Status zurück auf „Angerufen“.")
+                        it.copy(
+                            hint = if (reset) {
+                                "Der Termin wurde im Kalender gelöscht. Status zurück auf „Angerufen“."
+                            } else {
+                                "Der Termin wurde im Kalender gelöscht. Der Status bleibt, wie er ist."
+                            }
+                        )
                     }
                     loadDetail(placeId)
                 }
@@ -2539,7 +2835,7 @@ git commit -m "Rückabgleich: der Kalender gewinnt"
 - Modify: `app/src/main/java/io/github/amadeusb/callsheet/ui/Components.kt`
 
 **Interfaces:**
-- Consumes: `Appointment.address`, the `onOpenMap` callback from Task 10.
+- Consumes: `Appointment.address` and `geoUri` from Task 10, and the existing `onOpenUrl`.
 - Produces: nothing new.
 
 - [ ] **Step 1: Make the address tappable**
@@ -2548,39 +2844,43 @@ In `BusinessDetail.kt`, in `MasterData`, replace the address rows with:
 
 ```kotlin
         Appointment.address(business.street, business.postalCode, business.city)?.let { address ->
-            DataRow("Anschrift", address) { onOpenMap(address) }
+            DataRow("Anschrift", address) { onOpenUrl(geoUri(address)) }
         }
 ```
 
-`MasterData` needs `onOpenMap: (String) -> Unit` passed through from `BusinessDetailScreen`.
+`MasterData` already receives `onOpenUrl` (`BusinessDetail.kt:188`), so nothing new is threaded through.
 
 This also drops the two-line address in favour of the one-liner `Appointment.address` produces, which is what goes into the calendar — one formatting rule instead of two that can drift.
 
-- [ ] **Step 2: Show the street in the work list**
+- [ ] **Step 2: Leave the work list alone**
 
-In `Components.kt`, in the business row around line 124, extend the subtitle from the city alone to street and city:
+The spec asked for the street in the work list row. Do not add it, and change the
+spec instead.
 
-```kotlin
-            val where = listOfNotNull(
-                business.street?.takeIf { it.isNotBlank() },
-                business.city?.takeIf { it.isNotBlank() },
-            ).joinToString(" · ").ifEmpty { null }
-```
+The second line is not the city — it is `industry · city` (`Components.kt:122`),
+one line, `maxLines = 1` with an ellipsis, and there is already a third line for
+the contact. A fourth datum turns "Garten- und Landschaftsbau · Ingolstadt" into
+"Garten- und Landschaftsb…", which trades the industry — the thing the list is
+sorted and filtered by — for half a street name.
 
-and use `where` where `business.city` was used. Keep the existing `maxLines` and `TextOverflow.Ellipsis` — the street makes the line longer and it must still not wrap.
+The street's job here is routing, and routing happens where the address is
+tappable and where the calendar entry carries it. Both are in this plan already.
+
+Record the reversal in the spec's address section rather than leaving the plan
+silently disagreeing with it.
 
 - [ ] **Step 3: Build and check by hand**
 
 Run: `./gradlew assembleDebug`
 
-The work list shows street and city on one line, truncated cleanly on a narrow screen. Tapping the address in the detail view opens a map application; with none installed, nothing happens and the app does not crash (`runCatching` in `openMap`).
+Tapping the address in the detail view opens a map application. With none installed, nothing happens and the app does not crash — `MainActivity.openUrl` already wraps `startActivity` in `runCatching`. The work list is unchanged.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add app/src/main/java/io/github/amadeusb/callsheet/ui/BusinessDetail.kt \
-        app/src/main/java/io/github/amadeusb/callsheet/ui/Components.kt
-git commit -m "Anschrift öffnet die Karten-App, Straße in der Arbeitsliste"
+        docs/superpowers/specs/2026-09-08-appointments-and-calendar-design.md
+git commit -m "Anschrift öffnet die Karten-App"
 ```
 
 ---
@@ -2600,7 +2900,10 @@ git commit -m "Anschrift öffnet die Karten-App, Straße in der Arbeitsliste"
 In `showToday()`, next to the existing `due` call:
 
 ```kotlin
-            val appointments = repo.appointmentsDue(Clock.todayStart(now) + 24L * 60 * 60 * 1000)
+            val appointments = repo.appointmentsDue(
+                fromMillis = Clock.todayStart(now),
+                toMillis = Clock.todayStart(now) + 24L * 60 * 60 * 1000,
+            )
 ```
 
 and carry it into the state as `appointmentsToday = appointments`. Add `val appointmentsToday: List<Business> = emptyList()` to `State`.
@@ -2742,10 +3045,14 @@ git commit -m "Doku: Termine und Kalender"
 Run: `./gradlew testDebugUnitTest`
 Expected: PASS, with `MigrationTest`, `AppointmentTest`, `PreferencesTest`, `RepositoryTest` and `ImporterTest` all reporting. `calendar/` has no tests by design — Step 4 below is what covers it.
 
-- [ ] **Step 2: Build the release APK**
+- [ ] **Step 2: Build the release variant**
 
 Run: `./gradlew assembleRelease`
 Expected: BUILD SUCCESSFUL.
+
+This is a compilation check, not a release. Do **not** touch `version.properties`
+— `tools/release.sh:37` raises `versionCode` itself, and a hand-edited value
+would collide with it.
 
 - [ ] **Step 3: Upgrade a real database**
 
