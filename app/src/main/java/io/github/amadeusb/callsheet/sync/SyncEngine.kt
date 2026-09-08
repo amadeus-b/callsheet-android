@@ -37,7 +37,7 @@ sealed class SyncResult {
  * another block is requested, so the server is never hammered and a body
  * that keeps growing past the limit cannot spin forever.
  *
- * A row the server names in `abgewiesen` keeps its mark (see
+ * A row the server names in `rejected` keeps its mark (see
  * [SyncStore.clearPending]) so it is not lost, but that also means it is
  * still dirty when [SyncStore.pendingCount] is checked below. Continuing the
  * loop just because rows are still marked would turn a row the server keeps
@@ -69,7 +69,7 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
             var rounds = 0
             while (true) {
                 val outgoing = store.pending(BLOCK)
-                val payload = JSONObject(outgoing.toString()).put("seit", prefs.watermark)
+                val payload = JSONObject(outgoing.toString()).put("since", prefs.watermark)
 
                 val response = transport.post(payload)
 
@@ -78,10 +78,10 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
                 // The watermark only ever moves forward. A stale or
                 // misbehaving server sending a lower value must not put the
                 // client behind where it already stood.
-                val stand = response.optInt("stand", prefs.watermark)
-                if (stand > prefs.watermark) prefs.watermark = stand
+                val watermark = response.optInt("watermark", prefs.watermark)
+                if (watermark > prefs.watermark) prefs.watermark = watermark
 
-                val more = response.optBoolean("weitere", false) ||
+                val more = response.optBoolean("more", false) ||
                     (sentCount(outgoing) >= BLOCK && store.pendingCount() > 0)
                 if (!more) {
                     prefs.lastSyncAt = Clock.now()
@@ -135,7 +135,7 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
 
     /** How many rows [payload] actually carried — across the four tables and the deletions. */
     private fun sentCount(payload: JSONObject): Int {
-        var total = payload.optJSONArray("geloescht")?.length() ?: 0
+        var total = payload.optJSONArray("deleted")?.length() ?: 0
         for (table in Rows.TABLES) total += payload.optJSONArray(table)?.length() ?: 0
         return total
     }

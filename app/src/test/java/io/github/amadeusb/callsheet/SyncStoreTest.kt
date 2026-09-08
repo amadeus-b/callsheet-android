@@ -38,26 +38,26 @@ class SyncStoreTest {
     )
 
     private fun antwort(vararg betriebe: JSONObject) = JSONObject().apply {
-        put("stand", 1)
-        put("weitere", false)
+        put("watermark", 1)
+        put("more", false)
         put("businesses", JSONArray(betriebe.toList()))
         put("calls", JSONArray())
         put("contacts", JSONArray())
         put("contact_numbers", JSONArray())
-        put("geloescht", JSONArray())
+        put("deleted", JSONArray())
     }
 
     /** A response with no data and, unless given, no rejections. */
-    private fun leereAntwort(vararg abgewiesen: Pair<String, String>) = JSONObject().apply {
-        put("stand", 1)
-        put("weitere", false)
+    private fun leereAntwort(vararg rejected: Pair<String, String>) = JSONObject().apply {
+        put("watermark", 1)
+        put("more", false)
         put("businesses", JSONArray())
         put("calls", JSONArray())
         put("contacts", JSONArray())
         put("contact_numbers", JSONArray())
-        put("geloescht", JSONArray())
-        put("abgewiesen", JSONArray(abgewiesen.map { (tabelle, schluessel) ->
-            JSONObject().apply { put("tabelle", tabelle); put("schluessel", schluessel); put("fehler", "kaputt") }
+        put("deleted", JSONArray())
+        put("rejected", JSONArray(rejected.map { (table, key) ->
+            JSONObject().apply { put("table", table); put("key", key); put("reason", "kaputt") }
         }))
     }
 
@@ -93,7 +93,7 @@ class SyncStoreTest {
     }
 
     @Test
-    fun `a row the server names in abgewiesen keeps its mark, the other is cleared`() {
+    fun `a row the server names in rejected keeps its mark, the other is cleared`() {
         einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 1)
         einBetrieb("P2", null, "2026-09-07T10:00:00+02:00", dirty = 1)
         val block = store.pending(500)
@@ -174,7 +174,7 @@ class SyncStoreTest {
         schreibe("INSERT INTO contacts (id, place_id, name, position, updated_at, dirty) VALUES ('K1', 'P1', 'Frau Meier', 0, '2026-09-07T10:00:00+02:00', 0)")
         schreibe("INSERT INTO contact_numbers (id, contact_id, number, kind, position, updated_at, dirty) VALUES ('N1', 'K1', '+4917612345', 'mobile', 0, '2026-09-07T10:00:00+02:00', 0)")
         val antwort = antwort().apply {
-            put("geloescht", JSONArray(listOf(JSONObject().apply {
+            put("deleted", JSONArray(listOf(JSONObject().apply {
                 put("table_name", "contacts"); put("row_id", "K1"); put("deleted_at", "2026-09-07T11:00:00+02:00")
             })))
         }
@@ -190,7 +190,7 @@ class SyncStoreTest {
         schreibe("INSERT INTO contacts (id, place_id, name, position, updated_at, dirty) VALUES ('K1', 'P1', 'Frau Meier', 0, '2026-09-07T12:00:00+02:00', 0)")
         schreibe("INSERT INTO contact_numbers (id, contact_id, number, kind, position, updated_at, dirty) VALUES ('N1', 'K1', '+4917612345', 'mobile', 0, '2026-09-07T12:00:00+02:00', 0)")
         val antwort = antwort().apply {
-            put("geloescht", JSONArray(listOf(JSONObject().apply {
+            put("deleted", JSONArray(listOf(JSONObject().apply {
                 put("table_name", "contacts"); put("row_id", "K1"); put("deleted_at", "2026-09-07T11:00:00+02:00")
             })))
         }
@@ -266,7 +266,7 @@ class SyncStoreTest {
     }
 
     @Test
-    fun `a tombstone the server names in abgewiesen stays in the outgoing queue, the other is cleared`() {
+    fun `a tombstone the server names in rejected stays in the outgoing queue, the other is cleared`() {
         schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K1', '2026-09-07T10:00:00+02:00')")
         schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K2', '2026-09-07T10:00:00+02:00')")
         val block = store.pending(500)
@@ -283,7 +283,7 @@ class SyncStoreTest {
         // reach SQL.
         einBetrieb("P1", "alt", "2026-09-07T10:00:00+02:00", dirty = 0)
         val antwort = antwort().apply {
-            put("geloescht", JSONArray(listOf(JSONObject().apply {
+            put("deleted", JSONArray(listOf(JSONObject().apply {
                 put("table_name", "businesses"); put("row_id", "P1"); put("deleted_at", "2026-09-07T11:00:00+02:00")
             })))
         }
@@ -297,7 +297,7 @@ class SyncStoreTest {
         // it into deletions, which also serves as the outgoing queue.
         schreibe("INSERT INTO contacts (id, place_id, name, position, updated_at, dirty) VALUES ('K1', 'P1', 'Frau Meier', 0, '2026-09-07T10:00:00+02:00', 0)")
         val antwort = antwort().apply {
-            put("geloescht", JSONArray(listOf(JSONObject().apply {
+            put("deleted", JSONArray(listOf(JSONObject().apply {
                 put("table_name", "contacts"); put("row_id", "K1"); put("deleted_at", "2026-09-07T11:00:00+02:00")
             })))
         }
@@ -392,7 +392,7 @@ class SyncStoreTest {
         // the meantime with a different deleted_at — or it never goes out.
         schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('contacts', 'K1', '2026-09-07T12:00:00+02:00')")
         val antwort = antwort().apply {
-            put("geloescht", JSONArray(listOf(JSONObject().apply {
+            put("deleted", JSONArray(listOf(JSONObject().apply {
                 put("table_name", "contacts"); put("row_id", "K1"); put("deleted_at", "2026-09-07T11:00:00+02:00")
             })))
         }

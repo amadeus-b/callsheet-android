@@ -37,7 +37,7 @@ class SyncStore(context: Context) {
                 while (c.moveToNext()) deletions.put(Rows.toJson(c))
             }
         }
-        payload.put("geloescht", deletions)
+        payload.put("deleted", deletions)
         return payload
     }
 
@@ -76,7 +76,7 @@ class SyncStore(context: Context) {
     /**
      * Clears the marks on exactly the rows that were sent — not on everything.
      * A row changed while the request was in flight must stay marked. Nor is a
-     * row the server named in `response`'s `abgewiesen` cleared: it never made
+     * row the server named in `response`'s `rejected` cleared: it never made
      * it into the server's stock, so clearing its mark would make the row
      * vanish from both sides at once — gone from the outgoing queue, absent
      * from the server, and no longer counted as open. It stays dirty instead,
@@ -88,12 +88,12 @@ class SyncStore(context: Context) {
      */
     fun clearPending(payload: JSONObject, response: JSONObject) {
         val rejected = HashSet<Pair<String, String>>()
-        val abgewiesen = response.optJSONArray("abgewiesen") ?: JSONArray()
-        for (i in 0 until abgewiesen.length()) {
-            val eintrag = abgewiesen.getJSONObject(i)
-            val tabelle = eintrag.optString("tabelle", null) ?: continue
-            val schluessel = eintrag.optString("schluessel", null) ?: continue
-            rejected.add(tabelle to schluessel)
+        val rejectedRows = response.optJSONArray("rejected") ?: JSONArray()
+        for (i in 0 until rejectedRows.length()) {
+            val entry = rejectedRows.getJSONObject(i)
+            val table = entry.optString("table", null) ?: continue
+            val key = entry.optString("key", null) ?: continue
+            rejected.add(table to key)
         }
         val db = helper.writableDatabase
         db.beginTransaction()
@@ -121,12 +121,12 @@ class SyncStore(context: Context) {
                     }
                 }
             }
-            val deletions = payload.optJSONArray("geloescht") ?: JSONArray()
+            val deletions = payload.optJSONArray("deleted") ?: JSONArray()
             for (i in 0 until deletions.length()) {
                 val stone = deletions.getJSONObject(i)
                 // The server names a rejected tombstone the same way it names
                 // a rejected row: the table and key of the affected row (here
-                // `table_name`/`row_id` rather than `tabelle`/`schluessel`,
+                // `table_name`/`row_id` rather than `table`/`key`,
                 // but the same pair). Same reasoning as above: skip it, or the
                 // deletion disappears from the outgoing queue without ever
                 // having reached the server.
@@ -153,7 +153,7 @@ class SyncStore(context: Context) {
         val columnsByTable = Rows.TABLES.associateWith { columns(db, it) }
         db.beginTransaction()
         try {
-            val deletions = response.optJSONArray("geloescht") ?: JSONArray()
+            val deletions = response.optJSONArray("deleted") ?: JSONArray()
             for (i in 0 until deletions.length()) applyTombstone(db, deletions.getJSONObject(i))
             for (table in Rows.TABLES) {
                 val rows = response.optJSONArray(table) ?: continue

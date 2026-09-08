@@ -75,11 +75,11 @@ class SyncClientTest {
     fun `a 200 with a valid body is parsed and returned`() {
         val client = start { exchange ->
             exchange.requestBody.readBytes()
-            respond(exchange, 200, """{"stand":5,"weitere":false}""")
+            respond(exchange, 200, """{"watermark":5,"more":false}""")
         }
-        val response = client.post(JSONObject().put("seit", 0))
-        assertEquals(5, response.getInt("stand"))
-        assertEquals(false, response.getBoolean("weitere"))
+        val response = client.post(JSONObject().put("since", 0))
+        assertEquals(5, response.getInt("watermark"))
+        assertEquals(false, response.getBoolean("more"))
     }
 
     @Test
@@ -88,7 +88,7 @@ class SyncClientTest {
         val client = start { exchange ->
             seen = exchange.requestHeaders.getFirst("Authorization")
             exchange.requestBody.readBytes()
-            respond(exchange, 200, """{"stand":0,"weitere":false}""")
+            respond(exchange, 200, """{"watermark":0,"more":false}""")
         }
         client.post(JSONObject())
         assertEquals("Bearer geheimtoken", seen)
@@ -99,9 +99,9 @@ class SyncClientTest {
         var seenBody: String? = null
         val client = start { exchange ->
             seenBody = exchange.requestBody.readBytes().toString(StandardCharsets.UTF_8)
-            respond(exchange, 200, """{"stand":0,"weitere":false}""")
+            respond(exchange, 200, """{"watermark":0,"more":false}""")
         }
-        val payload = JSONObject().put("seit", 42).put("hallo", "welt")
+        val payload = JSONObject().put("since", 42).put("hallo", "welt")
         client.post(payload)
         assertEquals(payload.toString(), seenBody)
     }

@@ -39,9 +39,9 @@ class SyncEngineTest {
         engine = SyncEngine(SyncStore(ctx), prefs)
     }
 
-    private fun leereAntwort(stand: Int, weitere: Boolean = false) = JSONObject().apply {
-        put("stand", stand); put("weitere", weitere)
-        for (t in listOf("businesses", "calls", "contacts", "contact_numbers", "geloescht")) put(t, JSONArray())
+    private fun leereAntwort(watermark: Int, more: Boolean = false) = JSONObject().apply {
+        put("watermark", watermark); put("more", more)
+        for (t in listOf("businesses", "calls", "contacts", "contact_numbers", "deleted")) put(t, JSONArray())
     }
 
     private fun betrieb(id: String) = Database(ctx).writableDatabase.execSQL(
@@ -67,7 +67,7 @@ class SyncEngineTest {
         engine.sync(object : Transport {
             override fun post(payload: JSONObject): JSONObject {
                 aufrufe++
-                return leereAntwort(aufrufe, weitere = aufrufe < 3)
+                return leereAntwort(aufrufe, more = aufrufe < 3)
             }
         })
         assertEquals(3, aufrufe)
@@ -80,9 +80,9 @@ class SyncEngineTest {
         var aufrufe = 0
         engine.sync(object : Transport {
             override fun post(payload: JSONObject): JSONObject {
-                gesehen.add(payload.getInt("seit"))
+                gesehen.add(payload.getInt("since"))
                 aufrufe++
-                return leereAntwort(aufrufe * 10, weitere = aufrufe < 3)
+                return leereAntwort(aufrufe * 10, more = aufrufe < 3)
             }
         })
         assertEquals(listOf(0, 10, 20), gesehen)
@@ -215,8 +215,8 @@ class SyncEngineTest {
         betrieb("P2")
         val ergebnis = engine.sync(object : Transport {
             override fun post(payload: JSONObject) = leereAntwort(5).apply {
-                put("abgewiesen", JSONArray().put(JSONObject().apply {
-                    put("tabelle", "businesses"); put("schluessel", "P1"); put("fehler", "kaputt")
+                put("rejected", JSONArray().put(JSONObject().apply {
+                    put("table", "businesses"); put("key", "P1"); put("reason", "kaputt")
                 }))
             }
         })
@@ -235,8 +235,8 @@ class SyncEngineTest {
             override fun post(payload: JSONObject): JSONObject {
                 aufrufe++
                 return leereAntwort(1).apply {
-                    put("abgewiesen", JSONArray().put(JSONObject().apply {
-                        put("tabelle", "businesses"); put("schluessel", "P1"); put("fehler", "kaputt")
+                    put("rejected", JSONArray().put(JSONObject().apply {
+                        put("table", "businesses"); put("key", "P1"); put("reason", "kaputt")
                     }))
                 }
             }
@@ -264,7 +264,7 @@ class SyncEngineTest {
         val result = engine.sync(object : Transport {
             override fun post(payload: JSONObject): JSONObject {
                 calls++
-                return leereAntwort(calls, weitere = true)
+                return leereAntwort(calls, more = true)
             }
         })
         assertEquals(SyncResult.Incomplete, result)
