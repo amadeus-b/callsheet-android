@@ -161,9 +161,14 @@ class SyncStore(context: Context) {
 
         val values = if (table == "calls" && local != null) {
             // A log: time, duration, kind and contact stay as recorded.
+            // `org.json.JSONObject.optString` is not what it looks like for a
+            // JSON null: it returns the literal text "null" for that case and
+            // only falls back to the default when the key is missing
+            // entirely. `isNull` is the only reliable way to tell "cleared"
+            // apart from "unset".
             ContentValues().apply {
-                put("outcome", row.optString("outcome", null))
-                put("note", row.optString("note", null))
+                put("outcome", if (row.isNull("outcome")) null else row.getString("outcome"))
+                put("note", if (row.isNull("note")) null else row.getString("note"))
                 put("updated_at", remoteAt)
                 put("dirty", 0)
             }

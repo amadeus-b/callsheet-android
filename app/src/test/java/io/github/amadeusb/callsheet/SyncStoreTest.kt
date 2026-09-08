@@ -293,6 +293,35 @@ class SyncStoreTest {
     }
 
     @Test
+    fun `a note and outcome explicitly cleared on the other side arrive as a real null, not the word null`() {
+        // org.json.JSONObject.optString(name, null) is not a safe way to read
+        // a JSON null on Android: it returns the four characters "null" for
+        // that case and only falls back to the default when the key is
+        // missing entirely.
+        schreibe(
+            "INSERT INTO calls (id, place_id, started_at, duration_seconds, outcome, note, kind, contact, updated_at, dirty) " +
+                "VALUES ('C1', 'P1', '2026-09-07T09:00:00+02:00', 42, 'interessiert', 'Rückruf', 'call', 'Frau Meier', '2026-09-07T09:00:00+02:00', 0)"
+        )
+        val remoteCall = JSONObject().apply {
+            put("id", "C1"); put("place_id", "P1")
+            put("started_at", "2026-09-07T09:00:00+02:00")
+            put("duration_seconds", 42)
+            put("outcome", JSONObject.NULL)
+            put("note", JSONObject.NULL)
+            put("kind", "call")
+            put("contact", "Frau Meier")
+            put("updated_at", "2026-09-07T11:00:00+02:00")
+        }
+        store.apply(antwort().apply { put("calls", JSONArray(listOf(remoteCall))) })
+        val db = Database(ctx).readableDatabase
+        db.rawQuery("SELECT outcome, note FROM calls WHERE id = 'C1'", null).use {
+            assertTrue(it.moveToFirst())
+            assertTrue("outcome should be a real NULL, not the word \"null\"", it.isNull(0))
+            assertTrue("note should be a real NULL, not the word \"null\"", it.isNull(1))
+        }
+    }
+
+    @Test
     fun `timestamps are compared as instants`() {
         assertTrue(Merge.isNewer("2026-09-07T09:00:00+00:00", "2026-09-07T10:00:00+02:00"))
         assertFalse(Merge.isNewer("2026-09-07T10:00:00+02:00", "2026-09-07T10:00:00+02:00"))
