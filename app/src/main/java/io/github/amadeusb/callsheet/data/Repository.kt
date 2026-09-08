@@ -367,15 +367,22 @@ class Repository(context: Context) {
         }
 
     /**
-     * Every business that has been worked on: one with a contact, or one with a
-     * recorded call. Exactly those belong in the phone book.
+     * Every business that belongs in the phone book: one with a contact, one
+     * with a recorded call, or a hand-entered one that has a number.
+     *
+     * The imported stock stays out on purpose — it is research material, not an
+     * address book. Only what was worked on or typed in by hand is a number the
+     * phone should be able to put a name to.
      */
-    suspend fun businessesWithContactsOrCalls(): List<Business> = withContext(Dispatchers.IO) {
+    suspend fun businessesForPhoneBook(): List<Business> = withContext(Dispatchers.IO) {
         val sql = "SELECT b.* FROM businesses b WHERE " +
             "EXISTS (SELECT 1 FROM contacts a WHERE a.place_id = b.place_id) OR " +
-            "EXISTS (SELECT 1 FROM calls r WHERE r.place_id = b.place_id) " +
+            "EXISTS (SELECT 1 FROM calls r WHERE r.place_id = b.place_id) OR " +
+            "(b.place_id LIKE ? AND b.phone IS NOT NULL AND b.phone <> '') " +
             "ORDER BY b.name COLLATE NOCASE"
-        helper.readableDatabase.rawQuery(sql, null).use { c -> allBusinesses(c) }
+        helper.readableDatabase.rawQuery(sql, arrayOf("$MANUAL_PREFIX%")).use { c ->
+            allBusinesses(c)
+        }
     }
 
     // ---------------------------------------------------------------- Contacts

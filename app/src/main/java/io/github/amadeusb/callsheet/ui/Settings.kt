@@ -268,8 +268,9 @@ private fun PhoneBookBlock(
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Text(
-            text = "Ansprechpartner und angerufene Betriebe werden im Telefonbuch " +
-                "abgelegt. Damit zeigt das Telefon bei einem Rückruf den Namen. " +
+            text = "Ansprechpartner, angerufene und selbst erfasste Betriebe werden " +
+                "im Telefonbuch abgelegt. Damit zeigt das Telefon bei einem " +
+                "Rückruf den Namen. " +
                 "Was du im Telefonbuch änderst, übernimmt die App beim nächsten " +
                 "Öffnen der Akte.",
             style = MaterialTheme.typography.bodySmall,

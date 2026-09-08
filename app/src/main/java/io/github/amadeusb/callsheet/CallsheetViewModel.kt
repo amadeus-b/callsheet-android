@@ -235,6 +235,10 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                         allIndustries = repo.industries(),
                         allCities = repo.cities(),
                     )
+                    // A hand-entered business is one the user knows: its number
+                    // belongs in the phone book right away, without waiting for
+                    // a contact or a first call.
+                    repo.business(placeId)?.let { store.persistBusiness(it) }
                     // The form is done: back leads to the work list, not the draft.
                     openBusiness(placeId, replaceCurrent = true)
                 },
@@ -383,8 +387,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /**
-     * Stores every known contact and called business in the phone book — for the
-     * first run after switching the feature on.
+     * Stores every contact and every business that belongs in the phone book —
+     * for the first run after switching the feature on.
      */
     fun pushAllToPhoneBook() {
         if (_state.value.saving) return
@@ -392,7 +396,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             _state.value = _state.value.copy(saving = true, phoneBookHint = null)
             var people = 0
             var businesses = 0
-            for (business in repo.businessesWithContactsOrCalls()) {
+            for (business in repo.businessesForPhoneBook()) {
                 val contacts = repo.contacts(business.placeId)
                 contacts.forEach { store.persistContact(it, business) }
                 people += contacts.size

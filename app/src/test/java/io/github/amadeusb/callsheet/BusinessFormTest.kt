@@ -156,6 +156,25 @@ class BusinessFormTest {
         assertTrue(repo.cities().contains("Kösching"))
     }
 
+    @Test
+    fun `a hand-entered business with a number belongs in the phone book`() = runTest {
+        repo.import(IMPORT.byteInputStream())
+        val id = repo.create(
+            BusinessDraft(name = "Fliesen Erfunden", phone = "0621 9900094")
+        ).getOrThrow()
+
+        val forPhoneBook = repo.businessesForPhoneBook().map { it.placeId }
+        assertTrue(forPhoneBook.contains(id))
+        // The imported stock has a number too, but it is research material.
+        assertFalse(forPhoneBook.contains("P1"))
+    }
+
+    @Test
+    fun `a hand-entered business without a number stays out of the phone book`() = runTest {
+        val id = repo.create(BusinessDraft(name = "Noch ohne Nummer")).getOrThrow()
+        assertFalse(repo.businessesForPhoneBook().map { it.placeId }.contains(id))
+    }
+
     private companion object {
         const val IMPORT = """
         [
