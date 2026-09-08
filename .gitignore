@@ -7,3 +7,4 @@ build/
 .kotlin/
 keystore.properties
 *.jks
+.playwright-mcp/
