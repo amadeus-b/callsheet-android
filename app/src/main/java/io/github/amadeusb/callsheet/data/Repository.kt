@@ -65,12 +65,24 @@ class Repository(context: Context) {
                 if (known.contains(s.placeId)) {
                     // Imported master data only. status, note, follow_up_at and
                     // updated_at are deliberately absent from [importedValues].
-                    db.update("businesses", values, "place_id = ?", arrayOf(s.placeId))
-                    updated++
+                    val same = db.rawQuery(
+                        "SELECT * FROM businesses WHERE place_id = ?", arrayOf(s.placeId),
+                    ).use { c -> c.moveToFirst() && matchesStored(c, values) }
+                    if (!same) {
+                        values.put("updated_at", now)
+                        values.put("dirty", 1)
+                        db.update("businesses", values, "place_id = ?", arrayOf(s.placeId))
+                        updated++
+                    }
+                    // Identical master data: nothing to write. A row that was
+                    // already synced must not be marked and sent up again for
+                    // no reason — and a stale `updated_at` here would make the
+                    // server's own, real change look older than it is.
                 } else {
                     values.put("place_id", s.placeId)
                     values.put("status", Status.NEW.key)
                     values.put("updated_at", now)
+                    values.put("dirty", 1)
                     db.insert("businesses", null, values)
                     new++
                 }
@@ -113,7 +125,32 @@ class Repository(context: Context) {
         put("is_target", if (s.isTarget) 1 else 0)
         put("origin", toJson(s.origin))
         put("collected_at", s.collectedAt)
-        put("dirty", 1)
+    }
+
+    /**
+     * Is the row already exactly what [values] would write?
+     *
+     * `collected_at` is deliberately left out of the comparison: when the file
+     * carries no `erhobenAm`, [Importer] fills it in with the moment of
+     * reading, so it never matches the stored value on a second run of the
+     * same file — that alone must not count as a change, or an identical
+     * reimport would forever mark every business as dirty again.
+     */
+    private fun matchesStored(c: Cursor, values: ContentValues): Boolean {
+        for (key in values.keySet()) {
+            if (key == "collected_at") continue
+            val i = c.getColumnIndexOrThrow(key)
+            val new = values.get(key)
+            val same = when {
+                new == null -> c.isNull(i)
+                c.isNull(i) -> false
+                new is Int -> c.getInt(i) == new
+                new is Double -> c.getDouble(i) == new
+                else -> c.getString(i) == new.toString()
+            }
+            if (!same) return false
+        }
+        return true
     }
 
     // ----------------------------------------------------------------- Reading

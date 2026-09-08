@@ -144,7 +144,51 @@ class DirtyTest {
         assertEquals(1, zahl("SELECT dirty FROM businesses WHERE place_id = 'P1'"))
     }
 
+    @Test
+    fun `reimporting identical master data leaves the row unmarked`() = runTest {
+        repo.import(IMPORT.byteInputStream())
+        // Simulate that the first import already reached the server.
+        Database(ctx).writableDatabase.execSQL("UPDATE businesses SET dirty = 0")
+        val before = repo.business("P1")!!.updatedAt
+
+        repo.import(IMPORT.byteInputStream())
+
+        assertEquals(0, zahl("SELECT dirty FROM businesses WHERE place_id = 'P1'"))
+        assertEquals(before, repo.business("P1")!!.updatedAt)
+    }
+
+    @Test
+    fun `reimporting changed master data marks only the changed row`() = runTest {
+        repo.import(TWO_BUSINESSES.byteInputStream())
+        // A fixed, unmistakably past stamp — `Clock.now()` alone has only
+        // second resolution and could coincide with the second import's.
+        val stale = "2026-09-01T08:00:00+02:00"
+        Database(ctx).writableDatabase.execSQL("UPDATE businesses SET dirty = 0, updated_at = '$stale'")
+
+        // Only P1's phone number changed.
+        repo.import(TWO_BUSINESSES_P1_CHANGED.byteInputStream())
+
+        assertEquals(1, zahl("SELECT dirty FROM businesses WHERE place_id = 'P1'"))
+        org.junit.Assert.assertNotEquals(stale, repo.business("P1")!!.updatedAt)
+        assertEquals(0, zahl("SELECT dirty FROM businesses WHERE place_id = 'P2'"))
+        assertEquals(stale, repo.business("P2")!!.updatedAt)
+    }
+
     private companion object {
         const val IMPORT = """[{"placeId":"P1","title":"Elektro Meier","gewerk":"Elektro","city":"Ingolstadt","phone":"08411 12345"}]"""
+
+        const val TWO_BUSINESSES = """
+        [
+          {"placeId":"P1","title":"Elektro Meier","gewerk":"Elektro","city":"Ingolstadt","phone":"08411 12345"},
+          {"placeId":"P2","title":"Garten Huber","gewerk":"GaLaBau","city":"Eichstaett","phone":"08421 54321"}
+        ]
+        """
+
+        const val TWO_BUSINESSES_P1_CHANGED = """
+        [
+          {"placeId":"P1","title":"Elektro Meier","gewerk":"Elektro","city":"Ingolstadt","phone":"08411 99999"},
+          {"placeId":"P2","title":"Garten Huber","gewerk":"GaLaBau","city":"Eichstaett","phone":"08421 54321"}
+        ]
+        """
     }
 }

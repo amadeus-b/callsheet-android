@@ -84,7 +84,10 @@ class RepositoryTest {
 
         val e = import(SECOND_IMPORT)
         assertEquals(1, e.new)
-        assertEquals(6, e.updated)
+        // Only P1 (name, street, categories, origin) and P5 (phone) actually
+        // differ between FIRST_IMPORT and SECOND_IMPORT — P2, P3, P4 and P9
+        // come back byte-for-byte identical and are not touched.
+        assertEquals(2, e.updated)
 
         val after = repo.business("P1")!!
         // Arbeitsfelder unverändert …
