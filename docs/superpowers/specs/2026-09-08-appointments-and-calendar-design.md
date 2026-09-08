@@ -81,8 +81,8 @@ and `Data`.
 **`BusyTimes.kt`** — one query against `CalendarContract.Instances` for one day,
 returning the occupied intervals with their titles.
 
-**`Preferences.kt`** gains `calendarEnabled` and `calendarId`, next to the
-existing phone book settings.
+**`Preferences.kt`** gains `calendarEnabled`, `calendarId` and
+`appointmentMinutes`, next to the existing phone book settings.
 
 **`Settings.kt`** gains a calendar picker beside the address book picker, with
 the same shape and the same pointer to DAVx5.
@@ -92,6 +92,62 @@ still gets recorded — it then lives in the app alone, the way a refused call l
 permission leaves the status to be set by hand.
 
 ## Setting an appointment
+
+### Where it lives
+
+The detail view gains a section, **Termin vor Ort**, directly above
+Wiedervorlage. The two belong side by side because they are the two answers to
+one question — when does this go on? — and the appointment behaves like the
+follow-up, not like the status: it takes effect on save, without the separate
+save button the status draft needs.
+
+That placement also closes the gap this design exists for, without forcing
+anything. Setting the status to `appointment` and saving, with no time set,
+leaves the section reading:
+
+> Status „Termin", aber kein Zeitpunkt gesetzt. **[Termin anlegen]**
+
+A notice, not a dialog and not a block — the rule `CallFlow` already states:
+only ever offered, never applied.
+
+### The flow
+
+**Termin anlegen** raises a bottom sheet rather than opening a screen, so the
+business stays visible behind it. Top to bottom, in the order the conversation
+on the phone runs:
+
+1. **Day** — a row of the coming workdays, plus a way through to the date picker
+2. **Time** — the timeline described below; tap to place, drag to move
+3. **Duration** — chips for 30, 60, 90 and 120 minutes, or drag the block's
+   bottom edge
+4. **Location** — prefilled from street, postal code and city, editable for the
+   times the meeting is somewhere else
+5. **Save**
+
+Saving does everything at once: the four appointment columns, the status, and
+the calendar event — or, when something already occupies the window, the
+question below first.
+
+Cancelling does nothing at all. There is no half-set status and no appointment
+without a time.
+
+Once set, the section shows the appointment with its date, time, location and
+the calendar it lives in, tappable for directions, with **Ändern** and
+**Entfernen**. Removing deletes the calendar event too and puts the status back
+to `called`.
+
+### Duration
+
+The default is 60 minutes, and the app keeps the last duration chosen as the new
+default. Pick 90 three times and the fourth appointment starts at 90 — a setting
+that tunes itself instead of one to go looking for.
+
+This is why the column is `appointment_end_at` and not a duration in minutes.
+Drag the appointment out to two hours in the calendar and the read-back returns
+an end, not a length; a stored duration would fight the calendar every time it
+was read.
+
+### The timeline
 
 The picker shows the chosen day as a vertical timeline from 8 to 18, hours down
 the left, with the occupied times as shaded blocks **carrying their titles**.
@@ -108,8 +164,9 @@ to. A private appointment that is invisible here is exactly the one an on-site
 visit gets booked over. Their titles are what make the strip worth showing —
 "Baustelle Nord" is a block that might move, "Zahnarzt" is one that will not.
 
-The location field is prefilled from street, postal code and city, and stays
-editable for the times the meeting is somewhere else.
+Without the calendar permission the timeline stays empty and says so. Day,
+duration, location and saving carry on working; the appointment then lives in
+the app alone.
 
 ## Avoiding a second copy
 
@@ -167,6 +224,9 @@ current from the read-back.
 - Overlap detection against a set of busy intervals, including back-to-back
   appointments, which do not overlap.
 - Read-back: moved, relocated, deleted, and the event id pointing at nothing.
+- The remembered duration: it follows the last saved appointment and starts at
+  60 on a fresh install.
+- Cancelling the sheet leaves status, appointment and calendar untouched.
 
 Tests run under Robolectric, as `RepositoryTest` already does. Overlap
 detection and the read-back decision are kept as pure functions in
