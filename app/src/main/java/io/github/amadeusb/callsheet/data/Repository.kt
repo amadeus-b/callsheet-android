@@ -113,6 +113,7 @@ class Repository(context: Context) {
         put("is_target", if (s.isTarget) 1 else 0)
         put("origin", toJson(s.origin))
         put("collected_at", s.collectedAt)
+        put("dirty", 1)
     }
 
     // ----------------------------------------------------------------- Reading
@@ -317,6 +318,7 @@ class Repository(context: Context) {
             put("status", Status.NEW.key)
             put("note", new.note.trim().ifEmpty { null })
             put("updated_at", now)
+            put("dirty", 1)
         }
 
         helper.writableDatabase.insert("businesses", null, values)
@@ -336,11 +338,13 @@ class Repository(context: Context) {
             put("note", entry.note)
             put("kind", entry.kind.key)
             put("contact", entry.contact)
+            put("updated_at", Clock.now())
+            put("dirty", 1)
         }
         db.beginTransaction()
         try {
             db.insertWithOnConflict("calls", null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE)
-            val timestamp = ContentValues().apply { put("updated_at", Clock.now()) }
+            val timestamp = ContentValues().apply { put("updated_at", Clock.now()); put("dirty", 1) }
             db.update("businesses", timestamp, "place_id = ?", arrayOf(entry.placeId))
             db.setTransactionSuccessful()
         } finally {
@@ -361,6 +365,8 @@ class Repository(context: Context) {
             val values = ContentValues().apply {
                 put("outcome", outcome)
                 if (!note.isNullOrBlank()) put("note", note)
+                put("updated_at", Clock.now())
+                put("dirty", 1)
             }
             helper.writableDatabase.update("calls", values, "id = ?", arrayOf(id))
             notifyChanged()
@@ -486,6 +492,7 @@ class Repository(context: Context) {
                     put("email", email.ifEmpty { null })
                     put("note", draft.note.trim().ifEmpty { null })
                     put("updated_at", now)
+                    put("dirty", 1)
                 }
                 if (draft.id == null) {
                     val next = db.rawQuery(
@@ -510,11 +517,13 @@ class Repository(context: Context) {
                             put("number", number)
                             put("kind", row.kind.key)
                             put("position", index)
+                            put("updated_at", now)
+                            put("dirty", 1)
                         },
                     )
                 }
 
-                val timestamp = ContentValues().apply { put("updated_at", now) }
+                val timestamp = ContentValues().apply { put("updated_at", now); put("dirty", 1) }
                 db.update("businesses", timestamp, "place_id = ?", arrayOf(draft.placeId))
                 db.setTransactionSuccessful()
             } finally {
@@ -536,11 +545,19 @@ class Repository(context: Context) {
         Unit
     }
 
-    /** Deletes a contact together with their numbers. */
+    /** Deletes a contact together with their numbers, leaving tombstones behind. */
     suspend fun deleteContact(id: String) = withContext(Dispatchers.IO) {
         val db = helper.writableDatabase
+        val now = Clock.now()
         db.beginTransaction()
         try {
+            val numbers = db.rawQuery(
+                "SELECT id FROM contact_numbers WHERE contact_id = ?", arrayOf(id),
+            ).use { c -> generateSequence { if (c.moveToNext()) c.getString(0) else null }.toList() }
+
+            for (number in numbers) tombstone(db, "contact_numbers", number, now)
+            tombstone(db, "contacts", id, now)
+
             db.delete("contact_numbers", "contact_id = ?", arrayOf(id))
             db.delete("contacts", "id = ?", arrayOf(id))
             db.setTransactionSuccessful()
@@ -550,10 +567,28 @@ class Repository(context: Context) {
         notifyChanged()
     }
 
+    /**
+     * Records a deletion. Without it the row would come back from the server with
+     * the next sync, because the server cannot tell a deletion from a row that was
+     * never there.
+     */
+    private fun tombstone(db: android.database.sqlite.SQLiteDatabase, table: String, rowId: String, at: String) {
+        db.insertWithOnConflict(
+            "deletions", null,
+            ContentValues().apply {
+                put("table_name", table)
+                put("row_id", rowId)
+                put("deleted_at", at)
+            },
+            android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE,
+        )
+    }
+
     /** Changes a working field and always writes `updated_at` along with it. */
     private inline fun updateBusiness(placeId: String, block: ContentValues.() -> Unit) {
         val values = ContentValues().apply(block)
         values.put("updated_at", Clock.now())
+        values.put("dirty", 1)
         helper.writableDatabase.update("businesses", values, "place_id = ?", arrayOf(placeId))
         notifyChanged()
     }
