@@ -81,6 +81,7 @@ class RepositoryTest {
 
         val before = repo.business("P1")!!
         val previousFollowUp = before.followUpAt
+        val beforeP2 = repo.business("P2")!!.updatedAt
 
         val e = import(SECOND_IMPORT)
         assertEquals(1, e.new)
@@ -94,7 +95,11 @@ class RepositoryTest {
         assertEquals(Status.APPOINTMENT, after.status)
         assertEquals("Rueckruf bei Herrn Beispiel", after.note)
         assertEquals(previousFollowUp, after.followUpAt)
-        assertEquals(before.updatedAt, after.updatedAt)
+        // P1's own master data changes in SECOND_IMPORT (name, street,
+        // categories, origin), so its updated_at is rightly refreshed — that
+        // is not a work field and not what this test is about. P2 comes back
+        // byte-for-byte identical, so its timestamp must not move at all.
+        assertEquals(beforeP2, repo.business("P2")!!.updatedAt)
         assertEquals(1, repo.calls("P1").size)
         assertEquals(187, repo.calls("P1").first().durationSeconds)
         // … Stammdaten aktualisiert.
