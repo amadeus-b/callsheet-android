@@ -30,6 +30,7 @@ import io.github.amadeusb.callsheet.ui.BusinessDetailScreen
 import io.github.amadeusb.callsheet.ui.SettingsScreen
 import io.github.amadeusb.callsheet.ui.BusinessFormScreen
 import io.github.amadeusb.callsheet.ui.TodayScreen
+import io.github.amadeusb.callsheet.calendar.CalendarStore
 import io.github.amadeusb.callsheet.contacts.PhoneBook
 import io.github.amadeusb.callsheet.ui.NumberPickerDialog
 
@@ -71,6 +72,14 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
         val granted = outcome.values.all { it }
         vm.setPhoneBookEnabled(granted)
         if (!granted) vm.phoneBookDenied()
+    }
+
+    // Calendar permission: only once the user switches the calendar on —
+    // before that the app has no use for it.
+    val calendarPermissions = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { outcome ->
+        vm.setCalendarEnabled(outcome.values.all { it })
     }
 
     val filePicker = rememberLauncherForActivityResult(
@@ -238,6 +247,23 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             },
             onAccount = vm::setAddressBookAccount,
             onLoadAccounts = vm::loadAddressBookAccounts,
+            calendarEnabled = state.calendarEnabled,
+            calendar = state.calendar,
+            calendars = state.calendars,
+            onCalendarToggle = { on ->
+                if (on && !CalendarStore.canWrite(context)) {
+                    calendarPermissions.launch(
+                        arrayOf(
+                            Manifest.permission.READ_CALENDAR,
+                            Manifest.permission.WRITE_CALENDAR,
+                        )
+                    )
+                } else {
+                    vm.setCalendarEnabled(on)
+                }
+            },
+            onPickCalendar = vm::pickCalendar,
+            onLoadCalendars = vm::loadCalendars,
             onPushAll = vm::pushAllToPhoneBook,
             onSaveServer = vm::setServer,
             onSyncNow = { vm.syncNow(quiet = false) },

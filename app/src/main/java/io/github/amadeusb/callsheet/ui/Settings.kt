@@ -46,6 +46,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.data.Business
+import io.github.amadeusb.callsheet.calendar.CalendarAccount
 import io.github.amadeusb.callsheet.contacts.AddressBookAccount
 import io.github.amadeusb.callsheet.data.Clock
 import io.github.amadeusb.callsheet.data.ImportResult
@@ -68,6 +69,12 @@ fun SettingsScreen(
     onPhoneBook: (Boolean) -> Unit,
     onAccount: (AddressBookAccount) -> Unit,
     onLoadAccounts: () -> Unit,
+    calendarEnabled: Boolean,
+    calendar: CalendarAccount?,
+    calendars: List<CalendarAccount>,
+    onCalendarToggle: (Boolean) -> Unit,
+    onPickCalendar: (CalendarAccount) -> Unit,
+    onLoadCalendars: () -> Unit,
     onPushAll: () -> Unit,
     onSaveServer: (String, String) -> Unit,
     onSyncNow: () -> Unit,
@@ -75,6 +82,7 @@ fun SettingsScreen(
 ) {
     var confirm by remember { mutableStateOf<Business?>(null) }
     var accountPicker by remember { mutableStateOf(false) }
+    var calendarPicker by remember { mutableStateOf(false) }
     var confirmReupload by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -142,6 +150,19 @@ fun SettingsScreen(
                         accountPicker = true
                     },
                     onPushAll = onPushAll,
+                )
+            }
+
+            item(key = "calendar") {
+                Section("Kalender")
+                CalendarBlock(
+                    active = calendarEnabled,
+                    calendar = calendar,
+                    onToggle = onCalendarToggle,
+                    onPick = {
+                        onLoadCalendars()
+                        calendarPicker = true
+                    },
                 )
             }
 
@@ -306,6 +327,46 @@ fun SettingsScreen(
         )
     }
 
+    if (calendarPicker) {
+        AlertDialog(
+            onDismissRequest = { calendarPicker = false },
+            title = { Text("In welchen Kalender?") },
+            text = {
+                if (calendars.isEmpty()) {
+                    Text(
+                        "Kein beschreibbarer Kalender gefunden. Richte in DAVx5 " +
+                            "einen Kalender ein und synchronisiere einmal."
+                    )
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                        items(calendars, key = { it.id }) { entry ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onPickCalendar(entry)
+                                        calendarPicker = false
+                                    }
+                                    .padding(vertical = 10.dp),
+                            ) {
+                                Text(entry.name, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    text = entry.accountName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { calendarPicker = false }) { Text("Abbrechen") }
+            },
+        )
+    }
+
     if (confirmReupload) {
         AlertDialog(
             onDismissRequest = { confirmReupload = false },
@@ -359,6 +420,66 @@ fun SettingsScreen(
  * book accounts — usually the one DAVx5 keeps in sync. The app synchronises
  * nothing itself; it only stores what DAVx5 then uploads.
  */
+/**
+ * Appointments in the device calendar. Written into the calendar the user picks
+ * here — usually one DAVx5 keeps in sync. The app synchronises nothing itself.
+ */
+@Composable
+private fun CalendarBlock(
+    active: Boolean,
+    calendar: CalendarAccount?,
+    onToggle: (Boolean) -> Unit,
+    onPick: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Text(
+            text = "Termine vor Ort werden zusätzlich im Kalender des Geräts " +
+                "abgelegt. Damit erinnert dich das Telefon daran und das Navi " +
+                "kennt die Adresse. Was du im Kalender verschiebst, übernimmt " +
+                "die App beim nächsten Öffnen der Akte.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Termine in den Kalender",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(checked = active, onCheckedChange = onToggle)
+        }
+
+        if (active) {
+            OutlinedButton(
+                onClick = onPick,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Text(
+                    text = calendar?.let { "Kalender: ${it.name}" } ?: "Kalender wählen …",
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (calendar == null) {
+                Text(
+                    text = "Ohne gewählten Kalender wird nichts geschrieben. Der " +
+                        "Termin bleibt trotzdem in der App.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun PhoneBookBlock(
     active: Boolean,

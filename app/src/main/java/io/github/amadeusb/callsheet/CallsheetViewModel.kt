@@ -4,6 +4,13 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.update
+import io.github.amadeusb.callsheet.calendar.BusyTimes
+import io.github.amadeusb.callsheet.calendar.CalendarAccount
+import io.github.amadeusb.callsheet.calendar.CalendarStore
+import io.github.amadeusb.callsheet.calendar.EventFields
+import io.github.amadeusb.callsheet.calling.Appointment
+import io.github.amadeusb.callsheet.calling.BusyInterval
 import io.github.amadeusb.callsheet.calling.CallFlow
 import io.github.amadeusb.callsheet.calling.CallLogReader
 import io.github.amadeusb.callsheet.calling.FollowUp
@@ -94,6 +101,10 @@ data class State(
     val phoneBookAccount: AddressBookAccount? = null,
     val addressBookAccounts: List<AddressBookAccount> = emptyList(),
     val phoneBookHint: String? = null,
+    /** Calendar: whether to mirror appointments, where to, and what is on offer. */
+    val calendarEnabled: Boolean = false,
+    val calendar: CalendarAccount? = null,
+    val calendars: List<CalendarAccount> = emptyList(),
     val outsideBusinessHours: Boolean = false,
     val draft: BusinessDraft = BusinessDraft(),
     val formError: String? = null,
@@ -138,6 +149,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         _state.value = _state.value.copy(
             phoneBookEnabled = preferences.phoneBookEnabled,
             phoneBookAccount = preferences.account,
+            calendarEnabled = preferences.calendarEnabled,
         )
         viewModelScope.launch {
             _state.value = _state.value.copy(
@@ -481,6 +493,28 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 "Telefonbuch ablegen. Du kannst die Berechtigung in den " +
                 "Android-Einstellungen der App nachträglich erteilen.",
         )
+    }
+
+    // ------------------------------------------------------------------ Calendar
+
+    /** Loads the device's calendars for the picker. */
+    fun loadCalendars() {
+        viewModelScope.launch {
+            val found = CalendarStore.calendars(getApplication())
+            val chosen = preferences.calendarId?.let { id -> found.firstOrNull { it.id == id } }
+            _state.update { it.copy(calendars = found, calendar = chosen) }
+        }
+    }
+
+    fun setCalendarEnabled(enabled: Boolean) {
+        preferences.calendarEnabled = enabled
+        _state.update { it.copy(calendarEnabled = enabled) }
+        if (enabled) loadCalendars()
+    }
+
+    fun pickCalendar(calendar: CalendarAccount) {
+        preferences.calendarId = calendar.id
+        _state.update { it.copy(calendar = calendar) }
     }
 
     fun setAddressBookAccount(account: AddressBookAccount?) {
