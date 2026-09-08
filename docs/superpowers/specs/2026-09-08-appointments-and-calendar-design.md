@@ -93,12 +93,20 @@ permission leaves the status to be set by hand.
 
 ## Setting an appointment
 
-The picker shows the chosen day as a strip from 8 to 18, with the occupied times
-shaded and labelled. No month grid: the decision being made is about one day.
+The picker shows the chosen day as a vertical timeline from 8 to 18, hours down
+the left, with the occupied times as shaded blocks **carrying their titles**.
+The new appointment sits in it as a block that can be dragged and resized. A
+full day scrolls; that is the price of showing what is in the way rather than
+only that something is.
+
+No month grid, and no week either: the decision being made is about one day.
+A row of the next few days sits above the timeline for the times the appointment
+lands on another one.
 
 Busy times come from **every visible calendar**, not only the one being written
 to. A private appointment that is invisible here is exactly the one an on-site
-visit gets booked over.
+visit gets booked over. Their titles are what make the strip worth showing —
+"Baustelle Nord" is a block that might move, "Zahnarzt" is one that will not.
 
 The location field is prefilled from street, postal code and city, and stays
 editable for the times the meeting is somewhere else.
