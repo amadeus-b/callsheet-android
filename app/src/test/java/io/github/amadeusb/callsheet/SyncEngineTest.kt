@@ -4,6 +4,7 @@ import androidx.test.core.app.ApplicationProvider
 import io.github.amadeusb.callsheet.contacts.Preferences
 import io.github.amadeusb.callsheet.data.Database
 import io.github.amadeusb.callsheet.sync.FailureKind
+import io.github.amadeusb.callsheet.sync.HttpFailure
 import io.github.amadeusb.callsheet.sync.SyncEngine
 import io.github.amadeusb.callsheet.sync.SyncResult
 import io.github.amadeusb.callsheet.sync.SyncStore
@@ -103,5 +104,61 @@ class SyncEngineTest {
         assertEquals(SyncResult.Idle, engine.sync(object : Transport {
             override fun post(payload: JSONObject): JSONObject = throw AssertionError("darf nicht aufgerufen werden")
         }))
+    }
+
+    @Test
+    fun `a run already in flight blocks a second one and stays untouched`() {
+        var aufrufe = 0
+        lateinit var verschachteltesErgebnis: SyncResult
+        val ergebnis = engine.sync(object : Transport {
+            override fun post(payload: JSONObject): JSONObject {
+                aufrufe++
+                // Called from inside the request that is already running.
+                verschachteltesErgebnis = engine.sync(this)
+                return leereAntwort(5)
+            }
+        })
+        assertEquals(SyncResult.Idle, verschachteltesErgebnis)
+        assertEquals(1, aufrufe)
+        assertEquals(SyncResult.Ok, ergebnis)
+        assertEquals(5, prefs.watermark)
+    }
+
+    @Test
+    fun `the lock opens again after a failed run`() {
+        engine.sync(object : Transport {
+            override fun post(payload: JSONObject): JSONObject = throw java.io.IOException("kein Netz")
+        })
+        val ergebnis = engine.sync(object : Transport {
+            override fun post(payload: JSONObject) = leereAntwort(9)
+        })
+        assertEquals(SyncResult.Ok, ergebnis)
+        assertEquals(9, prefs.watermark)
+    }
+
+    @Test
+    fun `429 is its own failure kind and stops the run before the next block`() {
+        var aufrufe = 0
+        val ergebnis = engine.sync(object : Transport {
+            override fun post(payload: JSONObject): JSONObject {
+                aufrufe++
+                throw HttpFailure(FailureKind.RATE_LIMITED, "Bitte warten.")
+            }
+        })
+        assertTrue(ergebnis is SyncResult.Failed && (ergebnis as SyncResult.Failed).kind == FailureKind.RATE_LIMITED)
+        assertEquals(1, aufrufe)
+    }
+
+    @Test
+    fun `413 ends the run as a visible failure instead of looping`() {
+        var aufrufe = 0
+        val ergebnis = engine.sync(object : Transport {
+            override fun post(payload: JSONObject): JSONObject {
+                aufrufe++
+                throw HttpFailure(FailureKind.TOO_LARGE, "Zu groß.")
+            }
+        })
+        assertTrue(ergebnis is SyncResult.Failed && (ergebnis as SyncResult.Failed).kind == FailureKind.TOO_LARGE)
+        assertEquals(1, aufrufe)
     }
 }
