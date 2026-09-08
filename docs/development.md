@@ -184,6 +184,14 @@ and contend on file locks instead of sharing the in-process lock a single
 connection gets for free. `Database.instance(context)` hands out one shared
 helper; neither class constructs `Database` directly.
 
+### Downgrading must not destroy the database
+
+`SQLiteOpenHelper.onDowngrade` throws by default. Sideloading an older build
+over a newer one — routine for anyone using Obtainium — would otherwise leave
+the database unable to open at all; recovery means reinstalling, which wipes
+every business and every call ever logged. `Database.onDowngrade` is a
+deliberate no-op: an older build just loses synchronisation, never the stock.
+
 ## Open questions, answerable only on a device
 
 1. **The call log under GrapheneOS** — whether `CallLog.Calls` fills fast enough

@@ -25,6 +25,7 @@ import io.github.amadeusb.callsheet.contacts.ContactStore
 import io.github.amadeusb.callsheet.contacts.Preferences
 import io.github.amadeusb.callsheet.contacts.PhoneBook
 import io.github.amadeusb.callsheet.sync.FailureKind
+import io.github.amadeusb.callsheet.sync.isAcceptableServerAddress
 import io.github.amadeusb.callsheet.sync.SyncClient
 import io.github.amadeusb.callsheet.sync.SyncEngine
 import io.github.amadeusb.callsheet.sync.SyncResult
@@ -187,6 +188,12 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setServer(url: String, token: String) {
         val trimmed = url.ifBlank { null }
+        if (trimmed != null && !isAcceptableServerAddress(trimmed)) {
+            _syncState.value = _syncState.value.copy(
+                error = "Nur eine Adresse, die mit https:// beginnt, wird angenommen — Android blockiert unverschlüsselte Verbindungen.",
+            )
+            return
+        }
         // Compared against the normalised value already stored — Preferences
         // trims and drops a trailing slash on the way in — so re-saving the
         // same address unchanged does not look like a change.

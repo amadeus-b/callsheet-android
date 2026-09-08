@@ -118,6 +118,10 @@ tries again the next time one of those moments comes around. The settings
 screen is where the truth lives — when the last full sync went through, and
 how many changes are still waiting to go up.
 
+Only an address starting with `https://` is accepted; Android blocks plain
+`http://` outright, and a bearer token has no business travelling
+unencrypted anyway.
+
 The settings screen also carries an **„Alles erneut hochladen"** action,
 behind a confirmation. It marks the entire local stock as unsent, for the two
 situations a normal sync cannot recover from on its own: the server was
