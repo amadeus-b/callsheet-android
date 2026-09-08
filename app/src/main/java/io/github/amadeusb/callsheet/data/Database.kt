@@ -109,6 +109,17 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         }
     }
 
+    /**
+     * A no-op on purpose. The default implementation throws, which means
+     * sideloading an older build over a newer one — common for people using
+     * Obtainium — leaves the database unable to open at all. Recovery would
+     * mean reinstalling, which wipes every business and every call ever
+     * logged. Leaving the schema exactly as the newer version created it
+     * costs the older build only synchronisation, never the stock.
+     */
+    override fun onDowngrade(db: SQLiteDatabase, old: Int, new: Int) {
+    }
+
     companion object {
         const val NAME = "callsheet.db"
         const val VERSION = 2
