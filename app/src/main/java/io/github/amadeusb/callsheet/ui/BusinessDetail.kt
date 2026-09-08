@@ -489,11 +489,11 @@ private fun MasterData(
             )
         }
 
-        val address = listOfNotNull(
-            business.street?.takeIf { it.isNotBlank() },
-            listOfNotNull(business.postalCode, business.city).joinToString(" ").takeIf { it.isNotBlank() },
-        ).joinToString("\n")
-        DataRow("Anschrift", address.takeIf { it.isNotBlank() })
+        // One formatting rule, not two: this is the same line that goes into the
+        // calendar event, so the two cannot drift apart.
+        Appointment.address(business.street, business.postalCode, business.city)?.let { address ->
+            DataRow("Anschrift", address) { onOpenUrl(geoUri(address)) }
+        }
 
         business.website?.takeIf { it.isNotBlank() }?.let { site ->
             DataRow("Webseite", site) {
