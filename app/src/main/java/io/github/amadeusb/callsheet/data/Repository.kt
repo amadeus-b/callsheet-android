@@ -470,7 +470,7 @@ class Repository(context: Context) {
 
     // ---------------------------------------------------------------- Contacts
 
-    /** A business's contacts with their numbers, in the order they were entered. */
+    /** A business's contacts with their numbers and emails, in the order they were entered. */
     suspend fun contacts(placeId: String): List<Contact> =
         withContext(Dispatchers.IO) {
             val db = helper.readableDatabase
@@ -487,6 +487,23 @@ class Repository(context: Context) {
                             id = c.getString(0),
                             number = c.getString(2),
                             kind = PhoneType.fromKey(c.getString(3)),
+                        )
+                    )
+                }
+            }
+            val emails = HashMap<String, MutableList<ContactEmail>>()
+            db.rawQuery(
+                "SELECT e.id, e.contact_id, e.email, e.position FROM contact_emails e " +
+                    "JOIN contacts a ON a.id = e.contact_id " +
+                    "WHERE a.place_id = ? ORDER BY e.position",
+                arrayOf(placeId),
+            ).use { c ->
+                while (c.moveToNext()) {
+                    emails.getOrPut(c.getString(1)) { ArrayList() }.add(
+                        ContactEmail(
+                            id = c.getString(0),
+                            email = c.getString(2),
+                            position = c.getInt(3),
                         )
                     )
                 }
@@ -511,6 +528,7 @@ class Repository(context: Context) {
                             numbers = numbers[id].orEmpty(),
                             updatedAt = c.getString(6),
                             contactVersion = if (c.isNull(7)) null else c.getInt(7),
+                            emails = emails[id].orEmpty(),
                         )
                     )
                 }
@@ -554,6 +572,15 @@ class Repository(context: Context) {
                 return@withContext Result.failure(
                     IllegalArgumentException("Die E-Mail-Adresse sieht nicht wie eine Adresse aus.")
                 )
+            }
+
+            val emailRows = draft.emails.filter { it.email.isNotBlank() }
+            for (row in emailRows) {
+                if (!row.email.trim().contains("@")) {
+                    return@withContext Result.failure(
+                        IllegalArgumentException("Die E-Mail-Adresse „${row.email.trim()}“ sieht nicht wie eine Adresse aus.")
+                    )
+                }
             }
 
             val id = draft.id ?: java.util.UUID.randomUUID().toString()
@@ -609,6 +636,31 @@ class Repository(context: Context) {
                 }
                 for (removed in before) tombstone(db, "contact_numbers", removed, now)
 
+                // Same treatment for the emails: written afresh, order and
+                // content from the form, tombstones for anything not offered
+                // again.
+                val beforeEmails = db.rawQuery(
+                    "SELECT id FROM contact_emails WHERE contact_id = ?", arrayOf(id),
+                ).use { c -> generateSequence { if (c.moveToNext()) c.getString(0) else null }.toMutableSet() }
+
+                db.delete("contact_emails", "contact_id = ?", arrayOf(id))
+                emailRows.forEachIndexed { index, row ->
+                    val emailId = row.id ?: java.util.UUID.randomUUID().toString()
+                    beforeEmails.remove(emailId)
+                    db.insert(
+                        "contact_emails", null,
+                        ContentValues().apply {
+                            put("id", emailId)
+                            put("contact_id", id)
+                            put("email", row.email.trim())
+                            put("position", index)
+                            put("updated_at", now)
+                            put("dirty", 1)
+                        },
+                    )
+                }
+                for (removed in beforeEmails) tombstone(db, "contact_emails", removed, now)
+
                 val timestamp = ContentValues().apply { put("updated_at", now); put("dirty", 1) }
                 db.update("businesses", timestamp, "place_id = ?", arrayOf(draft.placeId))
                 db.setTransactionSuccessful()
@@ -631,7 +683,7 @@ class Repository(context: Context) {
         Unit
     }
 
-    /** Deletes a contact together with their numbers, leaving tombstones behind. */
+    /** Deletes a contact together with their numbers and emails, leaving tombstones behind. */
     suspend fun deleteContact(id: String) = withContext(Dispatchers.IO) {
         val db = helper.writableDatabase
         val now = Clock.now()
@@ -640,11 +692,16 @@ class Repository(context: Context) {
             val numbers = db.rawQuery(
                 "SELECT id FROM contact_numbers WHERE contact_id = ?", arrayOf(id),
             ).use { c -> generateSequence { if (c.moveToNext()) c.getString(0) else null }.toList() }
+            val emails = db.rawQuery(
+                "SELECT id FROM contact_emails WHERE contact_id = ?", arrayOf(id),
+            ).use { c -> generateSequence { if (c.moveToNext()) c.getString(0) else null }.toList() }
 
             for (number in numbers) tombstone(db, "contact_numbers", number, now)
+            for (email in emails) tombstone(db, "contact_emails", email, now)
             tombstone(db, "contacts", id, now)
 
             db.delete("contact_numbers", "contact_id = ?", arrayOf(id))
+            db.delete("contact_emails", "contact_id = ?", arrayOf(id))
             db.delete("contacts", "id = ?", arrayOf(id))
             db.setTransactionSuccessful()
         } finally {

@@ -87,6 +87,16 @@ class Preferences(context: Context) {
         get() = store.getInt(APPOINTMENT_MINUTES, Appointment.DEFAULT_MINUTES)
         set(value) = store.edit().putInt(APPOINTMENT_MINUTES, value).apply()
 
+    /** The subject line the mail dialog starts from. `{{business_name}}` is replaced before sending. */
+    var mailTemplateSubject: String
+        get() = store.getString(MAIL_TEMPLATE_SUBJECT, null) ?: DEFAULT_MAIL_SUBJECT
+        set(value) = store.edit().putString(MAIL_TEMPLATE_SUBJECT, value).apply()
+
+    /** The body the mail dialog starts from. `{{business_name}}` is replaced before sending. */
+    var mailTemplateBody: String
+        get() = store.getString(MAIL_TEMPLATE_BODY, null) ?: DEFAULT_MAIL_BODY
+        set(value) = store.edit().putString(MAIL_TEMPLATE_BODY, value).apply()
+
     private companion object {
         const val PHONE_BOOK_ENABLED = "phone_book_enabled"
         const val ACCOUNT_NAME = "phone_book_account_name"
@@ -100,5 +110,13 @@ class Preferences(context: Context) {
         const val CALENDAR_ID = "calendar_id"
         const val APPOINTMENT_MINUTES = "appointment_minutes"
         const val NO_CALENDAR = -1L
+        const val MAIL_TEMPLATE_SUBJECT = "mail_template_subject"
+        const val MAIL_TEMPLATE_BODY = "mail_template_body"
+        const val DEFAULT_MAIL_SUBJECT = "Ihr Termin bei {{business_name}}"
+        const val DEFAULT_MAIL_BODY = "Guten Tag,\n\n" +
+            "vielen Dank für das freundliche Telefonat mit {{business_name}}. " +
+            "Wie besprochen melden wir uns hiermit auf diesem Weg bei Ihnen.\n\n" +
+            "Bei Rückfragen erreichen Sie uns jederzeit gerne telefonisch.\n\n" +
+            "Freundliche Grüße"
     }
 }

@@ -78,6 +78,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         )
         db.execSQL(TABLE_CONTACTS)
         db.execSQL(TABLE_NUMBERS)
+        db.execSQL(TABLE_EMAILS)
         db.execSQL(TABLE_DELETIONS)
         db.execSQL(TABLE_APPOINTMENTS)
         for (sql in INDEXES_APPOINTMENTS) db.execSQL(sql)
@@ -90,10 +91,12 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         db.execSQL("CREATE INDEX idx_calls_place_id ON calls(place_id)")
         db.execSQL(INDEX_CONTACTS)
         db.execSQL(INDEX_NUMBERS)
+        db.execSQL(INDEX_EMAILS)
         db.execSQL("CREATE INDEX idx_businesses_dirty ON businesses(dirty)")
         db.execSQL("CREATE INDEX idx_calls_dirty ON calls(dirty)")
         db.execSQL("CREATE INDEX idx_contacts_dirty ON contacts(dirty)")
         db.execSQL("CREATE INDEX idx_contact_numbers_dirty ON contact_numbers(dirty)")
+        db.execSQL("CREATE INDEX idx_contact_emails_dirty ON contact_emails(dirty)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
@@ -179,6 +182,28 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
                     "OR appointment_location IS NOT NULL OR calendar_event_id IS NOT NULL"
             )
         }
+        if (old < 5) {
+            // Several emails per contact, the same way contact_numbers already
+            // holds several phone numbers. Backfilled from the contact's
+            // single `email` column, which stays as it is — kept for backward
+            // compatibility, but no longer read as the source of the new
+            // email-list functionality.
+            db.execSQL(TABLE_EMAILS)
+            db.execSQL(INDEX_EMAILS)
+            db.execSQL("CREATE INDEX idx_contact_emails_dirty ON contact_emails(dirty)")
+            db.execSQL(
+                """
+                INSERT INTO contact_emails (id, contact_id, email, position, updated_at, dirty)
+                SELECT 'legacy-' || id, id, email, 0, updated_at, 1
+                FROM contacts
+                WHERE email IS NOT NULL AND email <> ''
+                """.trimIndent()
+            )
+            // The rename of the "email_promised" status to "mail_sent": the
+            // app now sends the mail itself instead of only noting the
+            // promise to do so.
+            db.execSQL("UPDATE businesses SET status = 'mail_sent' WHERE status = 'email_promised'")
+        }
     }
 
     /**
@@ -194,7 +219,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
 
     companion object {
         const val NAME = "callsheet.db"
-        const val VERSION = 4
+        const val VERSION = 5
 
         @Volatile
         private var shared: Database? = null
@@ -261,11 +286,26 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             )
         """
 
+        /** Several emails per contact, each with its position, mirroring TABLE_NUMBERS. */
+        private const val TABLE_EMAILS = """
+            CREATE TABLE contact_emails (
+                id         TEXT PRIMARY KEY,
+                contact_id TEXT NOT NULL,
+                email      TEXT NOT NULL,
+                position   INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT,
+                dirty      INTEGER NOT NULL DEFAULT 0
+            )
+        """
+
         private const val INDEX_CONTACTS =
             "CREATE INDEX idx_contacts_place_id ON contacts(place_id)"
 
         private const val INDEX_NUMBERS =
             "CREATE INDEX idx_contact_numbers_contact ON contact_numbers(contact_id)"
+
+        private const val INDEX_EMAILS =
+            "CREATE INDEX idx_contact_emails_contact ON contact_emails(contact_id)"
 
         /**
          * Appointments on site, several per business. Synchronised like

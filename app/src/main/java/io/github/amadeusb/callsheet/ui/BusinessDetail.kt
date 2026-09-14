@@ -86,6 +86,11 @@ fun BusinessDetailScreen(
     followUpSuggestion: String?,
     hint: String?,
     saving: Boolean,
+    mailDialogOpen: Boolean,
+    mailSending: Boolean,
+    mailError: String?,
+    mailTemplateSubject: String,
+    mailTemplateBody: String,
     onBack: () -> Unit,
     onDial: (DialTarget) -> Unit,
     onOutcome: (Status, String) -> Unit,
@@ -95,6 +100,9 @@ fun BusinessDetailScreen(
     onRemoveAppointment: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
     onDismissHint: () -> Unit,
+    onOpenMailDialog: () -> Unit,
+    onCloseMailDialog: () -> Unit,
+    onSendMail: (List<String>, String, String) -> Unit,
 ) {
     var blockConfirm by remember { mutableStateOf(false) }
     var removeAppointment by remember { mutableStateOf<AppointmentEntry?>(null) }
@@ -223,7 +231,12 @@ fun BusinessDetailScreen(
                 StatusButtons(
                     current = statusDraft,
                     suggestion = statusSuggestion,
-                    onStatus = { statusDraft = it },
+                    // "Mail gesendet" never sets itself directly — it always
+                    // opens the mail dialog, even when it is already set, so
+                    // a second mail can be sent the same way as the first.
+                    onStatus = { status ->
+                        if (status == Status.MAIL_SENT) onOpenMailDialog() else statusDraft = status
+                    },
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
@@ -400,6 +413,19 @@ fun BusinessDetailScreen(
         ) {
             DatePicker(state = state)
         }
+    }
+
+    if (mailDialogOpen) {
+        MailDialog(
+            business = business,
+            contacts = contacts,
+            subjectTemplate = mailTemplateSubject,
+            bodyTemplate = mailTemplateBody,
+            sending = mailSending,
+            error = mailError,
+            onSend = onSendMail,
+            onDismiss = onCloseMailDialog,
+        )
     }
 
     if (timeOpen) {

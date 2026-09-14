@@ -373,7 +373,7 @@ class RepositoryTest {
                 placeId = "P1",
                 startedAt = Clock.now(),
                 durationSeconds = 0,
-                outcome = Status.EMAIL_PROMISED.label,
+                outcome = Status.MAIL_SENT.label,
                 note = "Unterlagen geschickt",
                 kind = EntryKind.NOTE,
             )

@@ -268,6 +268,11 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                     followUpSuggestion = state.followUpSuggestion,
                     hint = state.hint,
                     saving = state.savesOutcome,
+                    mailDialogOpen = state.mailDialogOpen,
+                    mailSending = state.mailSending,
+                    mailError = state.mailError,
+                    mailTemplateSubject = state.mailTemplateSubject,
+                    mailTemplateBody = state.mailTemplateBody,
                     onBack = { vm.back() },
                     onDial = { target -> dial(business.placeId, target) },
                     onOutcome = { status, note ->
@@ -279,6 +284,9 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                     onRemoveAppointment = vm::removeAppointment,
                     onOpenUrl = ::openUrl,
                     onDismissHint = vm::hintDismissed,
+                    onOpenMailDialog = vm::openMailDialog,
+                    onCloseMailDialog = vm::closeMailDialog,
+                    onSendMail = { to, subject, text -> vm.sendMail(business.placeId, to, subject, text) },
                 )
 
                 state.appointmentDraft?.let { draft ->
@@ -380,6 +388,10 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             onCloseServerDialog = vm::closeServerDialog,
             onConnectServer = vm::connectServer,
             onReuploadAll = vm::reuploadAll,
+            mailTemplateSubject = state.mailTemplateSubject,
+            mailTemplateBody = state.mailTemplateBody,
+            onMailTemplateSubjectChange = vm::setMailTemplateSubject,
+            onMailTemplateBodyChange = vm::setMailTemplateBody,
         )
     }
 

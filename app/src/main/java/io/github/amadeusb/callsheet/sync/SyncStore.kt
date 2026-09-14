@@ -224,10 +224,10 @@ class SyncStore(context: Context) {
         val stone = tombstone(db, table, id)
         if (stone != null && !Merge.isNewer(remoteAt, stone)) return false
 
-        // A number's own row may still be untouched while its contact was
-        // deleted: the tombstone lives on the parent, not on the number. The
-        // server applies the same check in `empfangeKontakt`.
-        if (table == "contact_numbers") {
+        // A number's or email's own row may still be untouched while its
+        // contact was deleted: the tombstone lives on the parent, not on the
+        // number or email. The server applies the same check in `empfangeKontakt`.
+        if (table == "contact_numbers" || table == "contact_emails") {
             val contactId = row.optString("contact_id", null)
             val parentStone = if (contactId != null) tombstone(db, "contacts", contactId) else null
             if (parentStone != null && !Merge.isNewer(remoteAt, parentStone)) return false
@@ -318,10 +318,13 @@ class SyncStore(context: Context) {
             null
         }
         db.delete(table, "$key = ?", arrayOf(id))
-        // Numbers only follow the contact into deletion when the contact
-        // row itself is actually removed — a contact that survived
-        // because it is younger than the tombstone keeps its numbers.
-        if (table == "contacts") db.delete("contact_numbers", "contact_id = ?", arrayOf(id))
+        // Numbers and emails only follow the contact into deletion when the
+        // contact row itself is actually removed — a contact that survived
+        // because it is younger than the tombstone keeps them.
+        if (table == "contacts") {
+            db.delete("contact_numbers", "contact_id = ?", arrayOf(id))
+            db.delete("contact_emails", "contact_id = ?", arrayOf(id))
+        }
         return link
     }
 
@@ -336,6 +339,6 @@ class SyncStore(context: Context) {
          * `id` column (its key is `place_id`), and the app never deletes a
          * business or a call — a tombstone naming either must never reach SQL.
          */
-        val TOMBSTONE_TABLES = setOf("contacts", "contact_numbers", "appointments")
+        val TOMBSTONE_TABLES = setOf("contacts", "contact_numbers", "contact_emails", "appointments")
     }
 }

@@ -23,6 +23,7 @@ import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.ContactDraft
 import io.github.amadeusb.callsheet.data.Business
+import io.github.amadeusb.callsheet.data.EmailDraft
 import io.github.amadeusb.callsheet.data.EntryKind
 import io.github.amadeusb.callsheet.data.Filter
 import io.github.amadeusb.callsheet.data.ImportResult
@@ -39,6 +40,8 @@ import io.github.amadeusb.callsheet.contacts.PhoneBook
 import io.github.amadeusb.callsheet.sync.AppliedAppointments
 import io.github.amadeusb.callsheet.sync.FailureKind
 import io.github.amadeusb.callsheet.sync.isAcceptableServerAddress
+import io.github.amadeusb.callsheet.sync.MailClient
+import io.github.amadeusb.callsheet.sync.MailResult
 import io.github.amadeusb.callsheet.sync.SyncClient
 import io.github.amadeusb.callsheet.sync.SyncEngine
 import io.github.amadeusb.callsheet.sync.SyncGate
@@ -163,6 +166,12 @@ data class State(
     val draft: BusinessDraft = BusinessDraft(),
     val formError: String? = null,
     val saving: Boolean = false,
+    /** The "Mail gesendet" dialog: open, mid-send, or showing the last failure. */
+    val mailDialogOpen: Boolean = false,
+    val mailSending: Boolean = false,
+    val mailError: String? = null,
+    val mailTemplateSubject: String = "",
+    val mailTemplateBody: String = "",
 )
 
 /** What the settings screen shows about synchronisation. */
@@ -231,6 +240,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             phoneBookEnabled = preferences.phoneBookEnabled,
             phoneBookAccount = preferences.account,
             calendarEnabled = preferences.calendarEnabled,
+            mailTemplateSubject = preferences.mailTemplateSubject,
+            mailTemplateBody = preferences.mailTemplateBody,
         )
         viewModelScope.launch {
             _state.value = _state.value.copy(
@@ -585,6 +596,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 numbers = existing.numbers
                     .map { PhoneDraft(id = it.id, number = it.number, kind = it.kind) }
                     .ifEmpty { listOf(PhoneDraft()) },
+                emails = existing.emails
+                    .map { EmailDraft(id = it.id, email = it.email) }
+                    .ifEmpty { listOf(EmailDraft()) },
             )
         }
         val screen = Screen.ContactForm(placeId, id)
@@ -635,6 +649,61 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             repo.business(placeId)?.let { store.persistBusiness(it) }
             if (_state.value.screen is Screen.ContactForm) back()
             loadDetail(placeId)
+        }
+    }
+
+    // --- Mail ---------------------------------------------------------------
+
+    fun setMailTemplateSubject(value: String) {
+        preferences.mailTemplateSubject = value
+        _state.update { it.copy(mailTemplateSubject = value) }
+    }
+
+    fun setMailTemplateBody(value: String) {
+        preferences.mailTemplateBody = value
+        _state.update { it.copy(mailTemplateBody = value) }
+    }
+
+    fun openMailDialog() {
+        _state.update { it.copy(mailDialogOpen = true, mailError = null) }
+    }
+
+    fun closeMailDialog() {
+        if (_state.value.mailSending) return
+        _state.update { it.copy(mailDialogOpen = false, mailError = null) }
+    }
+
+    /**
+     * Sends the mail through the server and, only on success, sets the
+     * business's status to [Status.MAIL_SENT] and closes the dialog. A
+     * failure leaves the dialog open with the reason shown inside it — the
+     * recipients and the text stay exactly as typed, for another attempt.
+     */
+    fun sendMail(placeId: String, to: List<String>, subject: String, text: String) {
+        if (_state.value.mailSending) return
+        val url = preferences.serverUrl
+        val token = preferences.serverToken
+        if (url == null || token == null) {
+            _state.update { it.copy(mailError = "Kein Server verbunden — in den Einstellungen einrichten.") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(mailSending = true, mailError = null) }
+            val result = withContext(Dispatchers.IO) {
+                MailClient(url, token).send(to, subject, text)
+            }
+            when (result) {
+                is MailResult.Ok -> {
+                    repo.setStatus(placeId, Status.MAIL_SENT)
+                    _state.update {
+                        it.copy(mailSending = false, mailDialogOpen = false, mailError = null)
+                    }
+                    loadDetail(placeId)
+                }
+                is MailResult.Failed -> {
+                    _state.update { it.copy(mailSending = false, mailError = result.message) }
+                }
+            }
         }
     }
 

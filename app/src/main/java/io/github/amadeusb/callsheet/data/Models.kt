@@ -5,7 +5,7 @@ enum class Status(val key: String, val label: String) {
     NEW("new", "Neu"),
     CALLED("called", "Angerufen"),
     NO_ANSWER("no_answer", "Nicht erreicht"),
-    EMAIL_PROMISED("email_promised", "Mail zugesagt"),
+    MAIL_SENT("mail_sent", "Mail gesendet"),
     APPOINTMENT("appointment", "Termin"),
     DECLINED("declined", "Abgelehnt"),
     DO_NOT_CALL("do_not_call", "Sperre");
@@ -153,6 +153,13 @@ data class PhoneNumber(
     val kind: PhoneType,
 )
 
+/** A contact's email address — several are possible, the same way numbers are. */
+data class ContactEmail(
+    val id: String,
+    val email: String,
+    val position: Int,
+)
+
 /**
  * A business's contact person with any number of phone numbers.
  *
@@ -171,6 +178,8 @@ data class Contact(
     val updatedAt: String,
     /** Version of the phone book entry at the last merge; null means there was none. */
     val contactVersion: Int? = null,
+    /** The contact's email addresses, in the order they were entered. */
+    val emails: List<ContactEmail> = emptyList(),
 )
 
 /** One number row in the edit form — text as typed, not yet validated. */
@@ -178,6 +187,12 @@ data class PhoneDraft(
     val id: String? = null,
     val number: String = "",
     val kind: PhoneType = PhoneType.MOBILE,
+)
+
+/** One email row in the edit form — text as typed, not yet validated. */
+data class EmailDraft(
+    val id: String? = null,
+    val email: String = "",
 )
 
 /**
@@ -192,6 +207,7 @@ data class ContactDraft(
     val email: String = "",
     val note: String = "",
     val numbers: List<PhoneDraft> = listOf(PhoneDraft()),
+    val emails: List<EmailDraft> = listOf(EmailDraft()),
 )
 
 /** A dialable number of a business — the main one or a contact's. */

@@ -82,6 +82,10 @@ fun SettingsScreen(
     onCloseServerDialog: () -> Unit,
     onConnectServer: (String, String) -> Unit,
     onReuploadAll: () -> Unit,
+    mailTemplateSubject: String,
+    mailTemplateBody: String,
+    onMailTemplateSubjectChange: (String) -> Unit,
+    onMailTemplateBodyChange: (String) -> Unit,
 ) {
     var confirm by remember { mutableStateOf<Business?>(null) }
     var accountPicker by remember { mutableStateOf(false) }
@@ -239,6 +243,35 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+            }
+
+            item(key = "mail-template") {
+                Section("Mail-Vorlage")
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    Text(
+                        text = "Betreff und Text, mit denen der Mail-Dialog bei „Mail gesendet“ " +
+                            "startet. {{business_name}} wird beim Öffnen durch den Namen des " +
+                            "Betriebs ersetzt.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = mailTemplateSubject,
+                        onValueChange = onMailTemplateSubjectChange,
+                        label = { Text("Betreff") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = mailTemplateBody,
+                        onValueChange = onMailTemplateBodyChange,
+                        label = { Text("Text") },
+                        minLines = 6,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
 

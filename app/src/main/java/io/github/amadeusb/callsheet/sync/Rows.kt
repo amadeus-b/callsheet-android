@@ -10,7 +10,7 @@ import org.json.JSONObject
  */
 object Rows {
 
-    val TABLES = listOf("businesses", "calls", "contacts", "contact_numbers", "appointments")
+    val TABLES = listOf("businesses", "calls", "contacts", "contact_numbers", "contact_emails", "appointments")
 
     /**
      * The tables every server synchronised before responses named them. A

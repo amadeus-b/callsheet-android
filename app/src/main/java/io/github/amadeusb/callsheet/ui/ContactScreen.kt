@@ -54,6 +54,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.data.ContactDraft
+import io.github.amadeusb.callsheet.data.EmailDraft
 import io.github.amadeusb.callsheet.data.PhoneDraft
 import io.github.amadeusb.callsheet.data.PhoneType
 
@@ -182,16 +183,45 @@ fun ContactScreen(
             )
             roleSuggestions { onChange(draft.copy(role = it)) }
 
-            Field(
-                value = draft.email,
-                onValue = { onChange(draft.copy(email = it)) },
-                label = "E-Mail",
-                hint = "Folgekanal nach einem Telefonat, kein Erstkontakt.",
-                keyboard = KeyboardOptions(
-                    keyboardType = KeyboardType.Email,
-                    imeAction = ImeAction.Next,
-                ),
+            Section("E-Mail-Adressen")
+            Text(
+                text = "Folgekanal nach einem Telefonat, kein Erstkontakt.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp),
             )
+            draft.emails.forEachIndexed { index, row ->
+                EmailRow(
+                    row = row,
+                    removable = draft.emails.size > 1,
+                    onChange = { new ->
+                        onChange(
+                            draft.copy(
+                                emails = draft.emails.toMutableList().also { it[index] = new }
+                            )
+                        )
+                    },
+                    onRemove = {
+                        onChange(
+                            draft.copy(
+                                emails = draft.emails.filterIndexed { i, _ -> i != index }
+                            )
+                        )
+                    },
+                )
+            }
+            OutlinedButton(
+                onClick = { onChange(draft.copy(emails = draft.emails + EmailDraft())) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .heightIn(min = 56.dp),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Weitere E-Mail-Adresse")
+            }
 
             Section("Telefonnummern")
             draft.numbers.forEachIndexed { index, row ->
@@ -347,6 +377,41 @@ private fun PhoneRow(
 }
 
 private fun numberLabel(kind: PhoneType): String = "Nummer (${kind.label})"
+
+/** One email row: type the address, remove the row again. */
+@Composable
+private fun EmailRow(
+    row: EmailDraft,
+    removable: Boolean,
+    onChange: (EmailDraft) -> Unit,
+    onRemove: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Field(
+            value = row.email,
+            onValue = { onChange(row.copy(email = it)) },
+            label = "E-Mail",
+            keyboard = KeyboardOptions(
+                keyboardType = KeyboardType.Email,
+                imeAction = ImeAction.Next,
+            ),
+            modifier = Modifier.weight(1f),
+        )
+        if (removable) {
+            IconButton(
+                onClick = onRemove,
+                modifier = Modifier
+                    .padding(end = 8.dp)
+                    .size(48.dp),
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = "E-Mail-Adresse entfernen")
+            }
+        }
+    }
+}
 
 /** Common roles as tappable chips — free text stays possible. */
 @Composable
