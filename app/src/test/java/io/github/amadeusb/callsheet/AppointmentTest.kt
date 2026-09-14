@@ -691,4 +691,30 @@ class AppointmentTest {
         assertEquals(listOf("ahead-early", "ahead-late"), ahead.map { it.id })
         assertEquals(listOf("past-late", "past-early"), past.map { it.id })
     }
+
+    // --- an event's end ---------------------------------------------------------
+
+    @Test
+    fun `an event's end is its DTEND`() {
+        val start = instant("2026-09-10T14:00:00+02:00")
+
+        assertEquals(start + 3_600_000L, Appointment.eventEnd(start, start + 3_600_000L, null))
+    }
+
+    @Test
+    fun `an event without DTEND ends after its DURATION, never in 1970`() {
+        val start = instant("2026-09-10T14:00:00+02:00")
+
+        assertEquals(start + 5_400_000L, Appointment.eventEnd(start, 0L, "PT1H30M"))
+        assertEquals(start + 3_600_000L, Appointment.eventEnd(start, null, "P3600S"))
+        assertEquals(start + 86_400_000L, Appointment.eventEnd(start, 0L, "P1D"))
+    }
+
+    @Test
+    fun `an event with neither a DTEND nor a readable DURATION ends at its start`() {
+        val start = instant("2026-09-10T14:00:00+02:00")
+
+        assertEquals(start, Appointment.eventEnd(start, 0L, null))
+        assertEquals(start, Appointment.eventEnd(start, null, "irgendwas"))
+    }
 }

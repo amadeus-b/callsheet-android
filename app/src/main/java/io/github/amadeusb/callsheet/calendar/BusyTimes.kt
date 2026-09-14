@@ -36,6 +36,10 @@ object BusyTimes {
                         CalendarContract.Instances.TITLE,
                         CalendarContract.Instances.ALL_DAY,
                         CalendarContract.Instances.EVENT_ID,
+                        CalendarContract.Instances.UID_2445,
+                        CalendarContract.Instances.RRULE,
+                        CalendarContract.Instances.RDATE,
+                        CalendarContract.Instances.ORIGINAL_ID,
                     ),
                     // "Every visible calendar" has to be said in the query, not
                     // only in the comment: a calendar the user has switched off
@@ -53,6 +57,11 @@ object BusyTimes {
                                 endMillis = c.getLong(1),
                                 title = c.getString(2)?.ifBlank { null } ?: "Termin",
                                 eventId = c.getLong(4),
+                                uid = c.getString(5)?.ifBlank { null },
+                                // A series, or a changed occurrence of one: never
+                                // offered for linking (see Appointment.mayAdopt).
+                                recurring = !c.getString(6).isNullOrBlank() ||
+                                    !c.getString(7).isNullOrBlank() || !c.isNull(8),
                             )
                         )
                     }

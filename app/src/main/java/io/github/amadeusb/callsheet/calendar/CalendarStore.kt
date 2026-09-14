@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.CalendarContract
 import androidx.core.content.ContextCompat
+import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.data.Clock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -21,6 +22,12 @@ data class EventFields(
     val endMillis: Long,
     val location: String?,
     val description: String?,
+    /**
+     * The iCalendar UID. Set on insert to the appointment's id; read back from
+     * `UID_2445`. DAVx5 uploads an event under the UID already set and writes
+     * one back only where it is missing, so this is the same on every device.
+     */
+    val uid: String? = null,
 )
 
 /**
@@ -28,9 +35,8 @@ data class EventFields(
  * in the settings — typically one DAVx5 keeps in sync. The app synchronises
  * nothing itself; it only stores what DAVx5 then uploads.
  *
- * Every call fails soft. A refused permission, a calendar that has gone away, a
- * provider that throws: all of them return null or false, and the appointment
- * carries on living in the app.
+ * Every call fails soft — except [read] and [findByUid], whose null means an
+ * event is not there and so must not also mean an error.
  */
 object CalendarStore {
 
@@ -79,6 +85,7 @@ object CalendarStore {
                 val values = values(fields).apply {
                     put(CalendarContract.Events.CALENDAR_ID, calendarId)
                     put(CalendarContract.Events.EVENT_TIMEZONE, Clock.zone.id)
+                    fields.uid?.let { put(CalendarContract.Events.UID_2445, it) }
                 }
                 context.contentResolver
                     .insert(CalendarContract.Events.CONTENT_URI, values)
@@ -98,37 +105,65 @@ object CalendarStore {
         }
 
     /**
-     * Reads an event back. Null when it is gone — deleted in the calendar, or
-     * removed by a synchronisation. That null is the signal the detail view acts
-     * on, so it must not be confused with an error.
+     * Reads an event back. Null only when it is gone — deleted in the calendar,
+     * or removed by a synchronisation. That null is what the read-back acts on,
+     * up to deleting an appointment on every device.
+     *
+     * So, unlike the rest of this object, `read` does not fail soft: a refused
+     * permission (the provider throws `SecurityException`) or a failing provider
+     * propagates, and the caller decides. An error passed off as "gone" would be
+     * a deletion nobody made.
      */
     suspend fun read(context: Context, eventId: Long): EventFields? = withContext(Dispatchers.IO) {
-        if (!canRead(context)) return@withContext null
-        runCatching {
-            val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId)
-            context.contentResolver.query(
-                uri,
-                arrayOf(
-                    CalendarContract.Events.TITLE,
-                    CalendarContract.Events.DTSTART,
-                    CalendarContract.Events.DTEND,
-                    CalendarContract.Events.EVENT_LOCATION,
-                    CalendarContract.Events.DESCRIPTION,
-                    CalendarContract.Events.DELETED,
-                ),
-                null, null, null,
-            )?.use { c ->
-                if (!c.moveToFirst()) return@use null
-                if (c.getInt(5) == 1) return@use null
-                EventFields(
-                    title = c.getString(0) ?: "",
-                    startMillis = c.getLong(1),
-                    endMillis = c.getLong(2),
-                    location = c.getString(3)?.ifBlank { null },
-                    description = c.getString(4)?.ifBlank { null },
-                )
-            }
-        }.getOrNull()
+        val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId)
+        val cursor = context.contentResolver.query(
+            uri,
+            arrayOf(
+                CalendarContract.Events.TITLE,
+                CalendarContract.Events.DTSTART,
+                CalendarContract.Events.DTEND,
+                CalendarContract.Events.EVENT_LOCATION,
+                CalendarContract.Events.DESCRIPTION,
+                CalendarContract.Events.DELETED,
+                CalendarContract.Events.UID_2445,
+                CalendarContract.Events.DURATION,
+            ),
+            null, null, null,
+        ) ?: error("The calendar provider returned no cursor.")
+        cursor.use { c ->
+            if (!c.moveToFirst() || c.getInt(5) == 1) return@use null
+            val start = c.getLong(1)
+            EventFields(
+                title = c.getString(0) ?: "",
+                startMillis = start,
+                endMillis = Appointment.eventEnd(start, if (c.isNull(2)) null else c.getLong(2), c.getString(7)),
+                location = c.getString(3)?.ifBlank { null },
+                description = c.getString(4)?.ifBlank { null },
+                uid = c.getString(6)?.ifBlank { null },
+            )
+        }
+    }
+
+    /**
+     * The `_ID` of the event carrying [uid] on this device, or null when there is
+     * none — the event may simply not have arrived through DAVx5 yet, which is
+     * not the same as deleted. Like [read], it does not fail soft.
+     *
+     * Visibility is no condition: hiding a calendar in the calendar app is a
+     * display setting, and the event in it is still the appointment's. An
+     * exception of a recurring event shares the series' UID; only the series
+     * itself (`ORIGINAL_ID IS NULL`) is the event.
+     */
+    suspend fun findByUid(context: Context, uid: String): Long? = withContext(Dispatchers.IO) {
+        val cursor = context.contentResolver.query(
+            CalendarContract.Events.CONTENT_URI,
+            arrayOf(CalendarContract.Events._ID),
+            "${CalendarContract.Events.UID_2445} = ? AND ${CalendarContract.Events.DELETED} = 0 " +
+                "AND ${CalendarContract.Events.ORIGINAL_ID} IS NULL",
+            arrayOf(uid),
+            null,
+        ) ?: error("The calendar provider returned no cursor.")
+        cursor.use { c -> if (c.moveToFirst()) c.getLong(0) else null }
     }
 
     /** Deletes an event. False when it could not be done. */

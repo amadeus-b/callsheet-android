@@ -777,7 +777,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
             val eventId: Long? = when (plan) {
                 is SavePlan.Adopt -> {
-                    val event = CalendarStore.read(getApplication(), plan.eventId)
+                    val event = runCatching { CalendarStore.read(getApplication(), plan.eventId) }.getOrNull()
                     if (event != null) {
                         atIso = Clock.format(event.startMillis)
                         endIso = Clock.format(event.endMillis)
@@ -841,7 +841,14 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             val eventId = business.calendarEventId ?: return@launch
             if (!CalendarStore.canRead(getApplication())) return@launch
 
-            val event = CalendarStore.read(getApplication(), eventId)
+            // A calendar that could not be read is not a deleted event: skip.
+            val event = try {
+                CalendarStore.read(getApplication(), eventId)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failed: Exception) {
+                return@launch
+            }
             val decision = Appointment.readBack(
                 currentAt = business.appointmentAt,
                 currentEnd = business.appointmentEndAt,

@@ -443,6 +443,29 @@ object Appointment {
         return "$range · $note"
     }
 
+    /**
+     * An event's end in milliseconds. Most events carry `DTEND`; a recurring
+     * one carries `DURATION` and an empty `DTEND`, which the provider hands back
+     * as 0. Taken at face value that end is in 1970, and a read-back or a link
+     * would move the appointment there.
+     *
+     * [duration] is RFC 5545 (`PT1H30M`, `P1D`) or the provider's own `P3600S`.
+     * Neither usable: the end is the start.
+     */
+    fun eventEnd(startMillis: Long, dtEnd: Long?, duration: String?): Long {
+        if (dtEnd != null && dtEnd > startMillis) return dtEnd
+        val match = DURATION_PATTERN.matchEntire(duration?.trim().orEmpty()) ?: return startMillis
+        val (weeks, days, hours, minutes, seconds) = match.destructured
+        val totalSeconds = (weeks.toLongOrNull() ?: 0L) * 7 * 86_400 +
+            (days.toLongOrNull() ?: 0L) * 86_400 +
+            (hours.toLongOrNull() ?: 0L) * 3_600 +
+            (minutes.toLongOrNull() ?: 0L) * 60 +
+            (seconds.toLongOrNull() ?: 0L)
+        return startMillis + totalSeconds * 1_000L
+    }
+
+    private val DURATION_PATTERN = Regex("""\+?P(?:(\d+)W)?(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?""")
+
     /** Ahead earliest first, past latest first — the order the detail view lists them in. */
     fun split(
         appointments: List<AppointmentEntry>,
