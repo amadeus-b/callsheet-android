@@ -61,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.FollowUp
+import io.github.amadeusb.callsheet.calling.LegitimateInterest
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.Business
@@ -997,6 +998,27 @@ private fun Origin(business: Business) {
                 label = "Alle Kategorien der Quelle",
                 value = business.categories.joinToString(", "),
             )
+        }
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+            ),
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Fragt jemand nach dem berechtigten Interesse",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = LegitimateInterest.answer(business.placeId, business.industry),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
         }
     }
 }
