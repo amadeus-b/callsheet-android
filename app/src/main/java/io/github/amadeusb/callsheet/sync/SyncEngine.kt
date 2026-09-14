@@ -95,8 +95,12 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
                 val remaining = store.pendingCount()
                 onProgress(remaining, total)
 
+                // Counted over the tables the server named only. Rows an older
+                // server ignores stay marked; counting them would turn a block
+                // full of them into MAX_ROUNDS of resending.
+                val received = Rows.serverTables(response)
                 val more = response.optBoolean("more", false) ||
-                    (sentCount(outgoing) >= BLOCK && remaining > 0)
+                    (sentCount(outgoing, received) >= BLOCK && store.pendingCount(received) > 0)
                 if (!more) {
                     prefs.lastSyncAt = Clock.now()
                     return SyncResult.Ok
@@ -147,10 +151,18 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
         prefs.watermark = 0
     }
 
-    /** How many rows [payload] actually carried — across the four tables and the deletions. */
-    private fun sentCount(payload: JSONObject): Int {
-        var total = payload.optJSONArray("deleted")?.length() ?: 0
-        for (table in Rows.TABLES) total += payload.optJSONArray(table)?.length() ?: 0
+    /** How many rows [payload] carried for [tables] — rows and tombstones alike. */
+    private fun sentCount(payload: JSONObject, tables: Set<String>): Int {
+        var total = 0
+        val deletions = payload.optJSONArray("deleted")
+        if (deletions != null) {
+            for (i in 0 until deletions.length()) {
+                if (deletions.getJSONObject(i).optString("table_name") in tables) total++
+            }
+        }
+        for (table in Rows.TABLES) {
+            if (table in tables) total += payload.optJSONArray(table)?.length() ?: 0
+        }
         return total
     }
 

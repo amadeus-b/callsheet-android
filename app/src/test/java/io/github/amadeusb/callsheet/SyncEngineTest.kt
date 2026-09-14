@@ -272,4 +272,34 @@ class SyncEngineTest {
         assertEquals(250, prefs.watermark)
         assertEquals("vorher", prefs.lastSyncAt)
     }
+
+    @Test
+    fun `appointments an older server ignores do not keep the loop turning`() {
+        val db = Database(ctx).writableDatabase
+        db.beginTransaction()
+        try {
+            for (i in 1..600) {
+                db.execSQL(
+                    "INSERT INTO appointments (id, place_id, starts_at, updated_at, dirty) " +
+                        "VALUES ('T$i', 'P1', '2026-09-10T14:00:00+02:00', '2026-09-07T10:00:00+02:00', 1)"
+                )
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        var calls = 0
+
+        val result = engine.sync(object : Transport {
+            override fun post(payload: JSONObject): JSONObject {
+                calls++
+                return leereAntwort(5) // no "tables": a server from before appointments
+            }
+        })
+
+        assertEquals(SyncResult.Ok, result)
+        assertEquals(1, calls)
+        // Still open, and honestly counted as open, until the server is updated.
+        assertEquals(600, SyncStore(ctx).pendingCount())
+    }
 }

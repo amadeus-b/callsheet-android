@@ -67,6 +67,19 @@ class SyncStoreTest {
         put("updated_at", zeit)
     }
 
+    private fun einTermin(id: String, zeit: String, dirty: Int, eventId: Long? = null) = schreibe(
+        "INSERT INTO appointments (id, place_id, starts_at, ends_at, location, updated_at, event_uid, " +
+            "calendar_event_id, calendar_seen_starts_at, dirty) VALUES ('$id', 'P1', " +
+            "'2026-09-10T14:00:00+02:00', '2026-09-10T15:00:00+02:00', 'Zehentstraße 39', '$zeit', '$id', " +
+            "${eventId ?: "NULL"}, ${if (eventId != null) "'2026-09-10T14:00:00+02:00'" else "NULL"}, $dirty)"
+    )
+
+    private fun terminJson(id: String, zeit: String, start: String = "2026-09-10T16:00:00+02:00") = JSONObject().apply {
+        put("id", id); put("place_id", "P1"); put("starts_at", start)
+        put("ends_at", JSONObject.NULL); put("location", JSONObject.NULL); put("note", "Angebot")
+        put("contact_id", JSONObject.NULL); put("event_uid", id); put("updated_at", zeit)
+    }
+
     @Test
     fun `pending returns only marked rows`() {
         einBetrieb("P1", "offen", "2026-09-07T10:00:00+02:00", dirty = 1)
@@ -405,6 +418,123 @@ class SyncStoreTest {
         assertTrue(Merge.isNewer("2026-09-07T09:00:00+00:00", "2026-09-07T10:00:00+02:00"))
         assertFalse(Merge.isNewer("2026-09-07T10:00:00+02:00", "2026-09-07T10:00:00+02:00"))
         assertTrue(Merge.isNewer("2026-09-07T10:00:00+02:00", null))
+    }
+
+    @Test
+    fun `pending carries an appointment's event_uid but none of its calendar columns`() {
+        einTermin("T1", "2026-09-07T10:00:00+02:00", dirty = 1, eventId = 4711)
+
+        val row = store.pending(500).getJSONArray("appointments").getJSONObject(0)
+
+        assertEquals("T1", row.getString("event_uid"))
+        for (column in listOf("calendar_event_id", "calendar_seen_starts_at", "calendar_seen_ends_at", "calendar_seen_location", "dirty")) {
+            assertFalse("$column must not travel", row.has(column))
+        }
+    }
+
+    @Test
+    fun `appointments come down and are reported as written`() {
+        val response = leereAntwort().put("appointments", JSONArray(listOf(terminJson("T1", "2026-09-07T10:00:00+02:00"))))
+
+        val applied = store.apply(response)
+
+        assertEquals(listOf("T1"), applied.written)
+        assertEquals(1, zahl("SELECT COUNT(*) FROM appointments WHERE id = 'T1' AND dirty = 0"))
+    }
+
+    @Test
+    fun `an incoming appointment leaves this device's calendar link alone`() {
+        einTermin("T1", "2026-09-07T10:00:00+02:00", dirty = 0, eventId = 4711)
+        val incoming = terminJson("T1", "2026-09-07T11:00:00+02:00").put("calendar_event_id", 99)
+
+        store.apply(leereAntwort().put("appointments", JSONArray(listOf(incoming))))
+
+        Database(ctx).readableDatabase.rawQuery(
+            "SELECT starts_at, calendar_event_id, calendar_seen_starts_at FROM appointments WHERE id = 'T1'", null,
+        ).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("2026-09-10T16:00:00+02:00", c.getString(0))
+            assertEquals(4711L, c.getLong(1))
+            assertEquals("2026-09-10T14:00:00+02:00", c.getString(2))
+        }
+    }
+
+    @Test
+    fun `an older incoming appointment is not reported as written`() {
+        einTermin("T1", "2026-09-07T12:00:00+02:00", dirty = 0)
+
+        val applied = store.apply(leereAntwort().put("appointments", JSONArray(listOf(terminJson("T1", "2026-09-07T10:00:00+02:00")))))
+
+        assertTrue(applied.written.isEmpty())
+    }
+
+    @Test
+    fun `an incoming appointment no newer than a local tombstone is not written`() {
+        // Deleted here, not yet uploaded; the server still hands out the older row.
+        schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('appointments', 'T1', '2026-09-07T11:00:00+02:00')")
+
+        val applied = store.apply(leereAntwort().put("appointments", JSONArray(listOf(terminJson("T1", "2026-09-07T10:00:00+02:00")))))
+
+        assertTrue(applied.written.isEmpty())
+        assertEquals(0, zahl("SELECT COUNT(*) FROM appointments"))
+    }
+
+    @Test
+    fun `a remote tombstone removes an appointment and reports the link it had`() {
+        einTermin("T1", "2026-09-07T10:00:00+02:00", dirty = 0, eventId = 4711)
+        val stone = JSONObject().apply {
+            put("table_name", "appointments"); put("row_id", "T1"); put("deleted_at", "2026-09-07T11:00:00+02:00")
+        }
+
+        val applied = store.apply(leereAntwort().put("deleted", JSONArray(listOf(stone))))
+
+        assertEquals(0, zahl("SELECT COUNT(*) FROM appointments"))
+        assertEquals(listOf(io.github.amadeusb.callsheet.sync.RemovedAppointment("T1", 4711L, "T1")), applied.removed)
+    }
+
+    @Test
+    fun `clearPending leaves appointments marked when the response names no tables`() {
+        // An older server: it ignores payload.appointments without a word.
+        einTermin("T1", "2026-09-07T10:00:00+02:00", dirty = 1)
+        einBetrieb("P1", "offen", "2026-09-07T10:00:00+02:00", dirty = 1)
+        val sent = store.pending(500)
+
+        store.clearPending(sent, leereAntwort())
+
+        assertEquals(1, zahl("SELECT dirty FROM appointments WHERE id = 'T1'"))
+        assertEquals(0, zahl("SELECT dirty FROM businesses WHERE place_id = 'P1'"))
+    }
+
+    @Test
+    fun `clearPending leaves an appointment tombstone queued when tables does not name appointments`() {
+        schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('appointments', 'T1', '2026-09-07T11:00:00+02:00')")
+        val sent = store.pending(500)
+        val response = leereAntwort().put("tables", JSONArray(listOf("businesses", "calls", "contacts", "contact_numbers")))
+
+        store.clearPending(sent, response)
+
+        assertEquals(1, zahl("SELECT COUNT(*) FROM deletions WHERE table_name = 'appointments'"))
+    }
+
+    @Test
+    fun `clearPending clears appointments once the response names them`() {
+        einTermin("T1", "2026-09-07T10:00:00+02:00", dirty = 1)
+        val sent = store.pending(500)
+        val response = leereAntwort().put("tables", JSONArray(listOf("businesses", "calls", "contacts", "contact_numbers", "appointments")))
+
+        store.clearPending(sent, response)
+
+        assertEquals(0, zahl("SELECT dirty FROM appointments WHERE id = 'T1'"))
+    }
+
+    @Test
+    fun `pendingCount counts only the tables it is given`() {
+        einTermin("T1", "2026-09-07T10:00:00+02:00", dirty = 1)
+        einBetrieb("P1", "offen", "2026-09-07T10:00:00+02:00", dirty = 1)
+        schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('appointments', 'T2', '2026-09-07T11:00:00+02:00')")
+
+        assertEquals(3, store.pendingCount())
+        assertEquals(1, store.pendingCount(io.github.amadeusb.callsheet.sync.Rows.LEGACY_TABLES))
     }
 
     private fun note(id: String): String? =

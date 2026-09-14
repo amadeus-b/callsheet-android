@@ -10,7 +10,26 @@ import org.json.JSONObject
  */
 object Rows {
 
-    val TABLES = listOf("businesses", "calls", "contacts", "contact_numbers")
+    val TABLES = listOf("businesses", "calls", "contacts", "contact_numbers", "appointments")
+
+    /**
+     * The tables every server synchronised before responses named them. A
+     * response without `tables` comes from such a server.
+     */
+    val LEGACY_TABLES = setOf("businesses", "calls", "contacts", "contact_numbers")
+
+    /**
+     * The tables the server behind [response] synchronises.
+     *
+     * An older server ignores a table it does not know without a word — nothing
+     * lands in `rejected`. Clearing the marks for such a table would make its
+     * rows look delivered while they never arrived; so only the tables named
+     * here count as received.
+     */
+    fun serverTables(response: JSONObject): Set<String> {
+        val named = response.optJSONArray("tables") ?: return LEGACY_TABLES
+        return (0 until named.length()).mapNotNull { named.optString(it, null) }.toSet()
+    }
 
     /** The key column of each synchronised table. */
     fun key(table: String): String = if (table == "businesses") "place_id" else "id"
@@ -19,12 +38,16 @@ object Rows {
      * Columns that never leave the device.
      *
      * `calendar_event_id` points into this device's calendar provider. The same
-     * number on another device is a different appointment, or none — sending it
-     * would make the second device claim an entry it does not own. The
-     * appointment's time, end and location are deliberately absent from this
-     * list: they are work, and work is what synchronisation is for.
+     * number on another device is a different event, or none. The
+     * `calendar_seen_` columns record what this device last saw in its copy of
+     * the event — another device's copy may be ahead or behind. `event_uid` is
+     * deliberately absent: the UID is the same event on every device carrying
+     * the shared calendar, and that is what the other devices look it up by.
      */
-    private val LOCAL_ONLY = setOf("dirty", "contact_version", "calendar_event_id")
+    private val LOCAL_ONLY = setOf(
+        "dirty", "contact_version", "calendar_event_id",
+        "calendar_seen_starts_at", "calendar_seen_ends_at", "calendar_seen_location",
+    )
 
     fun toJson(c: Cursor): JSONObject {
         val row = JSONObject()

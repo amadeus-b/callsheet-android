@@ -7,6 +7,19 @@ import io.github.amadeusb.callsheet.data.Database
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** What [SyncStore.apply] did to appointments, so the calendar can follow. */
+data class AppliedAppointments(
+    /** Appointments written from the server. Their local links are still on the rows. */
+    val written: List<String> = emptyList(),
+    /** Appointments a tombstone removed, with the link each had on this device. */
+    val removed: List<RemovedAppointment> = emptyList(),
+) {
+    fun isEmpty(): Boolean = written.isEmpty() && removed.isEmpty()
+}
+
+/** An appointment that is gone from the database, and where its event was. */
+data class RemovedAppointment(val id: String, val calendarEventId: Long?, val eventUid: String?)
+
 /**
  * The database side of synchronisation: what is waiting to go up, and what
  * comes down. The rules here are the same ones the server applies — where they
@@ -42,7 +55,7 @@ class SyncStore(context: Context) {
     }
 
     /**
-     * Marks every row in the four synchronised tables as unsent, regardless of
+     * Marks every row in every synchronised table as unsent, regardless of
      * whether it changed. Needed when a server's own history no longer lines
      * up with what this device already sent it — after restoring an older
      * server backup (its watermark falls below the device's, and the marks
@@ -63,13 +76,26 @@ class SyncStore(context: Context) {
         }
     }
 
-    fun pendingCount(): Int {
+    /**
+     * Rows and tombstones waiting to go up — for [tables] only. The engine
+     * passes the tables the server named, so rows an older server ignores do
+     * not count towards "keep going"; the settings screen passes nothing and
+     * sees everything that is still open.
+     */
+    fun pendingCount(tables: Set<String> = Rows.TABLES.toSet()): Int {
         val db = helper.readableDatabase
         var total = 0
         for (table in Rows.TABLES) {
+            if (table !in tables) continue
             db.rawQuery("SELECT COUNT(*) FROM $table WHERE dirty = 1", null).use { if (it.moveToFirst()) total += it.getInt(0) }
         }
-        db.rawQuery("SELECT COUNT(*) FROM deletions", null).use { if (it.moveToFirst()) total += it.getInt(0) }
+        val stones = TOMBSTONE_TABLES.filter { it in tables }
+        if (stones.isNotEmpty()) {
+            db.rawQuery(
+                "SELECT COUNT(*) FROM deletions WHERE table_name IN (${stones.joinToString(",") { "?" }})",
+                stones.toTypedArray(),
+            ).use { if (it.moveToFirst()) total += it.getInt(0) }
+        }
         return total
     }
 
@@ -85,6 +111,10 @@ class SyncStore(context: Context) {
      * than a silent drop or a retry no one can see — there is no per-row error
      * display to fall back on, so staying counted is the only visible signal
      * this app has.
+     *
+     * Nor is anything cleared for a table the server did not name in `tables`:
+     * an older server drops such rows in silence, and they stay marked until a
+     * server that knows the table has them.
      */
     fun clearPending(payload: JSONObject, response: JSONObject) {
         val rejected = HashSet<Pair<String, String>>()
@@ -95,10 +125,13 @@ class SyncStore(context: Context) {
             val key = entry.optString("key", null) ?: continue
             rejected.add(table to key)
         }
+        // Only what the server says it synchronises was received. See Rows.serverTables.
+        val received = Rows.serverTables(response)
         val db = helper.writableDatabase
         db.beginTransaction()
         try {
             for (table in Rows.TABLES) {
+                if (table !in received) continue
                 val rows = payload.optJSONArray(table) ?: continue
                 val key = Rows.key(table)
                 for (i in 0 until rows.length()) {
@@ -124,6 +157,7 @@ class SyncStore(context: Context) {
             val deletions = payload.optJSONArray("deleted") ?: JSONArray()
             for (i in 0 until deletions.length()) {
                 val stone = deletions.getJSONObject(i)
+                if (stone.getString("table_name") !in received) continue
                 // The server names a rejected tombstone the same way it names
                 // a rejected row: the table and key of the affected row (here
                 // `table_name`/`row_id` rather than `table`/`key`,
@@ -146,23 +180,33 @@ class SyncStore(context: Context) {
     }
 
     /** Applies what the server sent. Never marks anything as dirty. */
-    fun apply(response: JSONObject) {
+    fun apply(response: JSONObject): AppliedAppointments {
         val db = helper.writableDatabase
         // Fetched once per call rather than once per row — the schema does
         // not change mid-sync, and a first sync can carry a few thousand rows.
         val columnsByTable = Rows.TABLES.associateWith { columns(db, it) }
+        val written = ArrayList<String>()
+        val removed = ArrayList<RemovedAppointment>()
         db.beginTransaction()
         try {
             val deletions = response.optJSONArray("deleted") ?: JSONArray()
-            for (i in 0 until deletions.length()) applyTombstone(db, deletions.getJSONObject(i))
+            for (i in 0 until deletions.length()) {
+                applyTombstone(db, deletions.getJSONObject(i))?.let { removed.add(it) }
+            }
             for (table in Rows.TABLES) {
                 val rows = response.optJSONArray(table) ?: continue
-                for (i in 0 until rows.length()) applyRow(db, table, rows.getJSONObject(i), columnsByTable.getValue(table))
+                for (i in 0 until rows.length()) {
+                    val row = rows.getJSONObject(i)
+                    if (applyRow(db, table, row, columnsByTable.getValue(table)) && table == "appointments") {
+                        written.add(row.getString("id"))
+                    }
+                }
             }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
+        return AppliedAppointments(written, removed)
     }
 
     private fun columns(db: SQLiteDatabase, table: String): Set<String> =
@@ -172,13 +216,13 @@ class SyncStore(context: Context) {
             names
         }
 
-    private fun applyRow(db: SQLiteDatabase, table: String, row: JSONObject, tableColumns: Set<String>) {
+    private fun applyRow(db: SQLiteDatabase, table: String, row: JSONObject, tableColumns: Set<String>): Boolean {
         val key = Rows.key(table)
         val id = row.getString(key)
         val remoteAt = row.optString("updated_at", null)
 
         val stone = tombstone(db, table, id)
-        if (stone != null && !Merge.isNewer(remoteAt, stone)) return
+        if (stone != null && !Merge.isNewer(remoteAt, stone)) return false
 
         // A number's own row may still be untouched while its contact was
         // deleted: the tombstone lives on the parent, not on the number. The
@@ -186,7 +230,7 @@ class SyncStore(context: Context) {
         if (table == "contact_numbers") {
             val contactId = row.optString("contact_id", null)
             val parentStone = if (contactId != null) tombstone(db, "contacts", contactId) else null
-            if (parentStone != null && !Merge.isNewer(remoteAt, parentStone)) return
+            if (parentStone != null && !Merge.isNewer(remoteAt, parentStone)) return false
         }
 
         val local = db.rawQuery("SELECT * FROM $table WHERE $key = ?", arrayOf(id)).use { c ->
@@ -203,7 +247,7 @@ class SyncStore(context: Context) {
                     put("dirty", 1)
                 }, "place_id = ?", arrayOf(id))
             }
-            return
+            return false
         }
 
         val values = if (table == "calls" && local != null) {
@@ -237,13 +281,14 @@ class SyncStore(context: Context) {
         } else {
             db.update(table, values, "$key = ?", arrayOf(id))
         }
+        return true
     }
 
-    private fun applyTombstone(db: SQLiteDatabase, stone: JSONObject) {
+    private fun applyTombstone(db: SQLiteDatabase, stone: JSONObject): RemovedAppointment? {
         val table = stone.getString("table_name")
         val id = stone.getString("row_id")
         val at = stone.getString("deleted_at")
-        if (table !in TOMBSTONE_TABLES) return
+        if (table !in TOMBSTONE_TABLES) return null
 
         // The tombstone came from the server, so it is already known there.
         // `deletions` also doubles as the outgoing queue — a local copy of
@@ -257,15 +302,27 @@ class SyncStore(context: Context) {
             arrayOf(table, id, at),
         )
 
-        val localAt = db.rawQuery("SELECT updated_at FROM $table WHERE ${Rows.key(table)} = ?", arrayOf(id))
+        val key = Rows.key(table)
+        val localAt = db.rawQuery("SELECT updated_at FROM $table WHERE $key = ?", arrayOf(id))
             .use { if (it.moveToFirst()) it.getString(0) else null }
-        if (localAt != null && !Merge.isNewer(localAt, at)) {
-            db.delete(table, "${Rows.key(table)} = ?", arrayOf(id))
-            // Numbers only follow the contact into deletion when the contact
-            // row itself is actually removed — a contact that survived
-            // because it is younger than the tombstone keeps its numbers.
-            if (table == "contacts") db.delete("contact_numbers", "contact_id = ?", arrayOf(id))
+        if (localAt == null || Merge.isNewer(localAt, at)) return null
+
+        // The link has to be read before the row goes, or the calendar could
+        // not follow the deletion.
+        val link = if (table == "appointments") {
+            db.rawQuery("SELECT calendar_event_id, event_uid FROM appointments WHERE id = ?", arrayOf(id)).use { c ->
+                c.moveToFirst()
+                RemovedAppointment(id, if (c.isNull(0)) null else c.getLong(0), if (c.isNull(1)) null else c.getString(1))
+            }
+        } else {
+            null
         }
+        db.delete(table, "$key = ?", arrayOf(id))
+        // Numbers only follow the contact into deletion when the contact
+        // row itself is actually removed — a contact that survived
+        // because it is younger than the tombstone keeps its numbers.
+        if (table == "contacts") db.delete("contact_numbers", "contact_id = ?", arrayOf(id))
+        return link
     }
 
     private fun tombstone(db: SQLiteDatabase, table: String, id: String): String? =
@@ -279,6 +336,6 @@ class SyncStore(context: Context) {
          * `id` column (its key is `place_id`), and the app never deletes a
          * business or a call — a tombstone naming either must never reach SQL.
          */
-        val TOMBSTONE_TABLES = setOf("contacts", "contact_numbers")
+        val TOMBSTONE_TABLES = setOf("contacts", "contact_numbers", "appointments")
     }
 }

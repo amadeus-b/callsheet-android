@@ -102,4 +102,23 @@ class SyncSchemaTest {
             values.containsKey("calendar_event_id"),
         )
     }
+
+    @Test
+    fun `what this device saw in an event stays on the device`() {
+        val row = JSONObject().apply {
+            put("id", "T1")
+            put("event_uid", "T1")
+            put("calendar_seen_starts_at", "2026-09-10T14:00:00+02:00")
+            put("calendar_seen_ends_at", "2026-09-10T15:00:00+02:00")
+            put("calendar_seen_location", "Zehentstraße 39")
+        }
+        val columns = row.keys().asSequence().toSet()
+
+        val values = Rows.toValues(row, columns)
+
+        assertEquals("T1", values.getAsString("event_uid"))
+        for (column in listOf("calendar_seen_starts_at", "calendar_seen_ends_at", "calendar_seen_location")) {
+            assertFalse("$column must not come in from the server", values.containsKey(column))
+        }
+    }
 }
