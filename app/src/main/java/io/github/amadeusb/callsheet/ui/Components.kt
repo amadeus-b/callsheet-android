@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.NumberPicker
+import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.Business
 import io.github.amadeusb.callsheet.data.Status
 import io.github.amadeusb.callsheet.data.DialTarget
@@ -103,7 +104,8 @@ fun BusinessRow(
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
     showFollowUp: Boolean = false,
-    showAppointment: Boolean = false,
+    /** The appointment this row stands for, in „Termine heute". */
+    appointment: AppointmentEntry? = null,
     overdue: Boolean = false,
 ) {
     Row(
@@ -143,9 +145,9 @@ fun BusinessRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (showAppointment && business.appointmentAt != null) {
+            appointment?.let {
                 Text(
-                    text = Appointment.readableRange(business.appointmentAt, business.appointmentEndAt),
+                    text = Appointment.rowLabel(it),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,

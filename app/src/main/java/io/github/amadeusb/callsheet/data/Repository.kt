@@ -239,23 +239,35 @@ class Repository(context: Context) {
         }
 
     /**
-     * Appointments starting between [fromMillis] and [toMillis], earliest first.
+     * Appointments starting between [fromMillis] and [toMillis], earliest first,
+     * each with its business. Two appointments at one business are two entries.
      *
      * Note the lower bound, which [due] does not have. An overdue follow-up is
      * still work to do — "you never rang back". An appointment from a fortnight
      * ago is not; it happened, or it did not, and either way it does not belong
      * under a heading that reads "today".
      */
-    suspend fun appointmentsDue(fromMillis: Long, toMillis: Long): List<Business> =
+    suspend fun appointmentsDue(fromMillis: Long, toMillis: Long): List<Pair<AppointmentEntry, Business>> =
         withContext(Dispatchers.IO) {
-            val sql = "SELECT b.*, $NUMBERS_SUBQUERY FROM businesses b WHERE status <> ? " +
-                "AND appointment_at IS NOT NULL AND appointment_at <> ''"
-            helper.readableDatabase.rawQuery(sql, arrayOf(Status.DO_NOT_CALL.key)).use { c ->
-                allBusinesses(c)
-                    .mapNotNull { b -> Clock.millis(b.appointmentAt)?.let { it to b } }
-                    .filter { it.first in fromMillis..toMillis }
-                    .sortedBy { it.first }
-                    .map { it.second }
+            val db = helper.readableDatabase
+            val due = db.rawQuery(
+                "SELECT a.* FROM appointments a JOIN businesses b ON b.place_id = a.place_id WHERE b.status <> ?",
+                arrayOf(Status.DO_NOT_CALL.key),
+            ).use { c -> allAppointments(c) }
+                .mapNotNull { a -> Clock.millis(a.startsAt)?.let { it to a } }
+                .filter { it.first in fromMillis..toMillis }
+                .sortedBy { it.first }
+                .map { it.second }
+
+            val businesses = HashMap<String, Business?>()
+            due.mapNotNull { appointment ->
+                val business = businesses.getOrPut(appointment.placeId) {
+                    db.rawQuery(
+                        "SELECT b.*, $NUMBERS_SUBQUERY FROM businesses b WHERE b.place_id = ?",
+                        arrayOf(appointment.placeId),
+                    ).use { c -> if (c.moveToFirst()) fromCursor(c) else null }
+                }
+                business?.let { appointment to it }
             }
         }
 

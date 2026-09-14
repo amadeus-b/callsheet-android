@@ -154,7 +154,7 @@ data class State(
     val calendar: CalendarAccount? = null,
     val calendars: List<CalendarAccount> = emptyList(),
     val appointmentDraft: AppointmentDraft? = null,
-    val appointmentsToday: List<Business> = emptyList(),
+    val appointmentsToday: List<Pair<AppointmentEntry, Business>> = emptyList(),
     val outsideBusinessHours: Boolean = false,
     val draft: BusinessDraft = BusinessDraft(),
     val formError: String? = null,

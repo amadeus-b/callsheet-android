@@ -23,12 +23,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.Business
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodayScreen(
-    appointments: List<Business>,
+    appointments: List<Pair<AppointmentEntry, Business>>,
     overdue: List<Business>,
     dueToday: List<Business>,
     onBack: () -> Unit,
@@ -75,12 +76,12 @@ fun TodayScreen(
                         foreground = MaterialTheme.colorScheme.onTertiaryContainer,
                     )
                 }
-                items(appointments, key = { "t-" + it.placeId }) { business ->
+                items(appointments, key = { "t-" + it.first.id }) { (appointment, business) ->
                     BusinessRow(
                         business = business,
                         onDial = { onDial(business) },
                         onOpen = { onOpen(business) },
-                        showAppointment = true,
+                        appointment = appointment,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }

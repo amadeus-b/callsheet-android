@@ -791,29 +791,30 @@ class RepositoryTest {
     }
 
     @Test
-    fun `appointmentsDue returns the day's appointments in order`() = runTest {
+    fun `appointmentsDue returns one row per appointment, earliest first`() = runTest {
         import(
             """[
               {"placeId":"t-4","title":"Spaeter","phone":"+49 841 111"},
-              {"placeId":"t-5","title":"Frueher","phone":"+49 841 222"},
-              {"placeId":"t-6","title":"Uebermorgen","phone":"+49 841 333"}
+              {"placeId":"t-5","title":"Frueher","phone":"+49 841 222"}
             ]"""
         )
-        repo.setAppointment("t-4", "2026-09-10T15:00:00+02:00", "2026-09-10T16:00:00+02:00", null, null)
-        repo.setAppointment("t-5", "2026-09-10T09:00:00+02:00", "2026-09-10T10:00:00+02:00", null, null)
-        repo.setAppointment("t-6", "2026-09-12T09:00:00+02:00", "2026-09-12T10:00:00+02:00", null, null)
+        repo.saveAppointment(visit("A-4", "t-4", "2026-09-10T15:00:00+02:00", "2026-09-10T16:00:00+02:00"))
+        repo.saveAppointment(visit("A-5", "t-5", "2026-09-10T09:00:00+02:00", "2026-09-10T10:00:00+02:00"))
+        repo.saveAppointment(visit("A-6", "t-5", "2026-09-10T17:00:00+02:00", "2026-09-10T18:00:00+02:00"))
+        repo.saveAppointment(visit("A-7", "t-4", "2026-09-12T09:00:00+02:00", "2026-09-12T10:00:00+02:00"))
 
         val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
         val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
         val due = repo.appointmentsDue(from, until)
 
-        assertEquals(listOf("t-5", "t-4"), due.map { it.placeId })
+        assertEquals(listOf("A-5", "A-4", "A-6"), due.map { it.first.id })
+        assertEquals(listOf("t-5", "t-4", "t-5"), due.map { it.second.placeId })
     }
 
     @Test
     fun `a past appointment is not due today`() = runTest {
         import("""[{"placeId":"t-9","title":"Vorletzte Woche","phone":"+49 841 111"}]""")
-        repo.setAppointment("t-9", "2026-08-27T09:00:00+02:00", "2026-08-27T10:00:00+02:00", null, null)
+        repo.saveAppointment(visit("A-9", "t-9", "2026-08-27T09:00:00+02:00", "2026-08-27T10:00:00+02:00"))
 
         val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
         val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
@@ -824,13 +825,26 @@ class RepositoryTest {
     @Test
     fun `a blocked business never appears in appointmentsDue`() = runTest {
         import("""[{"placeId":"t-7","title":"Gesperrt","phone":"+49 841 111"}]""")
-        repo.setAppointment("t-7", "2026-09-10T09:00:00+02:00", "2026-09-10T10:00:00+02:00", null, null)
+        repo.saveAppointment(visit("A-7", "t-7", "2026-09-10T09:00:00+02:00", "2026-09-10T10:00:00+02:00"))
         repo.setStatus("t-7", Status.DO_NOT_CALL)
 
         val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
         val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
 
         assertTrue(repo.appointmentsDue(from, until).isEmpty())
+    }
+
+    @Test
+    fun `a due appointment's business knows its contacts' numbers`() = runTest {
+        import("""[{"placeId":"t-8","title":"Ohne Hauptnummer"}]""")
+        repo.saveContact(ContactDraft(placeId = "t-8", name = "Frau Meier", numbers = listOf(PhoneDraft(number = "+49 176 12345"))))
+        repo.saveAppointment(visit("A-8", "t-8", "2026-09-10T09:00:00+02:00", "2026-09-10T10:00:00+02:00"))
+
+        val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
+        val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
+
+        // Without it the dial button in „Heute" would show nothing to dial.
+        assertTrue(repo.appointmentsDue(from, until).single().second.hasNumber)
     }
 
     private companion object {
