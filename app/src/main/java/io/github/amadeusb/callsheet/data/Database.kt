@@ -35,6 +35,8 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
                 collected_at    TEXT,
                 status          TEXT NOT NULL DEFAULT 'new',
                 note            TEXT,
+                -- The one follow-up a business held up to schema 5. Emptied by
+                -- the migration to 6 — callbacks are appointments since.
                 follow_up_at    TEXT,
                 updated_at      TEXT NOT NULL,
                 -- Name and city in lower case. SQLite only lower-cases ASCII;
@@ -82,6 +84,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         db.execSQL(TABLE_DELETIONS)
         db.execSQL(TABLE_APPOINTMENTS)
         for (sql in INDEXES_APPOINTMENTS) db.execSQL(sql)
+        for (sql in COLUMNS_APPOINTMENTS_6) db.execSQL(sql)
         db.execSQL("CREATE INDEX idx_businesses_status ON businesses(status)")
         db.execSQL("CREATE INDEX idx_businesses_industry ON businesses(industry)")
         db.execSQL("CREATE INDEX idx_businesses_is_target ON businesses(is_target)")
@@ -204,6 +207,29 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             // promise to do so.
             db.execSQL("UPDATE businesses SET status = 'mail_sent' WHERE status = 'email_promised'")
         }
+        if (old < 6) {
+            for (sql in COLUMNS_APPOINTMENTS_6) db.execSQL(sql)
+            // Every follow-up becomes a callback. The id is fixed, not a fresh
+            // UUID: the server's migration 008 writes the same
+            // 'followup-' || place_id, so the two meet as one row. updated_at
+            // comes from the business for the same reason.
+            //
+            // dirty is the business's: a follow-up not uploaded yet goes up as
+            // a callback, one the server already has is not sent again. No
+            // calendar link — every device would create its own event for the
+            // same callback; it gets one when it is next saved.
+            db.execSQL(
+                """
+                INSERT INTO appointments (id, place_id, starts_at, updated_at, kind, dirty)
+                SELECT 'followup-' || place_id, place_id, follow_up_at, updated_at, 'callback', dirty
+                FROM businesses
+                WHERE follow_up_at IS NOT NULL AND follow_up_at <> ''
+                """.trimIndent()
+            )
+            // Emptied on both sides, or the next standstill fills it back. Not a
+            // change to the business: no updated_at, no mark.
+            db.execSQL("UPDATE businesses SET follow_up_at = NULL WHERE follow_up_at IS NOT NULL")
+        }
     }
 
     /**
@@ -219,7 +245,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
 
     companion object {
         const val NAME = "callsheet.db"
-        const val VERSION = 5
+        const val VERSION = 6
 
         @Volatile
         private var shared: Database? = null
@@ -341,6 +367,20 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             "CREATE INDEX idx_appointments_starts_at ON appointments(starts_at)",
             "CREATE INDEX idx_appointments_event_uid ON appointments(event_uid)",
             "CREATE INDEX idx_appointments_dirty ON appointments(dirty)",
+        )
+
+        /**
+         * Schema 6: the kind of an appointment and when a callback was
+         * completed. Added by ALTER on both roads — onCreate and the upgrade —
+         * so an upgrade from before schema 4, which creates TABLE_APPOINTMENTS
+         * first, does not meet a column that is already there.
+         *
+         * Both nullable: a NULL kind is a visit, and a row the server stores
+         * without a kind must not break a NOT NULL column here on arrival.
+         */
+        private val COLUMNS_APPOINTMENTS_6 = listOf(
+            "ALTER TABLE appointments ADD COLUMN kind TEXT",
+            "ALTER TABLE appointments ADD COLUMN done_at TEXT",
         )
 
         /**

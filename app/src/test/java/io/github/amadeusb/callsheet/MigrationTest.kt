@@ -149,6 +149,54 @@ class MigrationTest {
         db.close()
     }
 
+    /**
+     * The version 4 schema, as it shipped in 1.4.0: version 3 with its
+     * appointment carried over into the appointments table, and the contact
+     * columns the version 5 migration reads. alt-1 keeps the follow-up it had
+     * since version 1 and is synchronised; alt-2 has one that has not been
+     * uploaded yet; alt-3 has none.
+     */
+    private fun createVersionFour() {
+        createVersionThree()
+        val db = context.openOrCreateDatabase("callsheet.db", 0, null)
+        val contactColumns = columnsOf("contacts", db)
+        for (column in listOf("role TEXT", "email TEXT", "note TEXT", "contact_version INTEGER")) {
+            if (column.substringBefore(' ') !in contactColumns) db.execSQL("ALTER TABLE contacts ADD COLUMN $column")
+        }
+        db.execSQL(
+            """
+            CREATE TABLE appointments (
+                id                      TEXT PRIMARY KEY,
+                place_id                TEXT NOT NULL,
+                starts_at               TEXT NOT NULL,
+                ends_at                 TEXT,
+                location                TEXT,
+                note                    TEXT,
+                contact_id              TEXT,
+                updated_at              TEXT NOT NULL,
+                event_uid               TEXT,
+                calendar_event_id       INTEGER,
+                calendar_seen_starts_at TEXT,
+                calendar_seen_ends_at   TEXT,
+                calendar_seen_location  TEXT,
+                dirty                   INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "INSERT INTO appointments (id, place_id, starts_at, ends_at, updated_at, dirty) " +
+                "VALUES ('legacy-alt-1', 'alt-1', '2026-09-10T14:00:00+02:00', '2026-09-10T15:00:00+02:00', " +
+                "'2026-09-07T12:00:00+02:00', 0)"
+        )
+        db.execSQL(
+            "UPDATE businesses SET appointment_at = NULL, appointment_end_at = NULL, " +
+                "appointment_location = NULL, calendar_event_id = NULL"
+        )
+        db.execSQL("UPDATE businesses SET follow_up_at = '2026-09-15T09:00:00+02:00', dirty = 1 WHERE place_id = 'alt-2'")
+        db.version = 4
+        db.close()
+    }
+
     private fun columnsOf(table: String, db: android.database.sqlite.SQLiteDatabase): Set<String> =
         db.rawQuery("PRAGMA table_info($table)", null).use { c ->
             generateSequence { if (c.moveToNext()) c.getString(1) else null }.toSet()
@@ -175,7 +223,8 @@ class MigrationTest {
             assertTrue(c.moveToFirst())
             assertEquals("called", c.getString(0))
             assertEquals("Rückruf zugesagt", c.getString(1))
-            assertEquals("2026-09-10T09:00:00+02:00", c.getString(2))
+            // Carried over into appointments as a callback since schema 6.
+            assertTrue(c.isNull(2))
         }
     }
 
@@ -239,7 +288,7 @@ class MigrationTest {
 
         db.rawQuery(
             "SELECT id, place_id, starts_at, ends_at, location, note, contact_id, event_uid, updated_at " +
-                "FROM appointments ORDER BY id",
+                "FROM appointments WHERE id LIKE 'legacy-%' ORDER BY id",
             null,
         ).use { c ->
             assertEquals(2, c.count)
@@ -330,7 +379,75 @@ class MigrationTest {
         // PRAGMA on a missing table returns no columns on both sides, which
         // would compare equal before the table exists.
         assertTrue("event_uid" in fresh)
+        assertTrue("kind" in fresh)
+        assertTrue("done_at" in fresh)
         assertEquals(fresh, upgraded)
+    }
+
+    // --- from version 4, the road 1.4.0 devices are on ----------------------
+
+    @Test
+    fun `an upgrade from version four carries each follow-up over as a callback`() {
+        createVersionFour()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery(
+            "SELECT id, place_id, starts_at, ends_at, location, note, contact_id, event_uid, updated_at, " +
+                "kind, done_at, calendar_event_id, dirty FROM appointments WHERE kind = 'callback' ORDER BY id",
+            null,
+        ).use { c ->
+            assertEquals(2, c.count)
+            assertTrue(c.moveToFirst())
+            assertEquals("followup-alt-1", c.getString(0))
+            assertEquals("alt-1", c.getString(1))
+            assertEquals("2026-09-10T09:00:00+02:00", c.getString(2))
+            for (i in 3..7) assertTrue("column $i not empty", c.isNull(i))
+            // The business's timestamp, so the server's carried-over row meets this one as a standstill.
+            assertEquals("2026-09-07T12:00:00+02:00", c.getString(8))
+            assertEquals("callback", c.getString(9))
+            assertTrue(c.isNull(10))
+            // No calendar event: each device would create its own.
+            assertTrue(c.isNull(11))
+            // Synchronised business, nothing to send.
+            assertEquals(0, c.getInt(12))
+            assertTrue(c.moveToNext())
+            assertEquals("followup-alt-2", c.getString(0))
+            assertEquals("2026-09-15T09:00:00+02:00", c.getString(2))
+            assertEquals("2026-09-08T09:00:00+02:00", c.getString(8))
+            // Not uploaded yet: goes up as a callback.
+            assertEquals(1, c.getInt(12))
+        }
+    }
+
+    @Test
+    fun `an upgrade from version four empties follow_up_at without marking the business`() {
+        createVersionFour()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery("SELECT place_id, follow_up_at, dirty, updated_at FROM businesses ORDER BY place_id", null).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("alt-1", c.getString(0))
+            assertTrue(c.isNull(1))
+            assertEquals(0, c.getInt(2))
+            assertEquals("2026-09-07T12:00:00+02:00", c.getString(3))
+            while (c.moveToNext()) assertTrue("follow_up_at left on ${c.getString(0)}", c.isNull(1))
+        }
+    }
+
+    @Test
+    fun `an upgrade from version four leaves appointments on site without a kind`() {
+        createVersionFour()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery("SELECT kind, done_at, dirty FROM appointments WHERE id = 'legacy-alt-1'", null).use { c ->
+            assertTrue(c.moveToFirst())
+            assertTrue(c.isNull(0))
+            assertTrue(c.isNull(1))
+            assertEquals(0, c.getInt(2))
+        }
     }
 
     // --- and a database that never had to migrate at all ---------------------

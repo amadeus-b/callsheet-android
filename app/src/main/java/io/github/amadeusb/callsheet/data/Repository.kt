@@ -736,6 +736,10 @@ class Repository(context: Context) {
      * loaded before the read-back took a UID over ([setEventUid]) still carries
      * null; writing that would be the newer row and drop the link on every
      * device. Nothing in the app clears a UID on purpose.
+     *
+     * The same holds for [AppointmentEntry.doneAt]: a sheet opened before a
+     * call completed the callback carries none, and saving it must not reopen
+     * the callback. Nothing in the app reopens one.
      */
     suspend fun saveAppointment(entry: AppointmentEntry) = withContext(Dispatchers.IO) {
         val values = ContentValues().apply {
@@ -747,6 +751,8 @@ class Repository(context: Context) {
             put("note", entry.note)
             put("contact_id", entry.contactId)
             if (entry.eventUid != null) put("event_uid", entry.eventUid)
+            put("kind", entry.kind.key)
+            if (entry.doneAt != null) put("done_at", entry.doneAt)
             put("updated_at", Clock.now())
             put("dirty", 1)
         }
@@ -974,6 +980,8 @@ class Repository(context: Context) {
         seenStartsAt = c.text("calendar_seen_starts_at"),
         seenEndsAt = c.text("calendar_seen_ends_at"),
         seenLocation = c.text("calendar_seen_location"),
+        kind = AppointmentKind.fromKey(c.text("kind")),
+        doneAt = c.text("done_at"),
     )
 
     private fun Cursor.text(column: String): String? {

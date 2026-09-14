@@ -3,6 +3,7 @@ package io.github.amadeusb.callsheet
 import androidx.test.core.app.ApplicationProvider
 import io.github.amadeusb.callsheet.calling.CallFlow
 import io.github.amadeusb.callsheet.data.AppointmentEntry
+import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.ContactDraft
 import io.github.amadeusb.callsheet.data.Database
@@ -661,6 +662,13 @@ class RepositoryTest {
             location = null, note = note, contactId = null,
         )
 
+    private fun callback(id: String, placeId: String, startsAt: String, doneAt: String? = null) =
+        AppointmentEntry(
+            id = id, placeId = placeId, startsAt = startsAt, endsAt = null,
+            location = null, note = null, contactId = null,
+            kind = AppointmentKind.CALLBACK, doneAt = doneAt,
+        )
+
     @Test
     fun `an appointment is stored, marked for upload and read back`() = runTest {
         repo.saveAppointment(
@@ -687,6 +695,40 @@ class RepositoryTest {
         repo.saveAppointment(visit("B-1", "t-2", "2026-09-11T09:00:00+02:00"))
 
         assertEquals(listOf("A-1", "A-2"), repo.appointments("t-1").map { it.id })
+    }
+
+    @Test
+    fun `a callback is stored and read back with its kind`() = runTest {
+        repo.saveAppointment(callback("R-1", "t-1", "2026-09-15T09:00:00+02:00"))
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00"))
+
+        assertEquals(AppointmentKind.CALLBACK, repo.appointment("R-1")!!.kind)
+        assertNull(repo.appointment("R-1")!!.doneAt)
+        assertEquals(AppointmentKind.VISIT, repo.appointment("A-1")!!.kind)
+        assertEquals(1, count("SELECT COUNT(*) FROM appointments WHERE id = 'A-1' AND kind = 'visit'"))
+    }
+
+    @Test
+    fun `a row without a kind reads as a visit`() = runTest {
+        execute(
+            "INSERT INTO appointments (id, place_id, starts_at, updated_at, dirty) " +
+                "VALUES ('A-9', 't-1', '2026-09-15T09:00:00+02:00', '2026-09-07T10:00:00+02:00', 0)"
+        )
+
+        assertEquals(AppointmentKind.VISIT, repo.appointment("A-9")!!.kind)
+    }
+
+    @Test
+    fun `saving an entry without a completion keeps the completion already stored`() = runTest {
+        repo.saveAppointment(callback("R-1", "t-1", "2026-09-15T09:00:00+02:00"))
+        execute("UPDATE appointments SET done_at = '2026-09-15T09:05:00+02:00' WHERE id = 'R-1'")
+
+        // A sheet opened before the call completed it carries none.
+        repo.saveAppointment(callback("R-1", "t-1", "2026-09-15T10:00:00+02:00"))
+
+        val stored = repo.appointment("R-1")!!
+        assertEquals("2026-09-15T09:05:00+02:00", stored.doneAt)
+        assertEquals("2026-09-15T10:00:00+02:00", stored.startsAt)
     }
 
     @Test

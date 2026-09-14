@@ -44,12 +44,19 @@ class SyncSchemaTest {
     }
 
     @Test
+    fun `appointments carry a kind and a completion`() {
+        val appointments = columns("appointments")
+        assertTrue(appointments.contains("kind"))
+        assertTrue(appointments.contains("done_at"))
+    }
+
+    @Test
     fun `an upgrade from version one keeps the work`() {
         val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
         ctx.deleteDatabase("callsheet.db")
         // Version 1 nachbauen, eine Arbeitszeile hineinschreiben, dann hochziehen.
         val alt = ctx.openOrCreateDatabase("callsheet.db", 0, null)
-        alt.execSQL("CREATE TABLE businesses (place_id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'new', note TEXT, updated_at TEXT NOT NULL)")
+        alt.execSQL("CREATE TABLE businesses (place_id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'new', note TEXT, follow_up_at TEXT, updated_at TEXT NOT NULL)")
         alt.execSQL("CREATE TABLE calls (id TEXT PRIMARY KEY, place_id TEXT NOT NULL, started_at TEXT NOT NULL, duration_seconds INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'call')")
         alt.execSQL("CREATE TABLE contacts (id TEXT PRIMARY KEY, place_id TEXT NOT NULL, name TEXT NOT NULL, role TEXT, email TEXT, note TEXT, position INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, contact_version INTEGER)")
         alt.execSQL("CREATE TABLE contact_numbers (id TEXT PRIMARY KEY, contact_id TEXT NOT NULL, number TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'other', position INTEGER NOT NULL DEFAULT 0)")

@@ -469,6 +469,39 @@ class SyncStoreTest {
     }
 
     @Test
+    fun `a callback's kind and completion go up`() {
+        schreibe(
+            "INSERT INTO appointments (id, place_id, starts_at, updated_at, kind, done_at, dirty) VALUES " +
+                "('R1', 'P1', '2026-09-15T09:00:00+02:00', '2026-09-07T10:00:00+02:00', 'callback', " +
+                "'2026-09-15T09:05:00+02:00', 1)"
+        )
+
+        val row = store.pending(500).getJSONArray("appointments").getJSONObject(0)
+
+        assertEquals("callback", row.getString("kind"))
+        assertEquals("2026-09-15T09:05:00+02:00", row.getString("done_at"))
+    }
+
+    @Test
+    fun `an incoming appointment without a kind keeps the kind stored here`() {
+        // A server before migration 008 knows neither column and sends neither key.
+        schreibe(
+            "INSERT INTO appointments (id, place_id, starts_at, updated_at, kind, done_at, dirty) VALUES " +
+                "('T1', 'P1', '2026-09-15T09:00:00+02:00', '2026-09-07T10:00:00+02:00', 'callback', " +
+                "'2026-09-15T09:05:00+02:00', 0)"
+        )
+
+        store.apply(leereAntwort().put("appointments", JSONArray(listOf(terminJson("T1", "2026-09-07T11:00:00+02:00")))))
+
+        Database(ctx).readableDatabase.rawQuery("SELECT kind, done_at, note FROM appointments WHERE id = 'T1'", null).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("callback", c.getString(0))
+            assertEquals("2026-09-15T09:05:00+02:00", c.getString(1))
+            assertEquals("Angebot", c.getString(2))
+        }
+    }
+
+    @Test
     fun `an incoming appointment no newer than a local tombstone is not written`() {
         // Deleted here, not yet uploaded; the server still hands out the older row.
         schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('appointments', 'T1', '2026-09-07T11:00:00+02:00')")

@@ -86,8 +86,23 @@ data class CallEntry(
 )
 
 /**
- * An appointment on site. A business can have any number of them —
- * one after another, or side by side.
+ * What an appointment is. Stored as [key]. A null or unknown key reads as
+ * [VISIT]: every appointment before schema 6 is one, and so is every one a
+ * 1.4.0 device still creates.
+ */
+enum class AppointmentKind(val key: String, val label: String) {
+    VISIT("visit", "Vor Ort"),
+    CALLBACK("callback", "Rückruf");
+
+    companion object {
+        fun fromKey(s: String?): AppointmentKind =
+            entries.firstOrNull { it.key == s } ?: VISIT
+    }
+}
+
+/**
+ * An appointment: on site, or a callback. A business can have any number of
+ * them — one after another, or side by side.
  *
  * [eventUid] names the linked calendar event on every device carrying the
  * shared calendar. [calendarEventId] and the `seen` fields describe this
@@ -113,6 +128,9 @@ data class AppointmentEntry(
     val seenStartsAt: String? = null,
     val seenEndsAt: String? = null,
     val seenLocation: String? = null,
+    val kind: AppointmentKind = AppointmentKind.VISIT,
+    /** When a callback was completed. Null while open, and always for a visit. */
+    val doneAt: String? = null,
 )
 
 /**
