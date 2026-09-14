@@ -70,6 +70,8 @@ class PhoneBookEntriesTest {
         assertNull(entry.name)
         assertEquals("Muster Fliesen", entry.organization)
         assertEquals("Bau", entry.role)
+        assertEquals(listOf("+498412345678"), entry.numbers.map { it.number })
+        assertEquals(listOf(MAIN_NUMBER_LABEL), entry.numbers.map { it.label })
     }
 
     @Test
@@ -101,6 +103,21 @@ class PhoneBookEntriesTest {
             listOf(contact(name = "Erika Beispiel")),
         )
         assertEquals(listOf("c1"), entries.map { it.sourceId })
+    }
+
+    @Test
+    fun `a doubled space inside the name does not make a second person`() {
+        val imported = PhoneBookEntries.forBusiness(
+            business(contactName = "Erika  Beispiel"),
+            listOf(contact(name = "Erika Beispiel")),
+        )
+        assertEquals(listOf("c1"), imported.map { it.sourceId })
+
+        val saved = PhoneBookEntries.forBusiness(
+            business(contactName = "Erika Beispiel"),
+            listOf(contact(name = "Erika \t Beispiel")),
+        )
+        assertEquals(listOf("c1"), saved.map { it.sourceId })
     }
 
     @Test

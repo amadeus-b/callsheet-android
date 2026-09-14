@@ -159,6 +159,14 @@ class ContactMergeTest {
     }
 
     @Test
+    fun `the business's email is recognised whatever its case`() {
+        val phoneBook = fromPhoneBook(email = "info@example.org")
+        assertNull(
+            ContactMerge.merge(contact(email = null), phoneBook, businessEmail = "Info@Example.org")
+        )
+    }
+
+    @Test
     fun `an email of the person's own is still taken over`() {
         val phoneBook = fromPhoneBook(email = "neu@example.org")
         val draft = ContactMerge.merge(contact(email = null), phoneBook, businessEmail = "info@example.org")!!

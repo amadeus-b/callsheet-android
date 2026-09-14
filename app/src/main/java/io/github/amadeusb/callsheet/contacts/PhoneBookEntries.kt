@@ -24,7 +24,7 @@ object PhoneBookEntries {
         // Saved by hand under the same name, the imported person is already
         // there — as the one the user has worked on.
         val imported = business.contactName.clean()
-            ?.takeIf { name -> contacts.none { it.name.trim().equals(name, ignoreCase = true) } }
+            ?.takeIf { name -> contacts.none { samePerson(it.name, name) } }
 
         val entries = ArrayList<ContactFields>()
         if (mainNumber != null && (imported != null || contacts.isEmpty())) {
@@ -121,4 +121,10 @@ object PhoneBookEntries {
     private fun encode(text: String): String = URLEncoder.encode(text, "UTF-8")
 
     private fun String?.clean(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
+
+    // Typed by hand or pasted from an imprint, a name easily picks up a second space.
+    private fun samePerson(a: String, b: String): Boolean =
+        a.collapseSpaces().equals(b.collapseSpaces(), ignoreCase = true)
+
+    private fun String.collapseSpaces(): String = trim().split(Regex("\\s+")).joinToString(" ")
 }
