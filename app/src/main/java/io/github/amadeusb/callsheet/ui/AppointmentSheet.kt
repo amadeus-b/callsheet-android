@@ -2,6 +2,7 @@ package io.github.amadeusb.callsheet.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
@@ -44,6 +45,7 @@ import io.github.amadeusb.callsheet.AppointmentDraft
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
 import io.github.amadeusb.callsheet.data.Clock
+import io.github.amadeusb.callsheet.data.Contact
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -68,15 +70,18 @@ private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
  * The layout is header, scrolling timeline, footer, rather than one long scroll:
  * the day has to scroll without taking the save button off the screen with it.
  * That only holds if the timeline is the part that gives way — hence
- * `weight(1f)` on it and a bounded height on the column around it. Stacked at
- * their natural heights the pieces come to roughly 700 dp, and the conflict
- * notice adds another hundred; on an ordinary phone that pushes
- * "Termin speichern" off the bottom exactly when it is needed most.
+ * `weight(1f)` on it and a bounded height on the column around it.
+ * The fields under the strip scroll in an area of at most 240 dp, and the strip
+ * keeps at least 160 dp: title, date row and labels (~160 dp), strip, fields,
+ * a conflict notice (~120 dp) and the button (~96 dp) stay within an ordinary
+ * phone's sheet — "Termin speichern" is never pushed off the bottom, least of
+ * all when a conflict is showing.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppointmentSheet(
     draft: AppointmentDraft,
+    contacts: List<Contact>,
     onDraft: (AppointmentDraft) -> Unit,
     onSave: () -> Unit,
     onLink: (Long) -> Unit,
@@ -124,30 +129,83 @@ fun AppointmentSheet(
             Timeline(
                 draft = draft,
                 onDraft = onDraft,
-                modifier = Modifier.weight(1f).heightIn(min = 320.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 160.dp),
             )
 
-            SectionLabel("Dauer")
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            // The fields under the strip scroll within a bounded height of their
+            // own. Stacked at natural height they come to some 400 dp; together
+            // with the strip's minimum, a conflict notice and the button that is
+            // more than a sheet has, and the button would go first.
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 240.dp)
+                    .verticalScroll(rememberScrollState()),
             ) {
-                Appointment.DURATIONS.forEach { minutes ->
-                    FilterChip(
-                        selected = draft.minutes == minutes,
-                        onClick = { onDraft(draft.copy(minutes = minutes)) },
-                        label = { Text("$minutes") },
+                SectionLabel("Dauer")
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Appointment.DURATIONS.forEach { minutes ->
+                        FilterChip(
+                            selected = draft.minutes == minutes,
+                            onClick = { onDraft(draft.copy(minutes = minutes)) },
+                            label = { Text("$minutes") },
+                        )
+                    }
+                }
+
+                SectionLabel("Ort")
+                OutlinedTextField(
+                    value = draft.location,
+                    onValueChange = { onDraft(draft.copy(location = it)) },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    singleLine = false,
+                )
+
+                SectionLabel("Notiz")
+                OutlinedTextField(
+                    value = draft.note,
+                    onValueChange = { onDraft(draft.copy(note = it)) },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    singleLine = true,
+                    placeholder = { Text("Besichtigung, Angebot …") },
+                )
+
+                // Absent without contacts: a choice between „Keiner" and nothing is no choice.
+                if (contacts.isNotEmpty()) {
+                    SectionLabel("Ansprechpartner")
+                    Row(
+                        modifier = Modifier
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(
+                            selected = draft.contactId == null,
+                            onClick = { onDraft(draft.copy(contactId = null)) },
+                            label = { Text("Keiner") },
+                        )
+                        contacts.forEach { contact ->
+                            FilterChip(
+                                selected = draft.contactId == contact.id,
+                                onClick = { onDraft(draft.copy(contactId = contact.id)) },
+                                label = { Text(contact.name) },
+                            )
+                        }
+                    }
+                }
+
+                if (draft.eventElsewhere) {
+                    Text(
+                        text = "Der Kalendereintrag liegt auf einem anderen Gerät. " +
+                            "Er zieht nach, sobald dort abgeglichen ist.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }
             }
-
-            SectionLabel("Ort")
-            OutlinedTextField(
-                value = draft.location,
-                onValueChange = { onDraft(draft.copy(location = it)) },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                singleLine = false,
-            )
 
             if (draft.conflict.isNotEmpty()) {
                 ConflictNotice(draft = draft, onDraft = onDraft, onLink = onLink, onForce = onForce)
@@ -446,7 +504,7 @@ private fun ConflictNotice(
         )
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            clash.eventId?.let { id ->
+            clash.eventId?.takeIf { it in draft.adoptable }?.let { id ->
                 Button(onClick = { onLink(id) }) { Text("Verknüpfen") }
             }
             Button(onClick = onForce) { Text("Trotzdem anlegen") }

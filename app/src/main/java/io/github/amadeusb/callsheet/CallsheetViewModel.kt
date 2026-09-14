@@ -12,10 +12,12 @@ import io.github.amadeusb.callsheet.calendar.EventFields
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
 import io.github.amadeusb.callsheet.calling.CallFlow
+import io.github.amadeusb.callsheet.calling.Located
 import io.github.amadeusb.callsheet.calling.ReadBack
 import io.github.amadeusb.callsheet.calling.SavePlan
 import io.github.amadeusb.callsheet.calling.CallLogReader
 import io.github.amadeusb.callsheet.calling.FollowUp
+import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.ContactDraft
@@ -39,6 +41,7 @@ import io.github.amadeusb.callsheet.sync.SyncClient
 import io.github.amadeusb.callsheet.sync.SyncEngine
 import io.github.amadeusb.callsheet.sync.SyncResult
 import io.github.amadeusb.callsheet.sync.SyncStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,6 +81,18 @@ data class AppointmentDraft(
     val startIso: String,
     val minutes: Int,
     val location: String,
+    /** The appointment being changed; null for a new one. */
+    val appointmentId: String? = null,
+    /** „Besichtigung", „Angebot" … One line, optional. */
+    val note: String = "",
+    /** One of the business's contacts; null is „Keiner". */
+    val contactId: String? = null,
+    /**
+     * The appointment has an event in the shared calendar, but not in this
+     * device's copy yet. Saving leaves the calendar alone; the device holding
+     * the event updates it after its next sync. The sheet says so.
+     */
+    val eventElsewhere: Boolean = false,
     /**
      * Everything already taken on that day, for the timeline. The business's own
      * event is filtered out: it would otherwise collide with itself on every
@@ -93,6 +108,11 @@ data class AppointmentDraft(
      * feature must not tell.
      */
     val calendarReadable: Boolean = true,
+    /**
+     * The busy events that may be linked. An event another appointment
+     * already holds is shown as a conflict, but not offered for „Verknüpfen".
+     */
+    val adoptable: Set<Long> = emptySet(),
 )
 
 data class State(
@@ -657,19 +677,110 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
     // --------------------------------------------------------------- Appointment
 
-    /** Opens the sheet, prefilled from the business and the last duration used. */
-    fun openAppointment(placeId: String) {
+    /**
+     * Runs a calendar lookup and hands a failure back as a value. A lookup that
+     * failed — no permission, a provider that threw — is not an event that is
+     * gone, and every caller has to be able to tell the two apart: taken for
+     * "gone", it deletes an appointment on every device. Cancellation still
+     * propagates.
+     */
+    private suspend fun <T> calendarLookup(block: suspend () -> T): Result<T> = try {
+        Result.success(block())
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failed: Exception) {
+        Result.failure(failed)
+    }
+
+    /**
+     * This appointment's event on this device, or null when it is not here —
+     * see Appointment.locate. Throws when the calendar could not be asked; call
+     * it through [calendarLookup].
+     */
+    private suspend fun locateEvent(entry: AppointmentEntry): Located<EventFields>? {
+        val context = getApplication<Application>()
+        return Appointment.locate(
+            calendarEventId = entry.calendarEventId,
+            eventUid = entry.eventUid,
+            read = { CalendarStore.read(context, it) },
+            find = { CalendarStore.findByUid(context, it) },
+        )
+    }
+
+    /**
+     * Looks for this appointment's event, if this device may read the calendar
+     * at all. Null without the permission: nothing was asked, so there is
+     * neither a result nor a failure to report — most people who never switched
+     * the calendar on are in exactly that state, and must not be told on every
+     * save that their calendar "could not be read".
+     *
+     * Null is therefore not "not found". No caller may act on it as a deletion;
+     * the read-back does not even start without the permission.
+     */
+    private suspend fun lookUpEvent(entry: AppointmentEntry): Result<Located<EventFields>?>? {
+        if (!CalendarStore.canRead(getApplication())) return null
+        return calendarLookup { locateEvent(entry) }
+    }
+
+    /** The event as the app writes it for [entry]: title, time, place, and who to ask for. */
+    private suspend fun eventFieldsFor(entry: AppointmentEntry, business: Business): EventFields? {
+        val start = Clock.millis(entry.startsAt) ?: return null
+        val end = Clock.millis(entry.endsAt) ?: (start + Appointment.DEFAULT_MINUTES * 60_000L)
+        val contact = entry.contactId?.let { id -> repo.contacts(entry.placeId).firstOrNull { it.id == id } }
+        return EventFields(
+            title = Appointment.eventTitle(business.name, entry.note),
+            startMillis = start,
+            endMillis = end,
+            location = entry.location,
+            description = Appointment.eventDescription(contact, business.phone),
+        )
+    }
+
+    /**
+     * Creates the event under [uid] and reads it back to learn which UID it
+     * kept. The returned fields carry that UID, or none when the provider
+     * dropped it or the read failed — the link then stays local.
+     */
+    private suspend fun createEvent(uid: String, fields: EventFields): Pair<Long, EventFields>? {
+        val context = getApplication<Application>()
+        val calendar = preferences.calendarId ?: return null
+        val eventId = CalendarStore.insert(context, calendar, fields.copy(uid = uid)) ?: return null
+        val kept = Appointment.uidToTake(null, calendarLookup { CalendarStore.read(context, eventId) }.getOrNull()?.uid)
+        return eventId to fields.copy(uid = kept)
+    }
+
+    /** Records locally which event this device links, and what that event now holds. */
+    private suspend fun rememberSeen(appointmentId: String, eventId: Long, event: EventFields) {
+        repo.setCalendarLink(
+            appointmentId, eventId,
+            Clock.format(event.startMillis), Clock.format(event.endMillis), event.location,
+        )
+    }
+
+    /**
+     * Opens the sheet. Without [appointmentId] a new appointment starts as
+     * before: in two days, snapped to the quarter hour, the last duration used,
+     * the business's address. With one, everything comes from that appointment.
+     */
+    fun openAppointment(placeId: String, appointmentId: String? = null) {
         viewModelScope.launch {
+            val context = getApplication<Application>()
             val business = repo.business(placeId) ?: return@launch
-            val start = business.appointmentAt ?: Appointment.snapToQuarter(FollowUp.inTwoDays())
-            val minutes = if (business.appointmentAt != null) {
-                Appointment.minutesBetween(business.appointmentAt, business.appointmentEndAt)
+            val existing = appointmentId?.let { repo.appointment(it) }
+            val lookup = existing?.let { lookUpEvent(it) }
+            val located = lookup?.getOrNull()
+            val start = existing?.startsAt ?: Appointment.snapToQuarter(FollowUp.inTwoDays())
+            val minutes = if (existing != null) {
+                Appointment.minutesBetween(existing.startsAt, existing.endsAt)
             } else {
                 preferences.appointmentMinutes
             }
-            val location = business.appointmentLocation
-                ?: Appointment.address(business.street, business.postalCode, business.city)
-                ?: ""
+            val location = if (existing != null) {
+                existing.location.orEmpty()
+            } else {
+                Appointment.address(business.street, business.postalCode, business.city).orEmpty()
+            }
+            val readable = CalendarStore.canRead(context)
             _state.update {
                 it.copy(
                     appointmentDraft = AppointmentDraft(
@@ -677,30 +788,41 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                         startIso = start,
                         minutes = minutes,
                         location = location,
-                        calendarReadable = CalendarStore.canRead(getApplication()),
+                        appointmentId = existing?.id,
+                        note = existing?.note.orEmpty(),
+                        contactId = existing?.contactId,
+                        // Only from a lookup that ran and went through: a calendar that
+                        // was not or could not be asked says nothing about where the event is.
+                        eventElsewhere = preferences.calendarEnabled && lookup?.isSuccess == true &&
+                            existing?.eventUid != null && located == null,
+                        calendarReadable = readable,
                     )
                 )
             }
-            Clock.millis(start)?.let { loadBusy(it, business.calendarEventId) }
+            Clock.millis(start)?.let {
+                loadBusy(it, existing?.eventUid, located?.eventId ?: existing?.calendarEventId)
+            }
         }
     }
 
     /**
      * Reads the busy times for the day containing [millis].
      *
-     * [ownEventId] drops out of the result. An appointment being changed is
-     * already in the calendar, so leaving it in would make every save collide
-     * with itself — and the conflict question would offer to link an appointment
-     * to itself.
+     * The event of the appointment being edited drops out — by [ownUid], or by
+     * [ownEventId] where it has no UID yet. Leaving it in would make every save
+     * collide with itself. Everything else stays, the business's other
+     * appointments included.
      */
-    private fun loadBusy(millis: Long, ownEventId: Long?) {
+    private fun loadBusy(millis: Long, ownUid: String?, ownEventId: Long?) {
         viewModelScope.launch {
             val dayStart = Clock.todayStart(millis)
-            val busy = BusyTimes.forDay(getApplication(), dayStart)
-                .filter { it.eventId == null || it.eventId != ownEventId }
+            val busy = Appointment.busyExcept(BusyTimes.forDay(getApplication(), dayStart), ownUid, ownEventId)
+            val taken = repo.takenEvents()
+            // None at all for an appointment that already has an event — see Appointment.adoptable.
+            val adoptable = Appointment.adoptable(busy, taken, ownUid, ownEventId)
             _state.update { state ->
                 val draft = state.appointmentDraft ?: return@update state
-                state.copy(appointmentDraft = draft.copy(busy = busy, conflict = emptyList()))
+                state.copy(appointmentDraft = draft.copy(busy = busy, adoptable = adoptable, conflict = emptyList()))
             }
         }
     }
@@ -727,7 +849,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         if (dayChanged) {
             viewModelScope.launch {
                 val start = Clock.millis(draft.startIso) ?: return@launch
-                loadBusy(start, repo.business(draft.placeId)?.calendarEventId)
+                val existing = draft.appointmentId?.let { repo.appointment(it) }
+                loadBusy(start, existing?.eventUid, existing?.calendarEventId)
             }
         }
     }
@@ -736,24 +859,46 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         _state.update { it.copy(appointmentDraft = null) }
     }
 
-    /** Writes the appointment: the four columns, the status, and the calendar. */
+    /** Writes the appointment, its calendar event, and — for one still ahead — the status. */
     fun saveAppointment(linkExisting: Long? = null, force: Boolean = false) {
         val draft = _state.value.appointmentDraft ?: return
         viewModelScope.launch {
+            val context = getApplication<Application>()
             val startMillis = Clock.millis(draft.startIso) ?: return@launch
-            val endIsoFromDraft = Appointment.endOf(draft.startIso, draft.minutes)
-            val endMillis = Clock.millis(endIsoFromDraft) ?: return@launch
-            val business = repo.business(draft.placeId)
-            val location = draft.location.trim().ifEmpty { null }
+            val endIso = Appointment.endOf(draft.startIso, draft.minutes)
+            val endMillis = Clock.millis(endIso) ?: return@launch
+            val business = repo.business(draft.placeId) ?: return@launch
+            val existing = draft.appointmentId?.let { repo.appointment(it) }
+            if (draft.appointmentId != null && existing == null) {
+                // Deleted while the sheet was open — by a sync, or in the
+                // calendar. Saving would bring it back under a new id.
+                _state.update {
+                    it.copy(appointmentDraft = null, hint = "Der Termin wurde inzwischen gelöscht. Nichts gespeichert.")
+                }
+                loadDetail(draft.placeId)
+                return@launch
+            }
+            val readable = CalendarStore.canRead(context)
+            val lookup = existing?.let { lookUpEvent(it) }
+            val located = lookup?.getOrNull()
+            // The calendar was asked where this appointment's event is, and the
+            // question failed. Saving then leaves the calendar alone: an Update is
+            // impossible without the event, and a Create could put a second one
+            // beside it. The same holds without read permission, where nothing
+            // could be asked at all.
+            val calendarUnreadable = lookup?.isFailure == true
+            val calendarUsable = preferences.calendarEnabled && readable && !calendarUnreadable
 
             val plan = Appointment.plan(
                 startMillis = startMillis,
                 endMillis = endMillis,
                 busy = draft.busy,
-                ownEventId = business?.calendarEventId,
-                linkExisting = linkExisting,
+                ownEventId = located?.eventId,
+                // Only an event no other appointment holds, whatever reached this call.
+                linkExisting = linkExisting?.takeIf { it in draft.adoptable },
                 force = force,
-                calendarEnabled = preferences.calendarEnabled,
+                calendarEnabled = calendarUsable,
+                eventUid = existing?.eventUid,
             )
 
             if (plan is SavePlan.Conflict) {
@@ -761,66 +906,108 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 return@launch
             }
 
-            val fields = EventFields(
-                title = "Ortstermin ${business?.name ?: ""}".trim(),
-                startMillis = startMillis,
-                endMillis = endMillis,
-                location = location,
-                description = business?.phone,
+            var entry = AppointmentEntry(
+                id = existing?.id ?: UUID.randomUUID().toString(),
+                placeId = draft.placeId,
+                startsAt = draft.startIso,
+                endsAt = endIso,
+                location = draft.location.trim().ifEmpty { null },
+                note = draft.note.trim().ifEmpty { null },
+                contactId = draft.contactId,
+                eventUid = existing?.eventUid,
             )
+            val fields = eventFieldsFor(entry, business) ?: return@launch
+            // The linked event and what it holds once this is through; null when none is linked.
+            var linked: Pair<Long, EventFields>? = null
+            // This device's link is stale and goes — see the failed update below.
+            var dropLink = false
+            // Said only to someone who switched the calendar on: to everyone else
+            // an untouched calendar is exactly what they chose.
+            var calendarHint: String? = when {
+                !preferences.calendarEnabled -> null
+                !readable -> "Termin gespeichert. Ohne Zugriff auf den Kalender bleibt der Eintrag " +
+                    "unberührt — die Berechtigung lässt sich in den Android-Einstellungen der App erteilen."
+                calendarUnreadable -> "Termin gespeichert. Der Kalender ließ sich gerade nicht lesen; " +
+                    "der Eintrag wird beim nächsten Öffnen abgeglichen."
+                else -> null
+            }
 
-            // Adopting takes the calendar's values, so the columns written below
-            // differ per plan. Every other case writes the draft.
-            var atIso = draft.startIso
-            var endIso = endIsoFromDraft
-            var place = location
-
-            val eventId: Long? = when (plan) {
+            when (plan) {
+                // Adopting takes the calendar's time, place and UID, and leaves
+                // the event exactly as it is. Gone, or unreadable, between listing
+                // the day and pressing save: keep the draft and no link.
                 is SavePlan.Adopt -> {
-                    val event = runCatching { CalendarStore.read(getApplication(), plan.eventId) }.getOrNull()
-                    if (event != null) {
-                        atIso = Clock.format(event.startMillis)
-                        endIso = Clock.format(event.endMillis)
-                        place = event.location ?: location
-                        plan.eventId
-                    } else {
-                        // Gone between listing the day and pressing save. Linking
-                        // to an id that no longer resolves would leave a business
-                        // pointing at nothing; keep the draft and no link.
-                        null
+                    calendarLookup { CalendarStore.read(context, plan.eventId) }.getOrNull()?.let { event ->
+                        entry = entry.copy(
+                            startsAt = Clock.format(event.startMillis),
+                            endsAt = Clock.format(event.endMillis),
+                            location = event.location,
+                            eventUid = Appointment.uidToTake(null, event.uid),
+                        )
+                        linked = plan.eventId to event
+                    }
+                    if (linked == null) {
+                        calendarHint = "Termin gespeichert, aber nicht verknüpft: " +
+                            "der Kalendereintrag war nicht mehr zu lesen."
                     }
                 }
 
-                // A failed update usually means the event is gone — deleted in
-                // the calendar between opening the sheet and saving it. Falling
-                // back to a new one is what the user asked for; reporting "could
-                // not be written" and pointing at the permission would be a lie.
-                is SavePlan.Update -> plan.eventId.takeIf {
-                    CalendarStore.update(getApplication(), it, fields)
-                } ?: preferences.calendarId?.let { CalendarStore.insert(getApplication(), it, fields) }
+                is SavePlan.Update -> if (CalendarStore.update(context, plan.eventId, fields)) {
+                    entry = entry.copy(eventUid = Appointment.uidToTake(entry.eventUid, located?.event?.uid) ?: entry.eventUid)
+                    linked = plan.eventId to fields
+                } else {
+                    val afterFailure = calendarLookup { CalendarStore.read(context, plan.eventId) }
+                    if (afterFailure.isSuccess && afterFailure.getOrNull() == null) {
+                        // Deleted between opening the sheet and saving. A new event
+                        // is what the user asked for — under a UID of its own: the
+                        // old one may still be on its way out of the shared calendar
+                        // as <uid>.ics, and a second resource with that UID would
+                        // collide with it.
+                        // Should the provider drop the fresh UID, the row keeps the old one
+                        // (saving never clears a UID): the other devices then look for the
+                        // deleted event, which is what a deletion in the calendar means to
+                        // them anyway, and this device keeps its local link.
+                        linked = createEvent(UUID.randomUUID().toString(), fields)
+                            ?.also { (_, holds) -> entry = entry.copy(eventUid = holds.uid ?: entry.eventUid) }
+                        if (linked == null) {
+                            dropLink = true
+                            calendarHint = "Termin gespeichert. Der Kalendereintrag war gelöscht und ließ " +
+                                "sich nicht neu anlegen — prüfe den gewählten Kalender in den Einstellungen."
+                        }
+                    } else {
+                        // Still there but not writable, or not readable: the event
+                        // keeps its old time for now. This device's link and what it
+                        // saw go, so the next opening does not take a stale S for
+                        // proof of a deletion. With a UID it finds the event again
+                        // and, seeing it for the first time, lets the row win.
+                        dropLink = true
+                        calendarHint = "Termin gespeichert. Der Kalendereintrag ließ sich nicht ändern; " +
+                            "er wird beim nächsten Öffnen abgeglichen."
+                    }
+                }
 
-                SavePlan.Create ->
-                    preferences.calendarId?.let { CalendarStore.insert(getApplication(), it, fields) }
+                SavePlan.Create -> {
+                    linked = createEvent(entry.id, fields)?.also { (_, holds) -> entry = entry.copy(eventUid = holds.uid) }
+                    if (linked == null) {
+                        calendarHint = "Termin gespeichert. Der Kalendereintrag konnte nicht " +
+                            "geschrieben werden — prüfe die Berechtigung und den " +
+                            "gewählten Kalender in den Einstellungen."
+                    }
+                }
 
-                SavePlan.LocalOnly -> null
-                is SavePlan.Conflict -> null // already returned above
+                SavePlan.LocalOnly -> Unit
+                is SavePlan.Conflict -> Unit // already returned above
             }
 
             preferences.appointmentMinutes = draft.minutes
-            repo.setAppointment(draft.placeId, atIso, endIso, place, eventId)
-            repo.setStatus(draft.placeId, Status.APPOINTMENT)
-            _state.update {
-                it.copy(
-                    appointmentDraft = null,
-                    hint = if (preferences.calendarEnabled && plan !is SavePlan.LocalOnly && eventId == null) {
-                        "Termin gespeichert. Der Kalendereintrag konnte nicht " +
-                            "geschrieben werden — prüfe die Berechtigung und den " +
-                            "gewählten Kalender in den Einstellungen."
-                    } else {
-                        null
-                    },
-                )
+            repo.saveAppointment(entry)
+            when {
+                linked != null -> linked?.let { (eventId, holds) -> rememberSeen(entry.id, eventId, holds) }
+                dropLink -> repo.setCalendarLink(entry.id, null, null, null, null)
             }
+            Appointment.statusAfterSave(entry.startsAt, entry.endsAt, System.currentTimeMillis())
+                ?.let { repo.setStatus(draft.placeId, it) }
+            _state.update { it.copy(appointmentDraft = null, hint = calendarHint) }
             loadDetail(draft.placeId)
         }
     }
