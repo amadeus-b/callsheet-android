@@ -207,6 +207,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     private val syncEngine = SyncEngine(syncStore, preferences)
     private val syncGate = SyncGate<SyncResult?>()
 
+    /** Businesses whose read-back is under way. Touched only on the main thread. */
+    private val readingBack = HashSet<String>()
+
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
 
@@ -944,8 +947,10 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             var linked: Pair<Long, EventFields>? = null
             // This device's link is stale and goes — see the failed update below.
             var dropLink = false
-            // The event is still there, but what this device saw in it is stale: keep the shortcut, forget S.
+            // The event is still there but did not take the change: keep the shortcut, and as S
+            // what the event holds now (start, end, location), so the row wins next time.
             var keepShortcut: Long? = null
+            var keepSeen: Triple<String?, String?, String?>? = null
             // Said only to someone who switched the calendar on: to everyone else
             // an untouched calendar is exactly what they chose.
             var calendarHint: String? = when {
@@ -978,7 +983,10 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 is SavePlan.Update -> if (CalendarStore.update(context, plan.eventId, fields)) {
-                    entry = entry.copy(eventUid = entry.eventUid ?: Appointment.uidToTake(null, located?.event?.uid))
+                    entry = entry.copy(
+                        eventUid = entry.eventUid ?: Appointment.uidToTake(null, located?.event?.uid)
+                            ?.takeUnless { repo.heldByOther(entry.id, it, null) }
+                    )
                     linked = plan.eventId to fields
                 } else {
                     val afterFailure = calendarLookup { CalendarStore.read(context, plan.eventId) }
@@ -1002,13 +1010,25 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                     } else {
                         // Still there but not writable, or not readable: the event
                         // keeps its old time for now. This device keeps its shortcut
-                        // and forgets what it saw, so the next opening sees the event
-                        // for the first time and lets the row win.
+                        // and records as seen what the event holds now — or, where it
+                        // could not be read, what it saw before. The next opening then
+                        // finds the event unchanged and the row changed, and the row
+                        // wins. Forgetting what it saw would make that a first sight,
+                        // and the calendar would undo the edit.
                         keepShortcut = plan.eventId
+                        val current = afterFailure.getOrNull()
+                        keepSeen = if (current != null) {
+                            Triple(Clock.format(current.startMillis), Clock.format(current.endMillis), current.location)
+                        } else {
+                            Triple(existing?.seenStartsAt, existing?.seenEndsAt, existing?.seenLocation)
+                        }
                         // Taken now if the event had a UID the row lacks — without
-                        // one, a lost shortcut could never be found again.
-                        afterFailure.getOrNull()?.uid?.let { found ->
-                            Appointment.uidToTake(entry.eventUid, found)?.let { entry = entry.copy(eventUid = it) }
+                        // one, a lost shortcut could never be found again. Never one
+                        // another appointment already holds.
+                        current?.uid?.let { found ->
+                            Appointment.uidToTake(entry.eventUid, found)
+                                ?.takeUnless { repo.heldByOther(entry.id, it, null) }
+                                ?.let { entry = entry.copy(eventUid = it) }
                         }
                         calendarHint = "Termin gespeichert. Der Kalendereintrag ließ sich nicht ändern; " +
                             "er wird beim nächsten Öffnen abgeglichen."
@@ -1033,7 +1053,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             when {
                 linked != null -> linked?.let { (eventId, holds) -> rememberSeen(entry.id, eventId, holds) }
                 dropLink -> repo.setCalendarLink(entry.id, null, null, null, null)
-                else -> keepShortcut?.let { repo.setCalendarLink(entry.id, it, null, null, null) }
+                else -> keepShortcut?.let { repo.setCalendarLink(entry.id, it, keepSeen?.first, keepSeen?.second, keepSeen?.third) }
             }
             Appointment.statusAfterSave(entry.startsAt, entry.endsAt, System.currentTimeMillis())
                 ?.let { repo.setStatus(draft.placeId, it) }
@@ -1055,9 +1075,10 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
      * never passed on as "not found": seen before and ahead, that would read as
      * deleted in the calendar and delete the appointment on every device.
      *
-     * With [rowWinsOnly], only an event update is carried out: after a sync
-     * nobody is looking, so whatever would change a row or delete an
-     * appointment waits for the next opening, where a hint can say so.
+     * With [rowWinsOnly], only an event update is carried out, or an event in
+     * step recorded as seen: after a sync nobody is looking, so whatever would
+     * change a row or delete an appointment waits for the next opening, where a
+     * hint can say so.
      */
     private suspend fun reconcile(
         entry: AppointmentEntry,
@@ -1083,12 +1104,16 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             val found = calendarLookup { CalendarStore.findByUid(context, rowUid) }.getOrElse { return null }
             val target = Appointment.relinkTo(rowUid, event?.uid, located.eventId, found)
             if (target != null) {
+                // Linked with what the target holds as seen, so a row that differs
+                // wins on the next opening instead of meeting the event for the
+                // first time. Unreadable or gone: nothing is relinked or deleted.
+                val targetEvent = calendarLookup { CalendarStore.read(context, target) }.getOrNull() ?: return null
                 if (preferences.calendarEnabled && CalendarStore.canWrite(context) &&
                     !repo.heldByOther(entry.id, event?.uid, located.eventId)
                 ) {
                     CalendarStore.delete(context, located.eventId)
                 }
-                repo.setCalendarLink(entry.id, target, null, null, null)
+                rememberSeen(entry.id, target, targetEvent)
                 return null
             }
         }
@@ -1104,8 +1129,12 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
         // A row without a UID takes the one its event carries — a carried-over
         // appointment, or an event DAVx5 has uploaded since. A row that has one
-        // keeps it (see Appointment.uidToTake).
-        val uid = if (rowWinsOnly || event == null) null else Appointment.uidToTake(entry.eventUid, event.uid)
+        // keeps it (see Appointment.uidToTake). Never one another appointment holds.
+        val uid = if (rowWinsOnly || event == null) {
+            null
+        } else {
+            Appointment.uidToTake(entry.eventUid, event.uid)?.takeUnless { repo.heldByOther(entry.id, it, null) }
+        }
         if (uid != null) repo.setEventUid(entry.id, uid)
 
         when (outcome) {
@@ -1123,6 +1152,11 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 // row as it stands now — not onto the entry read before the
                 // lookup, or a note or contact saved in between would be undone.
                 val fresh = repo.appointment(entry.id) ?: return null
+                // Changed since the comparison — a pull brought a newer version,
+                // say: the next opening decides again.
+                if (fresh.startsAt != entry.startsAt || fresh.endsAt != entry.endsAt || fresh.location != entry.location) {
+                    return null
+                }
                 repo.saveAppointment(
                     fresh.copy(
                         startsAt = Clock.format(outcome.slot.startMillis),
@@ -1160,34 +1194,50 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     private fun reconcileAppointments(placeId: String) {
         viewModelScope.launch {
             if (!CalendarStore.canRead(getApplication())) return@launch
-            // Nothing is taken from the calendar onto a row before this device
-            // knows the server's version of it — an older row stamped newer
-            // would win over a change made elsewhere. No sync, no read-back:
-            // the next opening tries again.
-            if (preferences.serverUrl != null && preferences.serverToken != null) {
-                if (syncAndWait() !is SyncResult.Ok) return@launch
-            }
-            val business = repo.business(placeId) ?: return@launch
-            val now = System.currentTimeMillis()
-            val outcomes = repo.appointments(placeId)
-                .filter { it.eventUid != null || it.calendarEventId != null }
-                .mapNotNull { reconcile(it, business, now, rowWinsOnly = false) }
-            if (outcomes.isEmpty()) return@launch
-
-            if (Reconcile.DeletedInCalendar in outcomes) {
-                val fallback = Appointment.statusAfterRemoval(business.status, repo.appointments(placeId), now)
-                fallback?.let { repo.setStatus(placeId, it) }
-                _state.update {
-                    it.copy(
-                        hint = if (fallback != null) {
-                            "Der Termin wurde im Kalender gelöscht. Status zurück auf „Angerufen“."
-                        } else {
-                            "Der Termin wurde im Kalender gelöscht. Der Status bleibt, wie er ist."
-                        }
-                    )
+            // Nothing linked, nothing to read back — and no sync for it.
+            if (repo.appointments(placeId).none { it.eventUid != null || it.calendarEventId != null }) return@launch
+            // One read-back per business at a time: opened again while one waits
+            // for its sync, the second would only compare the same rows twice.
+            if (!readingBack.add(placeId)) return@launch
+            try {
+                // Nothing is taken from the calendar onto a row before this device
+                // knows the server's version of it — an older row stamped newer
+                // would win over a change made elsewhere. No sync, no read-back:
+                // the next opening tries again.
+                if (preferences.serverUrl != null && preferences.serverToken != null) {
+                    if (syncAndWait() !is SyncResult.Ok) return@launch
                 }
+                val business = repo.business(placeId) ?: return@launch
+                val now = System.currentTimeMillis()
+                // Read again after the sync: it may have brought newer rows.
+                val outcomes = repo.appointments(placeId)
+                    .filter { it.eventUid != null || it.calendarEventId != null }
+                    .mapNotNull { reconcile(it, business, now, rowWinsOnly = false) }
+                if (outcomes.isEmpty()) return@launch
+
+                // The sync may have taken long: the user may have moved on. The
+                // status is data and falls back regardless; hint and reload only
+                // for the business still on screen.
+                val stillShown = { (_state.value.screen as? Screen.Detail)?.placeId == placeId }
+                if (Reconcile.DeletedInCalendar in outcomes) {
+                    val fallback = Appointment.statusAfterRemoval(business.status, repo.appointments(placeId), now)
+                    fallback?.let { repo.setStatus(placeId, it) }
+                    if (stillShown()) {
+                        _state.update {
+                            it.copy(
+                                hint = if (fallback != null) {
+                                    "Der Termin wurde im Kalender gelöscht. Status zurück auf „Angerufen“."
+                                } else {
+                                    "Der Termin wurde im Kalender gelöscht. Der Status bleibt, wie er ist."
+                                }
+                            )
+                        }
+                    }
+                }
+                if (stillShown()) loadDetail(placeId)
+            } finally {
+                readingBack.remove(placeId)
             }
-            loadDetail(placeId)
         }
     }
 

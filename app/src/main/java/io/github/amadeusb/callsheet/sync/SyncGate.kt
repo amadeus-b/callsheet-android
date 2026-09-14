@@ -10,6 +10,9 @@ import kotlinx.coroutines.sync.withLock
  * that starts after the request — the running one was built before whatever
  * the request is about. Requests that queue behind the same run share the next
  * one instead of each starting their own. A run that throws covers nobody.
+ *
+ * Not reentrant: calling [run] from inside a block hangs, because the block
+ * holds the gate it would wait for. A block only ever launches further syncs.
  */
 class SyncGate<T> {
     private val mutex = Mutex()

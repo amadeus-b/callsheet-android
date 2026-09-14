@@ -72,7 +72,8 @@ data class Located<E>(val eventId: Long, val event: E)
  * DAVx5 brings it level at its own pace. So the calendar a device reads can be
  * behind the rows it holds, or ahead of them, and "the calendar wins" — the
  * rule for a single device — would undo changes made on another. The row wins
- * except where only the calendar moved.
+ * except where only the calendar moved, and on first sight, where the calendar
+ * wins as well — what a device has never seen, it takes from the calendar.
  */
 sealed interface Reconcile {
     /** Row and event agree. Only what this device saw is recorded. */
