@@ -22,7 +22,7 @@ class GeoUriTest {
         phone = null, website = null, email = null, contactName = null,
         rating = null, ratingCount = null, closed = false, isTarget = true,
         origin = emptyList(), collectedAt = null, status = Status.NEW, note = null,
-        followUpAt = null, updatedAt = "2026-09-08T12:00:00+02:00",
+        updatedAt = "2026-09-08T12:00:00+02:00",
         latitude = lat, longitude = lng,
     )
 

@@ -706,14 +706,6 @@ class AppointmentTest {
     }
 
     @Test
-    fun `a row in Heute reads time range and note`() {
-        val withNote = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00").copy(note = "Besichtigung")
-
-        assertEquals("${Appointment.readableRange(withNote.startsAt, withNote.endsAt)} · Besichtigung", Appointment.rowLabel(withNote))
-        assertEquals(Appointment.readableRange(withNote.startsAt, withNote.endsAt), Appointment.rowLabel(withNote.copy(note = null)))
-    }
-
-    @Test
     fun `the detail view shows ahead earliest first and past latest first`() {
         val all = listOf(
             entry("past-early", "2026-09-01T09:00:00+02:00", "2026-09-01T10:00:00+02:00"),

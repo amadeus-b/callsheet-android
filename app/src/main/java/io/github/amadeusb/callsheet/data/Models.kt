@@ -37,7 +37,6 @@ data class Business(
     val collectedAt: String?,
     val status: Status,
     val note: String?,
-    val followUpAt: String?,
     val updatedAt: String,
     /** From the import. Nothing reads them yet. */
     val latitude: Double? = null,

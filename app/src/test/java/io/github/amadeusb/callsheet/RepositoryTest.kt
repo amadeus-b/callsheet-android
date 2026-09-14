@@ -71,7 +71,6 @@ class RepositoryTest {
 
         repo.setStatus("P1", Status.APPOINTMENT)
         repo.setNote("P1", "Rueckruf bei Herrn Beispiel")
-        repo.setFollowUp("P1", Clock.format(System.currentTimeMillis() + 86_400_000))
         repo.logCall(
             CallEntry(
                 id = UUID.randomUUID().toString(),
@@ -83,8 +82,6 @@ class RepositoryTest {
             )
         )
 
-        val before = repo.business("P1")!!
-        val previousFollowUp = before.followUpAt
         val beforeP2 = repo.business("P2")!!.updatedAt
 
         val e = import(SECOND_IMPORT)
@@ -98,7 +95,6 @@ class RepositoryTest {
         // Arbeitsfelder unverändert …
         assertEquals(Status.APPOINTMENT, after.status)
         assertEquals("Rueckruf bei Herrn Beispiel", after.note)
-        assertEquals(previousFollowUp, after.followUpAt)
         // P1's own master data changes in SECOND_IMPORT (name, street,
         // categories, origin), so its updated_at is rightly refreshed — that
         // is not a work field and not what this test is about. P2 comes back
@@ -144,9 +140,9 @@ class RepositoryTest {
         assertTrue(repo.industries().none { it == "GaLaBau" })
         assertTrue(repo.cities().none { it == "Eichstaett" })
 
-        // … and not among the follow-ups either.
-        repo.setFollowUp("P2", Clock.format(System.currentTimeMillis() - 3_600_000))
-        assertTrue(repo.due().none { it.placeId == "P2" })
+        // … and not in the agenda either, not even with an overdue callback.
+        repo.saveAppointment(callback("R-2", "P2", Clock.format(System.currentTimeMillis() - 3_600_000)))
+        assertTrue(repo.agenda(Clock.todayStart()).none { it.second.placeId == "P2" })
 
         // Only the unblock list shows them.
         assertEquals(listOf("P2"), repo.blockedBusinesses().map { it.placeId })
@@ -241,30 +237,6 @@ class RepositoryTest {
 
         assertTrue(repo.business("P1")!!.updatedAt > before)
         assertTrue(repo.changes.value > counter)
-    }
-
-    @Test
-    fun `a follow-up can be cleared again`() = runTest {
-        import(FIRST_IMPORT)
-        repo.setFollowUp("P1", Clock.now())
-        assertNotNull(repo.business("P1")!!.followUpAt)
-        repo.setFollowUp("P1", null)
-        assertNull(repo.business("P1")!!.followUpAt)
-    }
-
-    @Test
-    fun `due returns overdue items first and nothing from the future`() = runTest {
-        import(FIRST_IMPORT)
-        val now = System.currentTimeMillis()
-        repo.setFollowUp("P1", Clock.format(now - 3 * 86_400_000L)) // lange überfällig
-        repo.setFollowUp("P3", Clock.format(now - 3_600_000L))      // heute fällig
-        repo.setFollowUp("P4", Clock.format(now + 86_400_000L))     // morgen
-
-        val due = repo.due(now)
-        assertEquals(listOf("P1", "P3"), due.map { it.placeId })
-
-        // Looking ahead picks up tomorrow's appointment.
-        assertEquals(3, repo.due(now + 2 * 86_400_000L).size)
     }
 
     @Test
@@ -857,60 +829,13 @@ class RepositoryTest {
     }
 
     @Test
-    fun `appointmentsDue returns one row per appointment, earliest first`() = runTest {
-        import(
-            """[
-              {"placeId":"t-4","title":"Spaeter","phone":"+49 841 111"},
-              {"placeId":"t-5","title":"Frueher","phone":"+49 841 222"}
-            ]"""
-        )
-        repo.saveAppointment(visit("A-4", "t-4", "2026-09-10T15:00:00+02:00", "2026-09-10T16:00:00+02:00"))
-        repo.saveAppointment(visit("A-5", "t-5", "2026-09-10T09:00:00+02:00", "2026-09-10T10:00:00+02:00"))
-        repo.saveAppointment(visit("A-6", "t-5", "2026-09-10T17:00:00+02:00", "2026-09-10T18:00:00+02:00"))
-        repo.saveAppointment(visit("A-7", "t-4", "2026-09-12T09:00:00+02:00", "2026-09-12T10:00:00+02:00"))
-
-        val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
-        val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
-        val due = repo.appointmentsDue(from, until)
-
-        assertEquals(listOf("A-5", "A-4", "A-6"), due.map { it.first.id })
-        assertEquals(listOf("t-5", "t-4", "t-5"), due.map { it.second.placeId })
-    }
-
-    @Test
-    fun `a past appointment is not due today`() = runTest {
-        import("""[{"placeId":"t-9","title":"Vorletzte Woche","phone":"+49 841 111"}]""")
-        repo.saveAppointment(visit("A-9", "t-9", "2026-08-27T09:00:00+02:00", "2026-08-27T10:00:00+02:00"))
-
-        val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
-        val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
-
-        assertTrue(repo.appointmentsDue(from, until).isEmpty())
-    }
-
-    @Test
-    fun `a blocked business never appears in appointmentsDue`() = runTest {
-        import("""[{"placeId":"t-7","title":"Gesperrt","phone":"+49 841 111"}]""")
-        repo.saveAppointment(visit("A-7", "t-7", "2026-09-10T09:00:00+02:00", "2026-09-10T10:00:00+02:00"))
-        repo.setStatus("t-7", Status.DO_NOT_CALL)
-
-        val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
-        val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
-
-        assertTrue(repo.appointmentsDue(from, until).isEmpty())
-    }
-
-    @Test
-    fun `a due appointment's business knows its contacts' numbers`() = runTest {
+    fun `an agenda entry's business knows its contacts' numbers`() = runTest {
         import("""[{"placeId":"t-8","title":"Ohne Hauptnummer"}]""")
         repo.saveContact(ContactDraft(placeId = "t-8", name = "Frau Meier", numbers = listOf(PhoneDraft(number = "+49 176 12345"))))
         repo.saveAppointment(visit("A-8", "t-8", "2026-09-10T09:00:00+02:00", "2026-09-10T10:00:00+02:00"))
 
-        val from = Clock.millis("2026-09-10T00:00:00+02:00")!!
-        val until = Clock.millis("2026-09-11T00:00:00+02:00")!!
-
-        // Without it the dial button in „Heute" would show nothing to dial.
-        assertTrue(repo.appointmentsDue(from, until).single().second.hasNumber)
+        // Without it the dial button in the agenda would show nothing to dial.
+        assertTrue(repo.agenda(Clock.millis("2026-09-10T00:00:00+02:00")!!).single().second.hasNumber)
     }
 
     // ------------------------------------------------------------- Callbacks

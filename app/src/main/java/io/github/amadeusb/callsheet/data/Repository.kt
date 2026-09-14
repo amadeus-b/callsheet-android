@@ -17,7 +17,7 @@ import java.io.InputStream
  * Two rules deliberately live in SQL rather than in the user interface:
  * 1. Businesses with status `do_not_call` show up in no list at all — only
  *    [blockedBusinesses] returns them.
- * 2. Re-importing only refreshes imported master data. Status, note, follow-up
+ * 2. Re-importing only refreshes imported master data. Status, note, appointments
  *    and call history are never touched.
  */
 class Repository(context: Context) {
@@ -63,7 +63,7 @@ class Repository(context: Context) {
             for (s in imported) {
                 val values = importedValues(s)
                 if (known.contains(s.placeId)) {
-                    // Imported master data only. status, note, follow_up_at and
+                    // Imported master data only. status, note and
                     // updated_at are deliberately absent from [importedValues].
                     val same = db.rawQuery(
                         "SELECT * FROM businesses WHERE place_id = ?", arrayOf(s.placeId),
@@ -224,43 +224,6 @@ class Repository(context: Context) {
         }
     }
 
-    /** Every follow-up due by [toMillis] — overdue ones included. */
-    suspend fun due(toMillis: Long = System.currentTimeMillis()): List<Business> =
-        withContext(Dispatchers.IO) {
-            val sql = "SELECT b.*, $NUMBERS_SUBQUERY FROM businesses b WHERE status <> ? " +
-                "AND follow_up_at IS NOT NULL AND follow_up_at <> ''"
-            helper.readableDatabase.rawQuery(sql, arrayOf(Status.DO_NOT_CALL.key)).use { c ->
-                allBusinesses(c)
-                    .mapNotNull { b -> Clock.millis(b.followUpAt)?.let { it to b } }
-                    .filter { it.first <= toMillis }
-                    .sortedBy { it.first }
-                    .map { it.second }
-            }
-        }
-
-    /**
-     * Appointments starting between [fromMillis] and [toMillis], earliest first,
-     * each with its business. Two appointments at one business are two entries.
-     *
-     * Note the lower bound, which [due] does not have. An overdue follow-up is
-     * still work to do — "you never rang back". An appointment from a fortnight
-     * ago is not; it happened, or it did not, and either way it does not belong
-     * under a heading that reads "today".
-     */
-    suspend fun appointmentsDue(fromMillis: Long, toMillis: Long): List<Pair<AppointmentEntry, Business>> =
-        withContext(Dispatchers.IO) {
-            val db = helper.readableDatabase
-            val due = db.rawQuery(
-                "SELECT a.* FROM appointments a JOIN businesses b ON b.place_id = a.place_id WHERE b.status <> ?",
-                arrayOf(Status.DO_NOT_CALL.key),
-            ).use { c -> allAppointments(c) }
-                .mapNotNull { a -> Clock.millis(a.startsAt)?.let { it to a } }
-                .filter { it.first in fromMillis..toMillis }
-                .sortedBy { it.first }
-                .map { it.second }
-            withBusinesses(db, due)
-        }
-
     /**
      * What the agenda lists, each with its business, earliest first: every open
      * callback, however old — it is work not done — and the visits from
@@ -344,13 +307,6 @@ class Repository(context: Context) {
 
     suspend fun setNote(placeId: String, note: String) = withContext(Dispatchers.IO) {
         updateBusiness(placeId) { put("note", note) }
-    }
-
-    /** Sets the follow-up, or clears it with `null`. */
-    suspend fun setFollowUp(placeId: String, iso: String?) = withContext(Dispatchers.IO) {
-        updateBusiness(placeId) {
-            if (iso == null) putNull("follow_up_at") else put("follow_up_at", iso)
-        }
     }
 
     /**
@@ -1018,7 +974,6 @@ class Repository(context: Context) {
         collectedAt = c.text("collected_at"),
         status = Status.fromKey(c.text("status")),
         note = c.text("note"),
-        followUpAt = c.text("follow_up_at"),
         updatedAt = c.text("updated_at") ?: "",
         latitude = c.decimal("latitude"),
         longitude = c.decimal("longitude"),

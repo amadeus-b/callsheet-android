@@ -46,7 +46,7 @@ class PhoneBookEntriesTest {
         phone = phone, website = website, email = email, contactName = contactName,
         rating = rating, ratingCount = ratingCount, closed = false, isTarget = true,
         origin = origin, collectedAt = null, status = Status.NEW, note = null,
-        followUpAt = null, updatedAt = "2026-09-14T12:00:00+02:00",
+        updatedAt = "2026-09-14T12:00:00+02:00",
     )
 
     private fun contact(

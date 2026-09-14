@@ -467,13 +467,6 @@ object Appointment {
         return listOfNotNull(contact.name, contact.numbers.firstOrNull()?.number).joinToString(" · ")
     }
 
-    /** For a row in „Termine heute": "Do, 10.09. · 14:00 – 15:00 · Besichtigung". */
-    fun rowLabel(entry: AppointmentEntry): String {
-        val range = readableRange(entry.startsAt, entry.endsAt)
-        val note = entry.note?.trim()?.ifEmpty { null } ?: return range
-        return "$range · $note"
-    }
-
     /**
      * An event's end in milliseconds. Most events carry `DTEND`; a recurring
      * one carries `DURATION` and an empty `DTEND`, which the provider hands back
