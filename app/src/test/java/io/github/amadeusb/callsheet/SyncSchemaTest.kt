@@ -27,7 +27,7 @@ class SyncSchemaTest {
 
     @Test
     fun `every synchronised table carries a dirty flag`() {
-        for (table in listOf("businesses", "calls", "contacts", "contact_numbers")) {
+        for (table in listOf("businesses", "calls", "contacts", "contact_numbers", "appointments")) {
             assertTrue("dirty missing on $table", columns(table).contains("dirty"))
         }
     }

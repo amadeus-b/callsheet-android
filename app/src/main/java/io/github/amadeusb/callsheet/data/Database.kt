@@ -42,13 +42,13 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
                 search_text     TEXT,
                 -- Set on every local write, cleared once the server has it.
                 dirty           INTEGER NOT NULL DEFAULT 0,
-                -- Appointment on site. Working fields, like status and
-                -- follow_up_at: an import never overwrites them.
+                -- The one appointment a business held up to schema 3. Emptied
+                -- by the migration to 4 and read by nothing since — the
+                -- appointments table holds them. Kept so a fresh and an
+                -- upgraded database have the same columns.
                 appointment_at       TEXT,
                 appointment_end_at   TEXT,
                 appointment_location TEXT,
-                -- The linked event in the device calendar, null while none
-                -- exists. Local to this device — see Rows.LOCAL_ONLY.
                 calendar_event_id    INTEGER,
                 -- Master data from the import, filled like every other imported
                 -- column. Nothing reads them yet.
@@ -79,6 +79,8 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         db.execSQL(TABLE_CONTACTS)
         db.execSQL(TABLE_NUMBERS)
         db.execSQL(TABLE_DELETIONS)
+        db.execSQL(TABLE_APPOINTMENTS)
+        for (sql in INDEXES_APPOINTMENTS) db.execSQL(sql)
         db.execSQL("CREATE INDEX idx_businesses_status ON businesses(status)")
         db.execSQL("CREATE INDEX idx_businesses_industry ON businesses(industry)")
         db.execSQL("CREATE INDEX idx_businesses_is_target ON businesses(is_target)")
@@ -133,6 +135,50 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             db.execSQL("ALTER TABLE businesses ADD COLUMN longitude REAL")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_businesses_appointment ON businesses(appointment_at)")
         }
+        if (old < 4) {
+            db.execSQL(TABLE_APPOINTMENTS)
+            for (sql in INDEXES_APPOINTMENTS) db.execSQL(sql)
+            // The one appointment per business becomes a row. The id is fixed,
+            // not a fresh UUID: the server's migration 005 writes the same
+            // 'legacy-' || place_id, so the two meet as one row instead of
+            // every appointment existing twice. updated_at comes from the
+            // business for the same reason — where it was synchronised, both
+            // sides hold the same timestamp.
+            //
+            // The link to the event stays, and what this device saw in the
+            // event is taken from the old columns: the read-back has kept the
+            // two in step so far. The UID is not known yet; the first
+            // read-back that finds the event stores it.
+            //
+            // Marked dirty: an appointment never uploaded still reaches the
+            // server, and one the server already has arrives as a standstill.
+            db.execSQL(
+                """
+                INSERT INTO appointments (
+                    id, place_id, starts_at, ends_at, location, updated_at,
+                    calendar_event_id, calendar_seen_starts_at, calendar_seen_ends_at, calendar_seen_location,
+                    dirty
+                )
+                SELECT 'legacy-' || place_id, place_id, appointment_at, appointment_end_at, appointment_location, updated_at,
+                       calendar_event_id,
+                       CASE WHEN calendar_event_id IS NOT NULL THEN appointment_at END,
+                       CASE WHEN calendar_event_id IS NOT NULL THEN appointment_end_at END,
+                       CASE WHEN calendar_event_id IS NOT NULL THEN appointment_location END,
+                       1
+                FROM businesses
+                WHERE appointment_at IS NOT NULL AND appointment_at <> ''
+                """.trimIndent()
+            )
+            // Emptied on both sides, or the server would fill the gap straight
+            // back on the next standstill. Not a change to the business: no
+            // updated_at, no mark.
+            db.execSQL(
+                "UPDATE businesses SET appointment_at = NULL, appointment_end_at = NULL, " +
+                    "appointment_location = NULL, calendar_event_id = NULL " +
+                    "WHERE appointment_at IS NOT NULL OR appointment_end_at IS NOT NULL " +
+                    "OR appointment_location IS NOT NULL OR calendar_event_id IS NOT NULL"
+            )
+        }
     }
 
     /**
@@ -148,7 +194,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
 
     companion object {
         const val NAME = "callsheet.db"
-        const val VERSION = 3
+        const val VERSION = 4
 
         @Volatile
         private var shared: Database? = null
@@ -220,6 +266,42 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
 
         private const val INDEX_NUMBERS =
             "CREATE INDEX idx_contact_numbers_contact ON contact_numbers(contact_id)"
+
+        /**
+         * Appointments on site, several per business. Synchronised like
+         * contacts: a UUID per row, deleted through tombstones.
+         *
+         * `event_uid` names the linked calendar event by its iCalendar UID,
+         * which is the same on every device carrying the shared calendar, so it
+         * travels. The `calendar_` columns do not (see Rows.LOCAL_ONLY): an
+         * event's `_ID`, and what this device last saw in it, describe this
+         * device's calendar provider and nothing else.
+         */
+        private const val TABLE_APPOINTMENTS = """
+            CREATE TABLE appointments (
+                id                      TEXT PRIMARY KEY,
+                place_id                TEXT NOT NULL,
+                starts_at               TEXT NOT NULL,
+                ends_at                 TEXT,
+                location                TEXT,
+                note                    TEXT,
+                contact_id              TEXT,
+                updated_at              TEXT NOT NULL,
+                event_uid               TEXT,
+                calendar_event_id       INTEGER,
+                calendar_seen_starts_at TEXT,
+                calendar_seen_ends_at   TEXT,
+                calendar_seen_location  TEXT,
+                dirty                   INTEGER NOT NULL DEFAULT 0
+            )
+        """
+
+        private val INDEXES_APPOINTMENTS = listOf(
+            "CREATE INDEX idx_appointments_place_id ON appointments(place_id)",
+            "CREATE INDEX idx_appointments_starts_at ON appointments(starts_at)",
+            "CREATE INDEX idx_appointments_event_uid ON appointments(event_uid)",
+            "CREATE INDEX idx_appointments_dirty ON appointments(dirty)",
+        )
 
         /**
          * Tombstones. Contacts and their numbers are the only rows the app deletes;

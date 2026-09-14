@@ -114,6 +114,46 @@ class MigrationTest {
         db.close()
     }
 
+    /**
+     * The version 3 schema, as it shipped in 1.2.0–1.3.1: version 2 plus the
+     * appointment columns on businesses. alt-1 has an appointment linked to an
+     * event on this device, alt-2 one without a link, alt-3 none. All three
+     * already synchronised (dirty = 0).
+     */
+    private fun createVersionThree() {
+        createVersionTwo()
+        val db = context.openOrCreateDatabase("callsheet.db", 0, null)
+        for (column in listOf(
+            "appointment_at TEXT", "appointment_end_at TEXT", "appointment_location TEXT",
+            "calendar_event_id INTEGER", "latitude REAL", "longitude REAL",
+        )) {
+            db.execSQL("ALTER TABLE businesses ADD COLUMN $column")
+        }
+        db.execSQL("CREATE INDEX idx_businesses_appointment ON businesses(appointment_at)")
+        db.execSQL(
+            "UPDATE businesses SET appointment_at = '2026-09-10T14:00:00+02:00', " +
+                "appointment_end_at = '2026-09-10T15:00:00+02:00', " +
+                "appointment_location = 'Zehentstraße 39, 85055 Ingolstadt', calendar_event_id = 4711, dirty = 0 " +
+                "WHERE place_id = 'alt-1'"
+        )
+        db.execSQL(
+            "INSERT INTO businesses (place_id, name, status, updated_at, dirty, appointment_at, appointment_end_at) " +
+                "VALUES ('alt-2', 'Zweiter Betrieb', 'appointment', '2026-09-08T09:00:00+02:00', 0, " +
+                "'2026-09-12T09:00:00+02:00', '2026-09-12T10:00:00+02:00')"
+        )
+        db.execSQL(
+            "INSERT INTO businesses (place_id, name, status, updated_at, dirty) " +
+                "VALUES ('alt-3', 'Ohne Termin', 'new', '2026-09-08T09:00:00+02:00', 0)"
+        )
+        db.version = 3
+        db.close()
+    }
+
+    private fun columnsOf(table: String, db: android.database.sqlite.SQLiteDatabase): Set<String> =
+        db.rawQuery("PRAGMA table_info($table)", null).use { c ->
+            generateSequence { if (c.moveToNext()) c.getString(1) else null }.toSet()
+        }
+
     private fun columnsOfBusinesses(): Set<String> =
         Database(context).readableDatabase
             .rawQuery("PRAGMA table_info(businesses)", null).use { c ->
@@ -187,6 +227,110 @@ class MigrationTest {
         db.rawQuery("SELECT COUNT(*) FROM deletions", null).use { c ->
             assertTrue(c.moveToFirst())
         }
+    }
+
+    // --- from version 3, the road 1.3.x devices are on ----------------------
+
+    @Test
+    fun `an upgrade from version three carries each appointment over as a row of its own`() {
+        createVersionThree()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery(
+            "SELECT id, place_id, starts_at, ends_at, location, note, contact_id, event_uid, updated_at " +
+                "FROM appointments ORDER BY id",
+            null,
+        ).use { c ->
+            assertEquals(2, c.count)
+            assertTrue(c.moveToFirst())
+            assertEquals("legacy-alt-1", c.getString(0))
+            assertEquals("alt-1", c.getString(1))
+            assertEquals("2026-09-10T14:00:00+02:00", c.getString(2))
+            assertEquals("2026-09-10T15:00:00+02:00", c.getString(3))
+            assertEquals("Zehentstraße 39, 85055 Ingolstadt", c.getString(4))
+            assertTrue(c.isNull(5))
+            assertTrue(c.isNull(6))
+            assertTrue(c.isNull(7))
+            // The business's timestamp, so the server's carried-over row meets
+            // this one as a standstill.
+            assertEquals("2026-09-07T12:00:00+02:00", c.getString(8))
+            assertTrue(c.moveToNext())
+            assertEquals("legacy-alt-2", c.getString(0))
+        }
+    }
+
+    @Test
+    fun `an upgrade from version three keeps the calendar link and what this device saw`() {
+        createVersionThree()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery(
+            "SELECT calendar_event_id, calendar_seen_starts_at, calendar_seen_ends_at, calendar_seen_location " +
+                "FROM appointments WHERE id = 'legacy-alt-1'",
+            null,
+        ).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals(4711L, c.getLong(0))
+            assertEquals("2026-09-10T14:00:00+02:00", c.getString(1))
+            assertEquals("2026-09-10T15:00:00+02:00", c.getString(2))
+            assertEquals("Zehentstraße 39, 85055 Ingolstadt", c.getString(3))
+        }
+        // Without a link there is nothing this device has seen.
+        db.rawQuery(
+            "SELECT calendar_event_id, calendar_seen_starts_at FROM appointments WHERE id = 'legacy-alt-2'", null,
+        ).use { c ->
+            assertTrue(c.moveToFirst())
+            assertTrue(c.isNull(0))
+            assertTrue(c.isNull(1))
+        }
+    }
+
+    @Test
+    fun `an upgrade from version three marks the carried-over rows for upload`() {
+        createVersionThree()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery("SELECT COUNT(*) FROM appointments WHERE dirty = 1", null).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals(2, c.getInt(0))
+        }
+    }
+
+    @Test
+    fun `an upgrade from version three empties the old columns without marking the business`() {
+        createVersionThree()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery(
+            "SELECT appointment_at, appointment_end_at, appointment_location, calendar_event_id, dirty, updated_at " +
+                "FROM businesses WHERE place_id = 'alt-1'",
+            null,
+        ).use { c ->
+            assertTrue(c.moveToFirst())
+            for (i in 0..3) assertTrue("column $i not emptied", c.isNull(i))
+            assertEquals(0, c.getInt(4))
+            assertEquals("2026-09-07T12:00:00+02:00", c.getString(5))
+        }
+        assertTrue(columnsOfBusinesses().containsAll(appointmentColumns))
+    }
+
+    @Test
+    fun `a fresh database and an upgraded one have the same appointments table`() {
+        createVersionThree()
+        val upgraded = Database(context).readableDatabase.let { db -> columnsOf("appointments", db).also { db.close() } }
+        Database.resetSharedInstanceForTesting()
+        context.deleteDatabase("callsheet.db")
+
+        val fresh = columnsOf("appointments", Database(context).readableDatabase)
+
+        // PRAGMA on a missing table returns no columns on both sides, which
+        // would compare equal before the table exists.
+        assertTrue("event_uid" in fresh)
+        assertEquals(fresh, upgraded)
     }
 
     // --- and a database that never had to migrate at all ---------------------
