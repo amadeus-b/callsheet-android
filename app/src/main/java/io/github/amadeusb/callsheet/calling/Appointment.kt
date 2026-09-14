@@ -1,6 +1,8 @@
 package io.github.amadeusb.callsheet.calling
 
+import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.Clock
+import io.github.amadeusb.callsheet.data.Status
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
@@ -51,6 +53,44 @@ sealed interface ReadBack {
 
     /** The event is gone. The only case that needs the user told. */
     data object Gone : ReadBack
+}
+
+/**
+ * An appointment's time and place as the read-back compares them — for the
+ * row, for the event, and for what this device last saw in the event.
+ */
+data class Slot(val startMillis: Long, val endMillis: Long?, val location: String?)
+
+/**
+ * What reading an appointment's event back calls for.
+ *
+ * The calendar is shared: every device carries the same CalDAV calendar and
+ * DAVx5 brings it level at its own pace. So the calendar a device reads can be
+ * behind the rows it holds, or ahead of them, and "the calendar wins" — the
+ * rule for a single device — would undo changes made on another. The row wins
+ * except where only the calendar moved.
+ */
+sealed interface Reconcile {
+    /** Row and event agree. Only what this device saw is recorded. */
+    data object InStep : Reconcile
+
+    /** Moved or relocated in the calendar, and nowhere else: the row takes [slot]. */
+    data class TakeEvent(val slot: Slot) : Reconcile
+
+    /** Changed on another device, or this calendar is behind: the event is updated from the row. */
+    data object UpdateEvent : Reconcile
+
+    /** Not found, and never seen on this device: it may not have arrived yet. */
+    data object NotYetHere : Reconcile
+
+    /** Seen before, gone now, appointment still ahead: deleted in the calendar. */
+    data object DeletedInCalendar : Reconcile
+
+    /**
+     * Seen before, gone now, appointment already past. Calendars clear out old
+     * events on their own; that must not erase the record. Only the link goes.
+     */
+    data object Unlink : Reconcile
 }
 
 /**
@@ -183,6 +223,98 @@ object Appointment {
 
     /** Within a minute counts as the same moment. */
     private fun near(a: Long?, b: Long): Boolean = a != null && abs(a - b) < 60_000L
+
+    /**
+     * Whether an appointment is still ahead: its end — or its start, where it
+     * has none — lies in the future. The one definition behind the status, the
+     * read-back and the split in the detail view.
+     */
+    fun isAhead(startsAt: String?, endsAt: String?, nowMillis: Long): Boolean {
+        val last = Clock.millis(endsAt) ?: Clock.millis(startsAt) ?: return false
+        return last > nowMillis
+    }
+
+    /**
+     * The status to set after saving, or null to leave it. An appointment still
+     * ahead means one was agreed; a past one entered after the fact says
+     * nothing about where the business stands now.
+     */
+    fun statusAfterSave(startsAt: String, endsAt: String?, nowMillis: Long): Status? =
+        if (isAhead(startsAt, endsAt, nowMillis)) Status.APPOINTMENT else null
+
+    /**
+     * The status after an appointment went away — removed, or deleted in the
+     * calendar — or null to leave it. [remaining] are the business's
+     * appointments without that one.
+     *
+     * Only the status an appointment set is taken back, and only once none is
+     * left ahead. `declined` and `do_not_call` are decisions made on the phone;
+     * a removed appointment is not permission to undo them.
+     */
+    fun statusAfterRemoval(status: Status, remaining: List<AppointmentEntry>, nowMillis: Long): Status? {
+        if (status != Status.APPOINTMENT) return null
+        return if (remaining.none { isAhead(it.startsAt, it.endsAt, nowMillis) }) Status.CALLED else null
+    }
+
+    /** The row's slot. Null when its start cannot be read. */
+    fun rowSlot(entry: AppointmentEntry): Slot? {
+        val start = Clock.millis(entry.startsAt) ?: return null
+        return Slot(start, Clock.millis(entry.endsAt), entry.location)
+    }
+
+    /** What this device last saw in the event. Null while it never saw it. */
+    fun seenSlot(entry: AppointmentEntry): Slot? {
+        val start = Clock.millis(entry.seenStartsAt) ?: return null
+        return Slot(start, Clock.millis(entry.seenEndsAt), entry.seenLocation)
+    }
+
+    /**
+     * Compares the row (R), the event (E) and what this device last saw in the
+     * event (S). A null [event] means it was not found on this device.
+     *
+     * | S     | E = S | R = S | result                          |
+     * |-------|-------|-------|---------------------------------|
+     * | none  |       |       | E = R: in step, else R wins     |
+     * | set   | yes   | yes   | in step                         |
+     * | set   | no    | yes   | E wins                          |
+     * | set   | yes   | no    | R wins                          |
+     * | set   | no    | no    | E = R: in step, else R wins     |
+     *
+     * Where both changed, the row wins: it is what every device shows, and the
+     * calendar gives no modification time to compare.
+     */
+    fun reconcile(row: Slot, seen: Slot?, event: Slot?, nowMillis: Long): Reconcile {
+        if (event == null) {
+            if (seen == null) return Reconcile.NotYetHere
+            val last = row.endMillis ?: row.startMillis
+            return if (last > nowMillis) Reconcile.DeletedInCalendar else Reconcile.Unlink
+        }
+        if (sameSlot(event, row)) return Reconcile.InStep
+        if (seen == null) return Reconcile.UpdateEvent
+        val onlyTheCalendarMoved = !sameSlot(event, seen) && sameSlot(row, seen)
+        return if (onlyTheCalendarMoved) Reconcile.TakeEvent(event) else Reconcile.UpdateEvent
+    }
+
+    /**
+     * Whether this device's record of the event is already current: the same
+     * `_ID`, and a seen slot that matches what the event holds. The read-back
+     * records the event only when it is not — rewriting an unchanged link on
+     * every opening would notify every observer of the database for nothing.
+     */
+    fun seenIsCurrent(entry: AppointmentEntry, eventId: Long, event: Slot): Boolean {
+        val seen = seenSlot(entry) ?: return false
+        return entry.calendarEventId == eventId && sameSlot(seen, event)
+    }
+
+    /**
+     * Within a minute, locations after trimming. A missing end on either side is
+     * no difference: an event always has one, a row may not.
+     */
+    private fun sameSlot(a: Slot, b: Slot): Boolean {
+        val sameEnd = a.endMillis == null || b.endMillis == null || near(a.endMillis, b.endMillis)
+        return near(a.startMillis, b.startMillis) && sameEnd &&
+            a.location?.trim().orEmpty() == b.location?.trim().orEmpty()
+    }
 
     /** For the interface: "Do, 10.09. · 14:00 – 15:00". */
     fun readableRange(startIso: String?, endIso: String?): String {

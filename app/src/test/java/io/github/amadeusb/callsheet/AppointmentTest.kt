@@ -3,9 +3,14 @@ package io.github.amadeusb.callsheet
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
 import io.github.amadeusb.callsheet.calling.ReadBack
+import io.github.amadeusb.callsheet.calling.Reconcile
 import io.github.amadeusb.callsheet.calling.SavePlan
+import io.github.amadeusb.callsheet.calling.Slot
+import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.Clock
+import io.github.amadeusb.callsheet.data.Status
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -282,5 +287,169 @@ class AppointmentTest {
         )
 
         assertEquals(ReadBack.Gone, outcome)
+    }
+
+    // --- ahead, and the status -----------------------------------------------
+
+    private fun instant(iso: String): Long = Clock.millis(iso)!!
+
+    private val noon = instant("2026-09-10T12:00:00+02:00")
+
+    private fun entry(id: String, startsAt: String, endsAt: String? = null) = AppointmentEntry(
+        id = id, placeId = "P1", startsAt = startsAt, endsAt = endsAt,
+        location = null, note = null, contactId = null,
+    )
+
+    @Test
+    fun `an appointment is ahead until its end has passed`() {
+        assertTrue(Appointment.isAhead("2026-09-10T11:00:00+02:00", "2026-09-10T13:00:00+02:00", noon))
+        assertFalse(Appointment.isAhead("2026-09-10T10:00:00+02:00", "2026-09-10T11:00:00+02:00", noon))
+    }
+
+    @Test
+    fun `without an end, the start decides`() {
+        assertTrue(Appointment.isAhead("2026-09-10T13:00:00+02:00", null, noon))
+        assertFalse(Appointment.isAhead("2026-09-10T11:00:00+02:00", null, noon))
+    }
+
+    @Test
+    fun `saving an appointment still ahead sets the status`() {
+        assertEquals(Status.APPOINTMENT, Appointment.statusAfterSave("2026-09-11T09:00:00+02:00", "2026-09-11T10:00:00+02:00", noon))
+    }
+
+    @Test
+    fun `entering a past appointment after the fact leaves the status alone`() {
+        assertNull(Appointment.statusAfterSave("2026-09-01T09:00:00+02:00", "2026-09-01T10:00:00+02:00", noon))
+    }
+
+    @Test
+    fun `removing the last appointment ahead puts the status back to called`() {
+        val pastOnly = listOf(entry("A-1", "2026-09-01T09:00:00+02:00", "2026-09-01T10:00:00+02:00"))
+
+        assertEquals(Status.CALLED, Appointment.statusAfterRemoval(Status.APPOINTMENT, pastOnly, noon))
+        assertEquals(Status.CALLED, Appointment.statusAfterRemoval(Status.APPOINTMENT, emptyList(), noon))
+    }
+
+    @Test
+    fun `removing one while another is still ahead keeps the status`() {
+        val another = listOf(entry("A-2", "2026-09-12T09:00:00+02:00", "2026-09-12T10:00:00+02:00"))
+
+        assertNull(Appointment.statusAfterRemoval(Status.APPOINTMENT, another, noon))
+    }
+
+    @Test
+    fun `removing never touches a status other than appointment`() {
+        assertNull(Appointment.statusAfterRemoval(Status.DECLINED, emptyList(), noon))
+        assertNull(Appointment.statusAfterRemoval(Status.DO_NOT_CALL, emptyList(), noon))
+    }
+
+    // --- reconcile: the read-back table ---------------------------------------
+
+    private fun slot(start: String, end: String? = null, location: String? = null) =
+        Slot(instant(start), end?.let { instant(it) }, location)
+
+    private val planned = slot("2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Zehentstraße 39")
+    private val later = slot("2026-09-10T16:00:00+02:00", "2026-09-10T17:00:00+02:00", "Zehentstraße 39")
+    private val office = slot("2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Im Büro")
+    private val dayBefore = instant("2026-09-09T12:00:00+02:00")
+    private val dayAfter = instant("2026-09-11T12:00:00+02:00")
+
+    @Test
+    fun `first sight of an event that matches the row changes nothing`() {
+        assertEquals(Reconcile.InStep, Appointment.reconcile(row = planned, seen = null, event = planned, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `first sight of an event that differs lets the row win`() {
+        // This device's calendar may simply not have caught up.
+        assertEquals(Reconcile.UpdateEvent, Appointment.reconcile(row = later, seen = null, event = planned, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `nothing moved, nothing to do`() {
+        assertEquals(Reconcile.InStep, Appointment.reconcile(row = planned, seen = planned, event = planned, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `moved in the calendar, the event wins`() {
+        assertEquals(Reconcile.TakeEvent(later), Appointment.reconcile(row = planned, seen = planned, event = later, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `relocated in the calendar, the event wins`() {
+        assertEquals(Reconcile.TakeEvent(office), Appointment.reconcile(row = planned, seen = planned, event = office, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `changed on another device, the row wins`() {
+        assertEquals(Reconcile.UpdateEvent, Appointment.reconcile(row = later, seen = planned, event = planned, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `changed on both sides to the same, nothing to do`() {
+        assertEquals(Reconcile.InStep, Appointment.reconcile(row = later, seen = planned, event = later, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `changed on both sides differently, the row wins`() {
+        assertEquals(Reconcile.UpdateEvent, Appointment.reconcile(row = later, seen = planned, event = office, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `seconds and surrounding spaces are no difference`() {
+        val event = Slot(planned.startMillis + 30_000L, planned.endMillis!! + 30_000L, " Zehentstraße 39 ")
+
+        assertEquals(Reconcile.InStep, Appointment.reconcile(row = planned, seen = planned, event = event, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `a row without an end is not a difference from the event's end`() {
+        val row = slot("2026-09-10T14:00:00+02:00", null, "Zehentstraße 39")
+
+        assertEquals(Reconcile.InStep, Appointment.reconcile(row = row, seen = null, event = planned, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `an event never seen on this device and not found means nothing yet`() {
+        assertEquals(Reconcile.NotYetHere, Appointment.reconcile(row = planned, seen = null, event = null, nowMillis = dayBefore))
+        assertEquals(Reconcile.NotYetHere, Appointment.reconcile(row = planned, seen = null, event = null, nowMillis = dayAfter))
+    }
+
+    @Test
+    fun `an event seen before and gone while the appointment is ahead was deleted`() {
+        assertEquals(Reconcile.DeletedInCalendar, Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `an event seen before and gone after the appointment only loses the link`() {
+        // Calendars clear out old events on their own; the record stays.
+        assertEquals(Reconcile.Unlink, Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayAfter))
+    }
+
+    @Test
+    fun `the row slot and the seen slot are read from the entry`() {
+        val linked = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00")
+            .copy(location = "Zehentstraße 39", seenStartsAt = "2026-09-10T16:00:00+02:00", seenEndsAt = "2026-09-10T17:00:00+02:00", seenLocation = "Zehentstraße 39")
+
+        assertEquals(planned, Appointment.rowSlot(linked))
+        assertEquals(later, Appointment.seenSlot(linked))
+        assertNull(Appointment.seenSlot(linked.copy(seenStartsAt = null)))
+    }
+
+    @Test
+    fun `a record of the event is current only with the same link and a matching slot`() {
+        // In step, the read-back writes nothing unless this is false — a link
+        // rewritten on every opening would notify every observer for nothing.
+        val recorded = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00").copy(
+            calendarEventId = 4711L,
+            seenStartsAt = "2026-09-10T14:00:00+02:00",
+            seenEndsAt = "2026-09-10T15:00:00+02:00",
+            seenLocation = "Zehentstraße 39",
+        )
+
+        assertTrue(Appointment.seenIsCurrent(recorded, 4711L, planned))
+        assertFalse(Appointment.seenIsCurrent(recorded, 815L, planned))
+        assertFalse(Appointment.seenIsCurrent(recorded, 4711L, later))
+        assertFalse(Appointment.seenIsCurrent(recorded.copy(seenStartsAt = null), 4711L, planned))
     }
 }
