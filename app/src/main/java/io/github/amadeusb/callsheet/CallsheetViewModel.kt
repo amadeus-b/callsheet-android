@@ -1184,7 +1184,14 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             }
             Appointment.statusAfterSave(entry.kind, entry.startsAt, entry.endsAt, System.currentTimeMillis())
                 ?.let { repo.setStatus(draft.placeId, it) }
-            _state.update { it.copy(appointmentDraft = null, hint = calendarHint) }
+            _state.update {
+                it.copy(
+                    appointmentDraft = null,
+                    hint = calendarHint,
+                    // The suggestion after a call is answered once a callback is saved.
+                    followUpSuggestion = if (kind == AppointmentKind.CALLBACK) null else it.followUpSuggestion,
+                )
+            }
             loadDetail(draft.placeId)
             // Up at once: until the row reaches the server, a device that gets the
             // moved event through DAVx5 first would take the calendar's time onto
@@ -1701,14 +1708,6 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 savesOutcome = false,
             )
             if (status == Status.DO_NOT_CALL) showWorkList() else loadDetail(placeId)
-        }
-    }
-
-    fun setFollowUp(placeId: String, iso: String?) {
-        viewModelScope.launch {
-            repo.setFollowUp(placeId, iso)
-            _state.value = _state.value.copy(followUpSuggestion = null)
-            loadDetail(placeId)
         }
     }
 

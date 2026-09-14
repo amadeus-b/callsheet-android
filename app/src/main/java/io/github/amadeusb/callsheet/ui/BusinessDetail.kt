@@ -63,6 +63,7 @@ import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.FollowUp
 import io.github.amadeusb.callsheet.calling.LegitimateInterest
 import io.github.amadeusb.callsheet.data.AppointmentEntry
+import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.Business
@@ -95,7 +96,8 @@ fun BusinessDetailScreen(
     onDial: (DialTarget) -> Unit,
     onOutcome: (Status, String) -> Unit,
     onContact: (String?) -> Unit,
-    onFollowUp: (String?) -> Unit,
+    /** Opens the sheet for a new callback at the given start. */
+    onCallback: (String) -> Unit,
     onAppointment: (String?) -> Unit,
     onRemoveAppointment: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
@@ -106,6 +108,8 @@ fun BusinessDetailScreen(
 ) {
     var blockConfirm by remember { mutableStateOf(false) }
     var removeAppointment by remember { mutableStateOf<AppointmentEntry?>(null) }
+    val visits = appointments.filter { it.kind == AppointmentKind.VISIT }
+    val callbacks = appointments.filter { it.kind == AppointmentKind.CALLBACK }
 
     // Status and note are only taken over by the save button. Until then the
     // draft lives here; it resets as soon as the saved state catches up or a
@@ -275,7 +279,7 @@ fun BusinessDetailScreen(
                 Section("Termin vor Ort")
                 AppointmentsBlock(
                     business = business,
-                    appointments = appointments,
+                    appointments = visits,
                     contacts = contacts,
                     onSet = onAppointment,
                     onRemove = { removeAppointment = it },
@@ -285,10 +289,14 @@ fun BusinessDetailScreen(
 
             item(key = "follow-up") {
                 Section("Wiedervorlage")
-                FollowUpBlock(
-                    set = business.followUpAt,
+                CallbacksBlock(
+                    placeId = business.placeId,
+                    callbacks = callbacks,
+                    contacts = contacts,
                     suggestion = followUpSuggestion,
-                    onFollowUp = onFollowUp,
+                    onCallback = onCallback,
+                    onEdit = { id -> onAppointment(id) },
+                    onRemove = { removeAppointment = it },
                     onPickDate = { dateOpen = true },
                 )
             }
@@ -352,21 +360,34 @@ fun BusinessDetailScreen(
 
     removeAppointment?.let { entry ->
         val now = System.currentTimeMillis()
-        val ahead = Appointment.isAhead(entry.startsAt, entry.endsAt, now)
-        val fallsBack = Appointment.statusAfterRemoval(
+        val callback = entry.kind == AppointmentKind.CALLBACK
+        // A record is what stays as proof: a past visit, a completed callback.
+        val record = if (callback) entry.doneAt != null else !Appointment.isAhead(entry.startsAt, entry.endsAt, now)
+        val fallsBack = !callback && Appointment.statusAfterRemoval(
             business.status, appointments.filter { it.id != entry.id }, now,
         ) != null
         AlertDialog(
             onDismissRequest = { removeAppointment = null },
-            title = { Text(if (ahead) "Termin entfernen?" else "Früheren Termin entfernen?") },
+            title = {
+                Text(
+                    when {
+                        callback && record -> "Erledigten Rückruf entfernen?"
+                        callback -> "Rückruf entfernen?"
+                        record -> "Früheren Termin entfernen?"
+                        else -> "Termin entfernen?"
+                    }
+                )
+            },
             text = {
                 Text(
                     listOfNotNull(
-                        if (ahead) {
-                            "Der Termin wird auch aus dem Kalender gelöscht."
-                        } else {
-                            "Der Termin ist vorbei und bleibt sonst als Nachweis stehen. " +
+                        when {
+                            callback && record -> "Der Rückruf ist erledigt und bleibt sonst als Nachweis stehen. " +
                                 "Er wird auch aus dem Kalender gelöscht."
+                            callback -> "Der Rückruf wird auch aus dem Kalender gelöscht."
+                            record -> "Der Termin ist vorbei und bleibt sonst als Nachweis stehen. " +
+                                "Er wird auch aus dem Kalender gelöscht."
+                            else -> "Der Termin wird auch aus dem Kalender gelöscht."
                         },
                         "Der Status fällt zurück auf „Angerufen“.".takeIf { fallsBack },
                     ).joinToString(" ")
@@ -386,8 +407,7 @@ fun BusinessDetailScreen(
 
     if (dateOpen) {
         val state = rememberDatePickerState(
-            initialSelectedDateMillis = Clock.millis(business.followUpAt)
-                ?: System.currentTimeMillis(),
+            initialSelectedDateMillis = System.currentTimeMillis(),
         )
         DatePickerDialog(
             onDismissRequest = { dateOpen = false },
@@ -429,10 +449,9 @@ fun BusinessDetailScreen(
     }
 
     if (timeOpen) {
-        val prefill = Clock.millis(business.followUpAt)?.let { Clock.zdt(it) }
         val state = rememberTimePickerState(
-            initialHour = prefill?.hour ?: 10,
-            initialMinute = prefill?.minute ?: 0,
+            initialHour = 10,
+            initialMinute = 0,
             is24Hour = true,
         )
         AlertDialog(
@@ -449,7 +468,7 @@ fun BusinessDetailScreen(
                     val d = selectedDate
                     timeOpen = false
                     if (d != null) {
-                        onFollowUp(
+                        onCallback(
                             FollowUp.fromDateAndTime(
                                 year = d.first,
                                 month = d.second,
@@ -662,8 +681,8 @@ internal fun geoUri(business: Business, address: String?): String? {
 }
 
 /**
- * The appointments on site. Sits above the follow-up because the two are the
- * answers to one question — when does this go on?
+ * The appointments on site. Visits only; callbacks have their own section
+ * below. Both answer one question — when does this go on?
  *
  * The ones ahead come first, earliest first. Past ones stay as a record,
  * collapsed, latest first. „Termin anlegen" is always there: a second
@@ -769,23 +788,47 @@ private fun AppointmentItem(
     }
 }
 
+/**
+ * The callbacks. Open ones first, earliest first, an overdue one said as such;
+ * completed ones stay as a record, collapsed, the way „Frühere Termine" do.
+ *
+ * Every way in — the suggestion after a call, the quick choices, the picker —
+ * opens the appointment sheet with that time. Nothing is saved before
+ * „Rückruf speichern", and every callback has its own „Ändern" and „Entfernen".
+ */
 @Composable
-private fun FollowUpBlock(
-    set: String?,
+private fun CallbacksBlock(
+    placeId: String,
+    callbacks: List<AppointmentEntry>,
+    contacts: List<Contact>,
     suggestion: String?,
-    onFollowUp: (String?) -> Unit,
+    onCallback: (String) -> Unit,
+    onEdit: (String) -> Unit,
+    onRemove: (AppointmentEntry) -> Unit,
     onPickDate: () -> Unit,
 ) {
+    val now = System.currentTimeMillis()
+    val (open, done) = Appointment.splitCallbacks(callbacks)
+    var showDone by remember(placeId) { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        Text(
-            text = if (set != null) "Gesetzt auf ${Clock.readable(set)}"
-            else "Keine Wiedervorlage gesetzt.",
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (set != null) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (open.isEmpty()) {
+            Text(
+                text = "Keine Wiedervorlage gesetzt.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        open.forEach { CallbackItem(it, contacts, overdue = Appointment.isOverdue(it, now), onEdit = onEdit, onRemove = onRemove) }
 
-        if (suggestion != null && suggestion != set) {
+        if (done.isNotEmpty()) {
+            TextButton(onClick = { showDone = !showDone }) {
+                Text("Erledigte Rückrufe (${done.size})")
+            }
+            if (showDone) done.forEach { CallbackItem(it, contacts, overdue = false, onEdit = null, onRemove = onRemove) }
+        }
+
+        // Gone once a callback at exactly that time exists — saved from this very card.
+        if (suggestion != null && open.none { it.startsAt == suggestion }) {
             Spacer(Modifier.height(8.dp))
             Card(
                 colors = CardDefaults.cardColors(
@@ -799,7 +842,7 @@ private fun FollowUpBlock(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Spacer(Modifier.height(8.dp))
-                    Button(onClick = { onFollowUp(suggestion) }) { Text("Übernehmen") }
+                    Button(onClick = { onCallback(suggestion) }) { Text("Übernehmen") }
                 }
             }
         }
@@ -807,27 +850,80 @@ private fun FollowUpBlock(
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             QuickButton("in 2 Tagen", Modifier.weight(1f)) {
-                onFollowUp(FollowUp.inTwoDays())
+                onCallback(FollowUp.inTwoDays())
             }
             QuickButton("nächste Woche", Modifier.weight(1f)) {
-                onFollowUp(FollowUp.nextWeek())
+                onCallback(FollowUp.nextWeek())
             }
             QuickButton("nächster Monat", Modifier.weight(1f)) {
-                onFollowUp(FollowUp.nextMonth())
+                onCallback(FollowUp.nextMonth())
             }
         }
 
         Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = onPickDate,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+        ) { Text("Datum & Uhrzeit …") }
+    }
+}
+
+/** One callback. [onEdit] is null for a completed one: completing is not undone, only removed. */
+@Composable
+private fun CallbackItem(
+    entry: AppointmentEntry,
+    contacts: List<Contact>,
+    overdue: Boolean,
+    onEdit: ((String) -> Unit)?,
+    onRemove: (AppointmentEntry) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text(
+            text = Appointment.readableRange(entry.startsAt, entry.endsAt),
+            style = MaterialTheme.typography.titleMedium,
+            color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+        )
+        if (overdue) {
+            Text(
+                text = "überfällig",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        entry.doneAt?.let {
+            Text(
+                text = "Erledigt ${Clock.readable(it)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        entry.note?.takeIf { it.isNotBlank() }?.let {
+            Text(text = it, style = MaterialTheme.typography.bodyMedium)
+        }
+        // A deleted contact simply leaves no name behind.
+        contacts.firstOrNull { it.id == entry.contactId }?.let {
+            Text(
+                text = it.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (entry.calendarEventId != null) {
+            Text(
+                text = "Im Kalender abgelegt.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = onPickDate,
-                modifier = Modifier.weight(1f).heightIn(min = 52.dp),
-            ) { Text("Datum & Uhrzeit …") }
-            if (set != null) {
-                OutlinedButton(
-                    onClick = { onFollowUp(null) },
-                    modifier = Modifier.weight(1f).heightIn(min = 52.dp),
-                ) { Text("Entfernen") }
+            if (onEdit != null) {
+                OutlinedButton(onClick = { onEdit(entry.id) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    Text("Ändern")
+                }
+            }
+            OutlinedButton(onClick = { onRemove(entry) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                Text("Entfernen")
             }
         }
     }

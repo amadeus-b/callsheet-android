@@ -279,7 +279,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                         vm.saveOutcome(business.placeId, status, note)
                     },
                     onContact = { id -> vm.showContact(business.placeId, id) },
-                    onFollowUp = { vm.setFollowUp(business.placeId, it) },
+                    onCallback = { start -> vm.openCallback(business.placeId, start) },
                     onAppointment = { id -> vm.openAppointment(business.placeId, id) },
                     onRemoveAppointment = vm::removeAppointment,
                     onOpenUrl = ::openUrl,
