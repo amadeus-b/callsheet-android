@@ -97,7 +97,10 @@ object ContactMerge {
             },
         )
     }
-
-    /** Notations like „030 12…“ and „+4930 12…“ must not count as a change. */
-    private fun String.forComparison(): String = filter { it.isDigit() }.takeLast(9)
 }
+
+/** Notations like „030 12…“ and „+4930 12…“ must not count as a change. */
+internal fun String.forComparison(): String = filter { it.isDigit() }.takeLast(9)
+
+/** Whether two notations are the same number. */
+internal fun sameNumber(a: String, b: String): Boolean = a.forComparison() == b.forComparison()
