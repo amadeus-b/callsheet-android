@@ -607,11 +607,12 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             _state.value = _state.value.copy(saving = true, contactError = null)
             repo.saveContact(draft).fold(
-                onSuccess = { _ ->
+                onSuccess = { id ->
                     _state.value = _state.value.copy(saving = false)
                     // The whole business follows: the person's own entry, and
-                    // the company entry that makes way for them.
-                    repo.business(draft.placeId)?.let { store.persistBusiness(it) }
+                    // the company entry that makes way for them. What was just
+                    // saved here is not read back over.
+                    repo.business(draft.placeId)?.let { store.persistBusiness(it, savedInApp = id) }
                     back()
                     loadDetail(draft.placeId)
                 },

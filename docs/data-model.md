@@ -259,11 +259,14 @@ speaks **no** CardDAV and needs no credentials.
 - Every business that has a number goes in. Blocked businesses stay out.
   Writing happens when a business is created by hand, when a contact is saved
   or deleted, after a call, and on demand from the settings.
-- The other direction: opening a record reads the entries of hand-saved people
-  back. If `RawContacts.VERSION` has moved on, the phone book wins for name,
-  email and numbers — except the business's main number and email, which are on
-  every entry and not the person's. Role and note stay as they are in the app.
-  The `place_id` entry is never read back.
+- The other direction: opening a record, and every write of a business, reads
+  the entries of hand-saved people back first. If `RawContacts.VERSION` has
+  moved on, the phone book wins for name, email and numbers — except the
+  business's main number and email, which are on every entry and not the
+  person's. Role and note stay as they are in the app. The `place_id` entry is
+  never read back.
+  The person just saved in the app is not read back: the version also moves
+  when DAVx5 synchronises, and the app wins for that edit.
 - People newly created in the phone book are **not** pulled in — they have no
   link to a business.
 
