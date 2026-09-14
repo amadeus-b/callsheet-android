@@ -1045,7 +1045,7 @@ private fun Origin(business: Business) {
             value = business.collectedAt?.let { Clock.readableDate(it) } ?: "nicht dokumentiert",
         )
         DataRow(
-            label = "Auswahl begründet über Gewerk",
+            label = "Auswahl begründet über Branche",
             value = business.industry ?: "keine Zuordnung",
         )
         if (business.categories.isNotEmpty()) {

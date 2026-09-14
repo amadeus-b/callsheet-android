@@ -170,7 +170,7 @@ fun BusinessFormScreen(
             Field(
                 value = draft.industry,
                 onValue = { onChange(draft.copy(industry = it)) },
-                label = "Gewerk",
+                label = "Branche",
                 hint = "Begründet, warum dieser Betrieb angerufen wird. " +
                     "Möglichst dieselbe Schreibweise wie bei den importierten Betrieben.",
                 keyboard = KeyboardOptions(

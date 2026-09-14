@@ -161,7 +161,7 @@ fun WorkListScreen(
                 if (filter.unassigned) add(UNASSIGNED)
             }
             MultiSelectDialog(
-                title = "Gewerk",
+                title = "Branche",
                 entries = entries,
                 selected = selected,
                 onToggle = { entry ->
@@ -263,7 +263,7 @@ private fun FilterBar(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         FilterChipWithCount(
-            label = "Gewerk",
+            label = "Branche",
             count = filter.industries.size + if (filter.unassigned) 1 else 0,
             onClick = { onDialog(OpenDialog.INDUSTRY) },
         )
