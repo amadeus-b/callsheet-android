@@ -27,8 +27,9 @@ The wish: handle follow-ups like regular appointments.
 
 - A follow-up becomes an **appointment of the kind „Rückruf"** (callback). The
   existing kind is „Vor Ort" (visit).
-- **A call completes it.** Saving the outcome of a call to the business
-  completes every open callback of that business due by the end of today. Until
+- **A call completes it.** A call to the business placed from the app
+  completes every open callback of that business due by the end of today — as
+  soon as the app logs the call on returning from the dialler. Until
   then a callback whose time has passed is **overdue**. A visit is never
   overdue; once its time has passed it simply lies in the past, as today.
 - **Completed shows in the calendar as a mark in the title**: „✓ Rückruf Elektro
@@ -79,13 +80,20 @@ uncommitted changes of another session.
 Two columns on `appointments`:
 
 ```
-kind      TEXT NOT NULL DEFAULT 'visit'   -- 'visit' | 'callback'; travels
+kind      TEXT                            -- 'visit' | 'callback'; null reads as 'visit'; travels
 done_at   TEXT                            -- ISO-8601 with zone; callbacks only; travels
 ```
 
 `AppointmentEntry` gains `kind: AppointmentKind` (`VISIT`, `CALLBACK`) and
-`doneAt: String?`. An unknown `kind` read from the database or the server is
-treated as `VISIT`.
+`doneAt: String?`. A null or unknown `kind` read from the database or the
+server is treated as `VISIT`; the app writes `'visit'` or `'callback'` on every
+save.
+
+`kind` is nullable on purpose, on both sides. The server's README asks for
+nullable new columns: `receive.js` fills a gap only where `NULL` stands, and a
+`NOT NULL DEFAULT 'visit'` column would carry the default instead of a gap. And
+a row the server stores with `kind` NULL — an insert from a 1.4.0 device — would
+break a `NOT NULL` column in the app on arrival.
 
 `follow_up_at` stays on `businesses`, emptied and no longer read or written.
 Dropping it would mean rebuilding the table, the same reason migration 005 on
@@ -94,7 +102,7 @@ the server gives for the appointment columns.
 ### Server — next migration
 
 ```sql
-ALTER TABLE appointments ADD COLUMN kind TEXT NOT NULL DEFAULT 'visit';
+ALTER TABLE appointments ADD COLUMN kind TEXT;
 ALTER TABLE appointments ADD COLUMN done_at TEXT;
 ```
 
@@ -174,13 +182,18 @@ For a callback:
 
 ## Completing
 
-`saveOutcome` with a pending call — a call placed from the app, whatever its
-outcome, „nicht erreicht" included — completes every callback of that business
-with `done_at` null and a start before the end of today:
+`evaluateCall` — where the app logs a call placed from it, on returning from
+the dialler, whatever the duration, „nicht erreicht" included — completes every
+callback of that business with `done_at` null and a start before the end of
+today:
 `done_at = now`, new `updated_at`, `dirty`. One transaction,
 `Repository.completeCallbacks(placeId, untilMillis, now)`, returning the
 completed ids.
 
+- Not `saveOutcome`: the save bar only appears when status or note changed. A
+  business already at „Nicht erreicht" rung again without an answer would
+  change neither, nothing would be saved, and its callback would stay overdue
+  for ever.
 - A note saved without a call completes nothing.
 - A callback for a later day stays open.
 - The suggestion for the next callback appears as it does today and is taken
@@ -273,7 +286,7 @@ Rollout order as for 1.4.0: **server first, then every device.**
   the row it sends carries no `kind` and no `done_at` key at all. Today `write`
   in `receive.js` fills every column the payload does not carry with NULL
   (`row[c] ?? null`): the callback would lose `done_at`, and `kind` would be
-  NULL — rejected by `NOT NULL`, or read as a visit.
+  NULL — read as a visit.
 
   **`write` therefore distinguishes a missing key from an explicit null.** A
   column whose key is absent from the payload keeps the stored value on update
