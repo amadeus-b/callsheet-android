@@ -691,6 +691,17 @@ class RepositoryTest {
     }
 
     @Test
+    fun `a row with a kind this app does not know reads as a visit`() = runTest {
+        // A later app, or another server, may send a kind this one has never heard of.
+        execute(
+            "INSERT INTO appointments (id, place_id, starts_at, updated_at, kind, dirty) " +
+                "VALUES ('A-8', 't-1', '2026-09-15T09:00:00+02:00', '2026-09-07T10:00:00+02:00', 'meeting', 0)"
+        )
+
+        assertEquals(AppointmentKind.VISIT, repo.appointment("A-8")!!.kind)
+    }
+
+    @Test
     fun `saving an entry without a completion keeps the completion already stored`() = runTest {
         repo.saveAppointment(callback("R-1", "t-1", "2026-09-15T09:00:00+02:00"))
         execute("UPDATE appointments SET done_at = '2026-09-15T09:05:00+02:00' WHERE id = 'R-1'")
