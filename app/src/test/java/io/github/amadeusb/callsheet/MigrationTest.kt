@@ -352,7 +352,8 @@ class MigrationTest {
 
         val db = Database(context).readableDatabase
 
-        db.rawQuery("SELECT COUNT(*) FROM appointments WHERE dirty = 1", null).use { c ->
+        // The legacy rows only: alt-1's follow-up is carried over and marked too, by schema 6.
+        db.rawQuery("SELECT COUNT(*) FROM appointments WHERE dirty = 1 AND id LIKE 'legacy-%'", null).use { c ->
             assertTrue(c.moveToFirst())
             assertEquals(2, c.getInt(0))
         }
@@ -419,8 +420,10 @@ class MigrationTest {
             assertTrue(c.isNull(10))
             // No calendar event: each device would create its own.
             assertTrue(c.isNull(11))
-            // Synchronised business, nothing to send.
-            assertEquals(0, c.getInt(12))
+            // Sent up although the business is synchronised: a 1.4.0 phone whose
+            // follow-up reached the server after 008 left it in follow_up_at, which
+            // nothing reads there. A server that has the row takes it as a standstill.
+            assertEquals(1, c.getInt(12))
             assertTrue(c.moveToNext())
             assertEquals("followup-alt-2", c.getString(0))
             assertEquals("2026-09-15T09:00:00+02:00", c.getString(2))

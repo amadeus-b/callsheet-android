@@ -224,14 +224,17 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             // least as new as the follow-up, and without it the database would
             // not open at all.
             //
-            // dirty is the business's: a follow-up not uploaded yet goes up as
-            // a callback, one the server already has is not sent again. No
-            // calendar link — every device would create its own event for the
-            // same callback; it gets one when it is next saved.
+            // Marked dirty, as schema 4 marked its rows, and not the business's
+            // mark: a 1.4.0 device that uploaded a follow-up after 008 ran had
+            // its mark cleared, while the value landed in follow_up_at on the
+            // server, which nothing reads. Only this row brings it up. One the
+            // server already has arrives there as a standstill and changes
+            // nothing. No calendar link — every device would create its own
+            // event for the same callback; it gets one when it is next saved.
             db.execSQL(
                 """
                 INSERT OR IGNORE INTO appointments (id, place_id, starts_at, updated_at, kind, dirty)
-                SELECT 'followup-' || place_id, place_id, follow_up_at, updated_at, 'callback', dirty
+                SELECT 'followup-' || place_id, place_id, follow_up_at, updated_at, 'callback', 1
                 FROM businesses
                 WHERE follow_up_at IS NOT NULL AND follow_up_at <> ''
                 """.trimIndent()

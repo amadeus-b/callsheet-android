@@ -133,7 +133,11 @@ old columns on both sides.
 
 Schema 6 carried each business's follow-up over into a callback
 `followup-<place_id>` — the same id the server's migration 008 writes, with the
-business's `updated_at` and `dirty` — and emptied `follow_up_at` on both sides.
+business's `updated_at`, marked dirty — and emptied `follow_up_at` on both sides.
+Marked dirty whatever the business's mark: a follow-up a 1.4.0 device uploaded
+after 008 sits in the server's unread `follow_up_at`, and only the callback
+brings it up; one the server already has arrives as a standstill. A callback
+already pulled from the server while on 1.4.0 is kept and only gets its `kind`.
 Carried-over callbacks have no calendar event until they are next saved: every
 device would otherwise write its own into the shared calendar.
 
