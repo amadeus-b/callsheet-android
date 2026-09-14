@@ -3,7 +3,6 @@ package io.github.amadeusb.callsheet
 import io.github.amadeusb.callsheet.calling.FollowUp
 import io.github.amadeusb.callsheet.data.Clock
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -165,23 +164,5 @@ class FollowUpTest {
             assertTrue("keine Uhrzeit in $iso", iso.contains("T"))
             assertTrue("nicht lesbar: $iso", Clock.millis(iso) != null)
         }
-    }
-
-    // --- isOverdue ----------------------------------------------------------
-
-    @Test
-    fun `overdue is whatever lies before now`() {
-        val jetzt = millis(2026, 9, 7, 12)
-        assertTrue(FollowUp.isOverdue(Clock.format(jetzt - 60_000), jetzt))
-        assertFalse(FollowUp.isOverdue(Clock.format(jetzt + 60_000), jetzt))
-        assertFalse(FollowUp.isOverdue(Clock.format(jetzt), jetzt))
-    }
-
-    @Test
-    fun `an unreadable or missing follow-up is not overdue`() {
-        val jetzt = millis(2026, 9, 7, 12)
-        assertFalse(FollowUp.isOverdue(null, jetzt))
-        assertFalse(FollowUp.isOverdue("", jetzt))
-        assertFalse(FollowUp.isOverdue("irgendwann", jetzt))
     }
 }

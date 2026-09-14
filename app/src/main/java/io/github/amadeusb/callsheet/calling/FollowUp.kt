@@ -78,12 +78,6 @@ object FollowUp {
         return Clock.format(zdt)
     }
 
-    /** true when the moment lies in the past. Unreadable or empty → false. */
-    fun isOverdue(iso: String?, nowMillis: Long = System.currentTimeMillis()): Boolean {
-        val m = Clock.millis(iso) ?: return false
-        return m < nowMillis
-    }
-
     /**
      * Moves a date into the next workday between 8 and 18.
      * Before 8 → same day, 9 o'clock. From 18 → next day, 9 o'clock.
