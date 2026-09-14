@@ -69,12 +69,28 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
      * before the first. Both zero means there is nothing to upload and only the
      * download is left, which has no total to count against: the server does not
      * say how much it holds until it stops saying "more".
+     *
+     * [onApplied] receives, per block, the appointments that came down or were
+     * deleted, so the caller can bring the calendar along. Called on the sync
+     * thread, after the block's transaction.
      */
-    fun sync(transport: Transport, onProgress: (remaining: Int, total: Int) -> Unit = { _, _ -> }): SyncResult {
+    fun sync(
+        transport: Transport,
+        onProgress: (remaining: Int, total: Int) -> Unit = { _, _ -> },
+        onApplied: (AppliedAppointments) -> Unit = {},
+    ): SyncResult {
         if (prefs.serverUrl == null || prefs.serverToken == null) return SyncResult.Idle
         if (!running.compareAndSet(false, true)) return SyncResult.Idle
 
         try {
+            // Once, on the first sync that runs on schema 4 — see
+            // Preferences.refetchedForAppointments. Fetching everything again is
+            // safe: apply lets the newer version win and drops what a tombstone
+            // covers, so rows this device already holds change nothing.
+            if (!prefs.refetchedForAppointments) {
+                prefs.watermark = 0
+                prefs.refetchedForAppointments = true
+            }
             var rounds = 0
             val total = store.pendingCount()
             onProgress(total, total)
@@ -84,7 +100,8 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
 
                 val response = transport.post(payload)
 
-                store.apply(response)
+                val applied = store.apply(response)
+                if (!applied.isEmpty()) onApplied(applied)
                 store.clearPending(outgoing, response)
                 // The watermark only ever moves forward. A stale or
                 // misbehaving server sending a lower value must not put the

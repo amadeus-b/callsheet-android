@@ -49,6 +49,25 @@ class Preferences(context: Context) {
         get() = store.getString(LAST_SYNC_AT, null)
         set(value) = store.edit().putString(LAST_SYNC_AT, value).apply()
 
+    /**
+     * Whether this device has fetched the server's stock from the start since
+     * it learnt about appointments (schema 4).
+     *
+     * While it still ran 1.3.x, the server delivered appointments to it — the
+     * ones migration 005 carried over, and any another device created — and
+     * the old app skipped them while its watermark moved past. They would never
+     * come down again. Worse, an appointment deleted elsewhere would come back:
+     * the migration writes its legacy row afresh, the server drops it for its
+     * newer tombstone, and the tombstone never reaches this device. One fetch
+     * from zero repairs both, and costs one full download.
+     *
+     * A flag here rather than a step in the migration, because the watermark
+     * lives in these preferences and not in the database.
+     */
+    var refetchedForAppointments: Boolean
+        get() = store.getBoolean(REFETCHED_FOR_APPOINTMENTS, false)
+        set(value) = store.edit().putBoolean(REFETCHED_FOR_APPOINTMENTS, value).apply()
+
     /** Whether appointments get mirrored into the device calendar at all. */
     var calendarEnabled: Boolean
         get() = store.getBoolean(CALENDAR_ENABLED, false)
@@ -76,6 +95,7 @@ class Preferences(context: Context) {
         const val SERVER_TOKEN = "server_token"
         const val WATERMARK = "sync_watermark"
         const val LAST_SYNC_AT = "last_sync_at"
+        const val REFETCHED_FOR_APPOINTMENTS = "refetched_for_appointments"
         const val CALENDAR_ENABLED = "calendar_enabled"
         const val CALENDAR_ID = "calendar_id"
         const val APPOINTMENT_MINUTES = "appointment_minutes"

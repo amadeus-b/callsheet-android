@@ -302,4 +302,57 @@ class SyncEngineTest {
         // Still open, and honestly counted as open, until the server is updated.
         assertEquals(600, SyncStore(ctx).pendingCount())
     }
+
+    @Test
+    fun `the first sync after the upgrade starts from watermark zero, and only that one`() {
+        prefs.watermark = 42
+        prefs.refetchedForAppointments = false
+        val seen = mutableListOf<Int>()
+        val transport = object : Transport {
+            override fun post(payload: JSONObject): JSONObject {
+                seen.add(payload.getInt("since"))
+                return leereAntwort(17)
+            }
+        }
+
+        engine.sync(transport)
+        engine.sync(transport)
+
+        assertEquals(listOf(0, 17), seen)
+    }
+
+    @Test
+    fun `a device that has fetched everything since keeps its watermark`() {
+        prefs.watermark = 42
+        prefs.refetchedForAppointments = true
+        val seen = mutableListOf<Int>()
+
+        engine.sync(object : Transport {
+            override fun post(payload: JSONObject): JSONObject {
+                seen.add(payload.getInt("since"))
+                return leereAntwort(42)
+            }
+        })
+
+        assertEquals(listOf(42), seen)
+    }
+
+    @Test
+    fun `appointments applied from the server are handed to the caller`() {
+        val handed = mutableListOf<io.github.amadeusb.callsheet.sync.AppliedAppointments>()
+        val appointment = JSONObject().apply {
+            put("id", "T1"); put("place_id", "P1"); put("starts_at", "2026-09-10T14:00:00+02:00")
+            put("updated_at", "2026-09-07T10:00:00+02:00")
+        }
+
+        engine.sync(
+            object : Transport {
+                override fun post(payload: JSONObject) =
+                    leereAntwort(3).put("appointments", JSONArray(listOf(appointment)))
+            },
+            onApplied = { handed.add(it) },
+        )
+
+        assertEquals(listOf("T1"), handed.single().written)
+    }
 }
