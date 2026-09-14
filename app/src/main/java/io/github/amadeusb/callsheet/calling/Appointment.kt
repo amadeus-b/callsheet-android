@@ -2,7 +2,9 @@ package io.github.amadeusb.callsheet.calling
 
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.Clock
+import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.Status
+import io.github.amadeusb.callsheet.data.TakenEvents
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
@@ -18,6 +20,17 @@ data class BusyInterval(
      * able to refuse or duplicate.
      */
     val eventId: Long? = null,
+    /**
+     * The event's iCalendar UID. The same on every device carrying the shared
+     * calendar — which is how an appointment recognises its own event here,
+     * and how an event another appointment holds is kept from being linked twice.
+     */
+    val uid: String? = null,
+    /**
+     * A recurring event, or a changed occurrence of one. Its `Events.DTSTART`
+     * is not the time shown in the strip, so it is never offered for linking.
+     */
+    val recurring: Boolean = false,
 )
 
 /** What saving an appointment should do about the calendar. */
@@ -60,6 +73,9 @@ sealed interface ReadBack {
  * row, for the event, and for what this device last saw in the event.
  */
 data class Slot(val startMillis: Long, val endMillis: Long?, val location: String?)
+
+/** An event found in this device's calendar, and its `_ID` here. */
+data class Located<E>(val eventId: Long, val event: E)
 
 /**
  * What reading an appointment's event back calls for.
@@ -161,6 +177,12 @@ object Appointment {
     /**
      * What saving should do. The order matters: an explicit instruction from the
      * user beats a conflict, and a conflict beats everything else.
+     *
+     * [ownEventId] is the appointment's event as found on this device. An
+     * [eventUid] without one means the event exists in the shared calendar but
+     * has not reached this device's copy: creating another would put a second
+     * event into the calendar the moment DAVx5 catches up. The device that
+     * holds the event writes the change into it after its next sync.
      */
     fun plan(
         startMillis: Long,
@@ -170,6 +192,7 @@ object Appointment {
         linkExisting: Long?,
         force: Boolean,
         calendarEnabled: Boolean,
+        eventUid: String? = null,
     ): SavePlan {
         if (linkExisting != null) return SavePlan.Adopt(linkExisting)
         if (!force) {
@@ -177,7 +200,8 @@ object Appointment {
             if (clash.isNotEmpty()) return SavePlan.Conflict(clash)
         }
         if (!calendarEnabled) return SavePlan.LocalOnly
-        return if (ownEventId != null) SavePlan.Update(ownEventId) else SavePlan.Create
+        if (ownEventId != null) return SavePlan.Update(ownEventId)
+        return if (eventUid != null) SavePlan.LocalOnly else SavePlan.Create
     }
 
     /** Street, postal code and city on one line. Null when nothing is known. */
@@ -323,5 +347,109 @@ object Appointment {
         val head = "${from.format(range)} · ${from.format(time)}"
         val end = Clock.millis(endIso) ?: return head
         return "$head – ${Clock.zdt(end).format(time)}"
+    }
+
+    /**
+     * The busy times without the event of the appointment being edited —
+     * recognised by its UID, or by this device's event id where it has none
+     * yet. The business's other appointments stay: two at the same time are a
+     * real conflict.
+     */
+    fun busyExcept(busy: List<BusyInterval>, ownUid: String?, ownEventId: Long?): List<BusyInterval> =
+        busy.filterNot { interval ->
+            (ownUid != null && interval.uid == ownUid) || (ownEventId != null && interval.eventId == ownEventId)
+        }
+
+    /**
+     * Whether a busy interval may be linked to an appointment. Not when another
+     * appointment already holds the event — changing or removing one would take
+     * the other along. The UID travels, so this holds across devices.
+     */
+    fun mayAdopt(interval: BusyInterval, taken: TakenEvents): Boolean {
+        val eventId = interval.eventId ?: return false
+        // Events.DTSTART of a series is its first occurrence, not this one.
+        if (interval.recurring) return false
+        if (interval.uid != null && interval.uid in taken.uids) return false
+        return eventId !in taken.eventIds
+    }
+
+    /**
+     * The events the sheet may offer for „Verknüpfen". None for an appointment
+     * that already has an event ([ownUid] or [ownEventId]). Linking it to
+     * another would leave the old event in the calendar, and a device whose
+     * shortcut still points there would keep writing into it and take its UID
+     * back: two events for one appointment, and a UID going back and forth.
+     */
+    fun adoptable(busy: List<BusyInterval>, taken: TakenEvents, ownUid: String?, ownEventId: Long?): Set<Long> {
+        if (ownUid != null || ownEventId != null) return emptySet()
+        return busy.filter { mayAdopt(it, taken) }.mapNotNull { it.eventId }.toSet()
+    }
+
+    /**
+     * The UID to take over from an event, or null when there is nothing to take.
+     *
+     * An event the app created should carry the appointment's id; one that came
+     * back without a UID leaves the link local until DAVx5 has written one. An
+     * event behind the shortcut with a different UID is the same event — the
+     * row takes its UID so the other devices look for that one.
+     */
+    fun uidToTake(rowUid: String?, eventUid: String?): String? =
+        eventUid?.takeIf { it.isNotBlank() && it != rowUid }
+
+    /**
+     * Finds an appointment's event on this device: through the shortcut while
+     * the event behind it still exists, otherwise by UID among the calendars
+     * the app reads. Neither found means the event is not on this device.
+     *
+     * The shortcut is trusted without comparing UIDs — an `_ID` is not handed to
+     * another event, and taking a changed UID for a deleted event would delete
+     * the appointment.
+     *
+     * Nothing is caught here. A [read] or [find] that throws — a refused
+     * permission, a provider that fails — propagates: null means "not on this
+     * device", and a failure passed off as that would read as a deletion.
+     */
+    suspend fun <E> locate(
+        calendarEventId: Long?,
+        eventUid: String?,
+        read: suspend (Long) -> E?,
+        find: suspend (String) -> Long?,
+    ): Located<E>? {
+        if (calendarEventId != null) {
+            read(calendarEventId)?.let { return Located(calendarEventId, it) }
+        }
+        val uid = eventUid ?: return null
+        val eventId = find(uid) ?: return null
+        return read(eventId)?.let { Located(eventId, it) }
+    }
+
+    /** „Ortstermin Elektro Meier – Angebot", or without a note „Ortstermin Elektro Meier". */
+    fun eventTitle(businessName: String, note: String?): String {
+        val head = "Ortstermin $businessName".trim()
+        val tail = note?.trim()?.ifEmpty { null } ?: return head
+        return "$head – $tail"
+    }
+
+    /** Who to ask for on site: the contact person and their first number, else the business's number. */
+    fun eventDescription(contact: Contact?, businessPhone: String?): String? {
+        if (contact == null) return businessPhone
+        return listOfNotNull(contact.name, contact.numbers.firstOrNull()?.number).joinToString(" · ")
+    }
+
+    /** For a row in „Termine heute": "Do, 10.09. · 14:00 – 15:00 · Besichtigung". */
+    fun rowLabel(entry: AppointmentEntry): String {
+        val range = readableRange(entry.startsAt, entry.endsAt)
+        val note = entry.note?.trim()?.ifEmpty { null } ?: return range
+        return "$range · $note"
+    }
+
+    /** Ahead earliest first, past latest first — the order the detail view lists them in. */
+    fun split(
+        appointments: List<AppointmentEntry>,
+        nowMillis: Long,
+    ): Pair<List<AppointmentEntry>, List<AppointmentEntry>> {
+        val (ahead, past) = appointments.partition { isAhead(it.startsAt, it.endsAt, nowMillis) }
+        val start = { entry: AppointmentEntry -> Clock.millis(entry.startsAt) ?: 0L }
+        return ahead.sortedBy(start) to past.sortedByDescending(start)
     }
 }

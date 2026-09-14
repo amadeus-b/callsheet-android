@@ -2,13 +2,19 @@ package io.github.amadeusb.callsheet
 
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
+import io.github.amadeusb.callsheet.calling.Located
 import io.github.amadeusb.callsheet.calling.ReadBack
 import io.github.amadeusb.callsheet.calling.Reconcile
 import io.github.amadeusb.callsheet.calling.SavePlan
 import io.github.amadeusb.callsheet.calling.Slot
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.Clock
+import io.github.amadeusb.callsheet.data.Contact
+import io.github.amadeusb.callsheet.data.PhoneNumber
+import io.github.amadeusb.callsheet.data.PhoneType
 import io.github.amadeusb.callsheet.data.Status
+import io.github.amadeusb.callsheet.data.TakenEvents
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -21,11 +27,20 @@ class AppointmentTest {
     private fun millis(year: Int, month: Int, day: Int, hour: Int, minute: Int = 0): Long =
         ZonedDateTime.of(year, month, day, hour, minute, 0, 0, Clock.zone).toInstant().toEpochMilli()
 
-    private fun busy(fromHour: Int, toHour: Int, title: String, eventId: Long? = null) = BusyInterval(
+    private fun busy(
+        fromHour: Int,
+        toHour: Int,
+        title: String,
+        eventId: Long? = null,
+        uid: String? = null,
+        recurring: Boolean = false,
+    ) = BusyInterval(
         startMillis = millis(2026, 9, 10, fromHour),
         endMillis = millis(2026, 9, 10, toHour),
         title = title,
         eventId = eventId,
+        uid = uid,
+        recurring = recurring,
     )
 
     // --- snapToQuarter ------------------------------------------------------
@@ -451,5 +466,229 @@ class AppointmentTest {
         assertFalse(Appointment.seenIsCurrent(recorded, 815L, planned))
         assertFalse(Appointment.seenIsCurrent(recorded, 4711L, later))
         assertFalse(Appointment.seenIsCurrent(recorded.copy(seenStartsAt = null), 4711L, planned))
+    }
+
+    // --- saving with a shared calendar ----------------------------------------
+
+    @Test
+    fun `an appointment whose event is elsewhere is saved without touching the calendar`() {
+        // Creating one would put a second event into the shared calendar the
+        // moment DAVx5 catches up on this device.
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd, busy = emptyList(),
+            ownEventId = null, linkExisting = null, force = false, calendarEnabled = true,
+            eventUid = "A-1",
+        )
+
+        assertEquals(SavePlan.LocalOnly, plan)
+    }
+
+    @Test
+    fun `an appointment whose event is here is updated`() {
+        val plan = Appointment.plan(
+            startMillis = slotStart, endMillis = slotEnd, busy = emptyList(),
+            ownEventId = 42L, linkExisting = null, force = false, calendarEnabled = true,
+            eventUid = "A-1",
+        )
+
+        assertEquals(SavePlan.Update(42L), plan)
+    }
+
+    // --- busy times and adopting ----------------------------------------------
+
+    @Test
+    fun `busy times leave out the edited appointment's event by UID, and nothing else`() {
+        val own = busy(14, 15, "Ortstermin Elektro Meier", eventId = 1L, uid = "A-1")
+        val sibling = busy(16, 17, "Ortstermin Elektro Meier – Angebot", eventId = 2L, uid = "A-2")
+        val dentist = busy(9, 10, "Zahnarzt", eventId = 3L)
+
+        val left = Appointment.busyExcept(listOf(own, sibling, dentist), ownUid = "A-1", ownEventId = null)
+
+        assertEquals(listOf(sibling, dentist), left)
+    }
+
+    @Test
+    fun `without a UID the local event id recognises the own event`() {
+        val own = busy(14, 15, "Ortstermin", eventId = 1L)
+        val other = busy(16, 17, "Steuerbüro", eventId = 2L)
+
+        assertEquals(listOf(other), Appointment.busyExcept(listOf(own, other), ownUid = null, ownEventId = 1L))
+    }
+
+    @Test
+    fun `an event another appointment holds by UID is not offered for linking`() {
+        val taken = TakenEvents(uids = setOf("A-2"), eventIds = emptySet())
+
+        assertFalse(Appointment.mayAdopt(busy(14, 15, "Ortstermin", eventId = 2L, uid = "A-2"), taken))
+    }
+
+    @Test
+    fun `an event another appointment holds on this device is not offered for linking`() {
+        val taken = TakenEvents(uids = emptySet(), eventIds = setOf(2L))
+
+        assertFalse(Appointment.mayAdopt(busy(14, 15, "Ortstermin", eventId = 2L), taken))
+    }
+
+    @Test
+    fun `a free event can be linked, a block without an event cannot`() {
+        val taken = TakenEvents(uids = setOf("A-2"), eventIds = setOf(2L))
+
+        assertTrue(Appointment.mayAdopt(busy(14, 15, "Steuerbüro", eventId = 7L, uid = "x@infomaniak"), taken))
+        assertFalse(Appointment.mayAdopt(busy(14, 15, "Steuerbüro"), taken))
+    }
+
+    @Test
+    fun `a recurring event is never offered for linking`() {
+        // Events.DTSTART is the start of the series, not of the occurrence in
+        // the strip: linking a weekly meeting would move the appointment to its
+        // first occurrence, months back.
+        val none = TakenEvents(uids = emptySet(), eventIds = emptySet())
+
+        assertFalse(Appointment.mayAdopt(busy(14, 15, "Jour fixe", eventId = 7L, uid = "jf@infomaniak", recurring = true), none))
+    }
+
+    @Test
+    fun `a new appointment may link any free event`() {
+        val none = TakenEvents(uids = emptySet(), eventIds = emptySet())
+        val free = busy(14, 15, "Steuerbüro", eventId = 7L)
+        val series = busy(16, 17, "Jour fixe", eventId = 8L, recurring = true)
+
+        assertEquals(setOf(7L), Appointment.adoptable(listOf(free, series), none, ownUid = null, ownEventId = null))
+    }
+
+    @Test
+    fun `an appointment that already has an event is offered no other to link`() {
+        // Its old event would stay in the calendar, and a device whose shortcut
+        // still points there would keep writing into it and take its UID back.
+        val none = TakenEvents(uids = emptySet(), eventIds = emptySet())
+        val free = listOf(busy(14, 15, "Steuerbüro", eventId = 7L))
+
+        assertTrue(Appointment.adoptable(free, none, ownUid = "A-1", ownEventId = null).isEmpty())
+        assertTrue(Appointment.adoptable(free, none, ownUid = null, ownEventId = 4711L).isEmpty())
+    }
+
+    // --- the UID ---------------------------------------------------------------
+
+    @Test
+    fun `a different UID behind the shortcut is taken over`() {
+        assertEquals("abc@infomaniak", Appointment.uidToTake(rowUid = null, eventUid = "abc@infomaniak"))
+        assertEquals("abc@infomaniak", Appointment.uidToTake(rowUid = "A-1", eventUid = "abc@infomaniak"))
+    }
+
+    @Test
+    fun `the same UID is nothing to take over`() {
+        assertNull(Appointment.uidToTake(rowUid = "A-1", eventUid = "A-1"))
+    }
+
+    @Test
+    fun `an empty UID after inserting keeps the link local`() {
+        assertNull(Appointment.uidToTake(rowUid = null, eventUid = ""))
+        assertNull(Appointment.uidToTake(rowUid = null, eventUid = null))
+    }
+
+    @Test
+    fun `the shortcut is used while its event exists`() = runTest {
+        val found = Appointment.locate(
+            calendarEventId = 4711L, eventUid = "A-1",
+            read = { if (it == 4711L) "event 4711" else null },
+            find = { throw AssertionError("no lookup while the shortcut works") },
+        )
+
+        assertEquals(Located(4711L, "event 4711"), found)
+    }
+
+    @Test
+    fun `a shortcut whose event carries another UID is still that event, not taken for deleted`() = runTest {
+        // The read does not compare UIDs: an _ID is not handed to another event.
+        val found = Appointment.locate(
+            calendarEventId = 4711L, eventUid = "A-1",
+            read = { "event with UID abc@infomaniak" },
+            find = { null },
+        )
+
+        assertEquals(4711L, found?.eventId)
+    }
+
+    @Test
+    fun `a gone shortcut falls back to the UID`() = runTest {
+        // DAVx5 deleted and rewrote the event with a new _ID.
+        val found = Appointment.locate(
+            calendarEventId = 4711L, eventUid = "A-1",
+            read = { if (it == 815L) "event 815" else null },
+            find = { if (it == "A-1") 815L else null },
+        )
+
+        assertEquals(Located(815L, "event 815"), found)
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun `a lookup that fails is not an event that is gone`() = runTest {
+        // Were this null, reconcile would take a provider hiccup for a deletion
+        // and delete an appointment still ahead on every device. The decision
+        // to skip the appointment instead is the caller's (CallsheetViewModel
+        // .calendarLookup); what is pure here is that the failure reaches it.
+        Appointment.locate<String>(
+            calendarEventId = 4711L, eventUid = "A-1",
+            read = { throw IllegalStateException("provider failed") },
+            find = { null },
+        )
+    }
+
+    @Test
+    fun `without a shortcut or a UID that finds something, nothing is found`() = runTest {
+        assertNull(Appointment.locate<String>(null, null, read = { "x" }, find = { 1L }))
+        assertNull(Appointment.locate<String>(null, "A-1", read = { "x" }, find = { null }))
+    }
+
+    // --- what the calendar and the lists show -----------------------------------
+
+    @Test
+    fun `the event title carries the note when there is one`() {
+        assertEquals("Ortstermin Elektro Meier – Angebot", Appointment.eventTitle("Elektro Meier", "Angebot"))
+        assertEquals("Ortstermin Elektro Meier", Appointment.eventTitle("Elektro Meier", " "))
+        assertEquals("Ortstermin Elektro Meier", Appointment.eventTitle("Elektro Meier", null))
+    }
+
+    @Test
+    fun `the description names the contact person and their first number`() {
+        val contact = Contact(
+            id = "K-1", placeId = "P1", name = "Frau Meier", role = null, email = null, note = null,
+            numbers = listOf(
+                PhoneNumber("N-1", "+4917612345", PhoneType.MOBILE),
+                PhoneNumber("N-2", "+49841999", PhoneType.WORK),
+            ),
+            updatedAt = "2026-09-07T10:00:00+02:00",
+        )
+
+        assertEquals("Frau Meier · +4917612345", Appointment.eventDescription(contact, "+4984112345"))
+        assertEquals("Frau Meier", Appointment.eventDescription(contact.copy(numbers = emptyList()), "+4984112345"))
+    }
+
+    @Test
+    fun `without a contact person the description is the business's number`() {
+        assertEquals("+4984112345", Appointment.eventDescription(null, "+4984112345"))
+    }
+
+    @Test
+    fun `a row in Heute reads time range and note`() {
+        val withNote = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00").copy(note = "Besichtigung")
+
+        assertEquals("${Appointment.readableRange(withNote.startsAt, withNote.endsAt)} · Besichtigung", Appointment.rowLabel(withNote))
+        assertEquals(Appointment.readableRange(withNote.startsAt, withNote.endsAt), Appointment.rowLabel(withNote.copy(note = null)))
+    }
+
+    @Test
+    fun `the detail view shows ahead earliest first and past latest first`() {
+        val all = listOf(
+            entry("past-early", "2026-09-01T09:00:00+02:00", "2026-09-01T10:00:00+02:00"),
+            entry("ahead-late", "2026-09-20T09:00:00+02:00", "2026-09-20T10:00:00+02:00"),
+            entry("past-late", "2026-09-05T09:00:00+02:00", "2026-09-05T10:00:00+02:00"),
+            entry("ahead-early", "2026-09-11T09:00:00+02:00", "2026-09-11T10:00:00+02:00"),
+        )
+
+        val (ahead, past) = Appointment.split(all, noon)
+
+        assertEquals(listOf("ahead-early", "ahead-late"), ahead.map { it.id })
+        assertEquals(listOf("past-late", "past-early"), past.map { it.id })
     }
 }
