@@ -23,6 +23,13 @@ as the release notes on GitHub.
 - **Update the sync server first.** An older server ignores appointments; the
   app then keeps them as „offen" until it is updated rather than losing them.
 - The first sync after the update fetches everything from the server once.
+- **One phone book entry per contact person**, including the one from the
+  imprint, each with the company name. A business without anybody gets a single
+  entry under its company name — no longer split like a person's name.
+- Every entry carries the address, the website, a map link and a note with
+  industry, rating and research run. The main number is labelled
+  „Hauptadresse“.
+- „Branche“ instead of „Gewerk“ throughout the app.
 
 ## 1.3.1
 
