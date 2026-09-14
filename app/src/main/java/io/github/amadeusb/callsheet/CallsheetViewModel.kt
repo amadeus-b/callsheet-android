@@ -19,6 +19,7 @@ import io.github.amadeusb.callsheet.calling.Slot
 import io.github.amadeusb.callsheet.calling.CallLogReader
 import io.github.amadeusb.callsheet.calling.FollowUp
 import io.github.amadeusb.callsheet.data.AppointmentEntry
+import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.ContactDraft
@@ -87,6 +88,8 @@ data class AppointmentDraft(
     val startIso: String,
     val minutes: Int,
     val location: String,
+    /** Visit or callback. Chosen by where the sheet was opened; an existing appointment keeps its own. */
+    val kind: AppointmentKind = AppointmentKind.VISIT,
     /** The appointment being changed; null for a new one. */
     val appointmentId: String? = null,
     /** „Besichtigung", „Angebot" … One line, optional. */
@@ -851,27 +854,41 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /**
-     * Opens the sheet. Without [appointmentId] a new appointment starts as
+     * Opens the sheet for a visit. Without [appointmentId] a new visit starts as
      * before: in two days, snapped to the quarter hour, the last duration used,
-     * the business's address. With one, everything comes from that appointment.
+     * the business's address. With one, everything comes from that appointment
+     * — its kind too, so „Ändern" on a callback opens a callback.
      */
-    fun openAppointment(placeId: String, appointmentId: String? = null) {
+    fun openAppointment(placeId: String, appointmentId: String? = null) =
+        openSheet(placeId, appointmentId, AppointmentKind.VISIT, startIso = null)
+
+    /**
+     * Opens the sheet for a new callback at [startIso] — from a quick choice,
+     * the date picker or the suggestion after a call. Nothing is saved until
+     * „Rückruf speichern".
+     */
+    fun openCallback(placeId: String, startIso: String) =
+        openSheet(placeId, null, AppointmentKind.CALLBACK, startIso)
+
+    private fun openSheet(placeId: String, appointmentId: String?, kind: AppointmentKind, startIso: String?) {
         viewModelScope.launch {
             val context = getApplication<Application>()
             val business = repo.business(placeId) ?: return@launch
             val existing = appointmentId?.let { repo.appointment(it) }
+            val sheetKind = existing?.kind ?: kind
             val lookup = existing?.let { lookUpEvent(it) }
             val located = lookup?.getOrNull()
-            val start = existing?.startsAt ?: Appointment.snapToQuarter(FollowUp.inTwoDays())
-            val minutes = if (existing != null) {
-                Appointment.minutesBetween(existing.startsAt, existing.endsAt)
-            } else {
-                preferences.appointmentMinutes
+            val start = existing?.startsAt ?: startIso ?: Appointment.snapToQuarter(FollowUp.inTwoDays())
+            val minutes = when {
+                existing != null -> Appointment.minutesBetween(existing.startsAt, existing.endsAt, Appointment.defaultMinutes(sheetKind))
+                sheetKind == AppointmentKind.CALLBACK -> Appointment.CALLBACK_MINUTES
+                else -> preferences.appointmentMinutes
             }
-            val location = if (existing != null) {
-                existing.location.orEmpty()
-            } else {
-                Appointment.address(business.street, business.postalCode, business.city).orEmpty()
+            val location = when {
+                existing != null -> existing.location.orEmpty()
+                // A phone call has no place.
+                sheetKind == AppointmentKind.CALLBACK -> ""
+                else -> Appointment.address(business.street, business.postalCode, business.city).orEmpty()
             }
             val readable = CalendarStore.canRead(context)
             _state.update {
@@ -881,6 +898,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                         startIso = start,
                         minutes = minutes,
                         location = location,
+                        kind = sheetKind,
                         appointmentId = existing?.id,
                         note = existing?.note.orEmpty(),
                         contactId = existing?.contactId,
@@ -971,6 +989,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 loadDetail(draft.placeId)
                 return@launch
             }
+            val kind = existing?.kind ?: draft.kind
+            val saved = if (kind == AppointmentKind.CALLBACK) "Rückruf gespeichert" else "Termin gespeichert"
             val readable = CalendarStore.canRead(context)
             val lookup = existing?.let { lookUpEvent(it) }
             val located = lookup?.getOrNull()
@@ -1005,10 +1025,13 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 placeId = draft.placeId,
                 startsAt = draft.startIso,
                 endsAt = endIso,
-                location = draft.location.trim().ifEmpty { null },
+                location = if (kind == AppointmentKind.CALLBACK) null else draft.location.trim().ifEmpty { null },
                 note = draft.note.trim().ifEmpty { null },
                 contactId = draft.contactId,
                 eventUid = existing?.eventUid,
+                kind = kind,
+                // Saving never completes or reopens; the repository never clears it either.
+                doneAt = existing?.doneAt,
             )
             val fields = eventFieldsFor(entry, business) ?: return@launch
             // The linked event and what it holds once this is through; null when none is linked.
@@ -1023,9 +1046,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             // an untouched calendar is exactly what they chose.
             var calendarHint: String? = when {
                 !preferences.calendarEnabled -> null
-                !readable || !writable -> "Termin gespeichert. Ohne Zugriff auf den Kalender bleibt der Eintrag " +
+                !readable || !writable -> "$saved. Ohne Zugriff auf den Kalender bleibt der Eintrag " +
                     "unberührt — die Berechtigung lässt sich in den Android-Einstellungen der App erteilen."
-                calendarUnreadable -> "Termin gespeichert. Der Kalender ließ sich gerade nicht lesen; " +
+                calendarUnreadable -> "$saved. Der Kalender ließ sich gerade nicht lesen; " +
                     "der Eintrag wird beim nächsten Öffnen abgeglichen."
                 else -> null
             }
@@ -1045,7 +1068,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                         linked = plan.eventId to event
                     }
                     if (linked == null) {
-                        calendarHint = "Termin gespeichert, aber nicht verknüpft: " +
+                        calendarHint = "$saved, aber nicht verknüpft: " +
                             "der Kalendereintrag war nicht mehr zu lesen."
                     }
                 }
@@ -1072,7 +1095,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                             ?.also { (_, holds) -> entry = entry.copy(eventUid = holds.uid ?: entry.eventUid) }
                         if (linked == null) {
                             dropLink = true
-                            calendarHint = "Termin gespeichert. Der Kalendereintrag war gelöscht und ließ " +
+                            calendarHint = "$saved. Der Kalendereintrag war gelöscht und ließ " +
                                 "sich nicht neu anlegen — prüfe den gewählten Kalender in den Einstellungen."
                         }
                     } else {
@@ -1098,7 +1121,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                                 ?.takeUnless { repo.heldByOther(entry.id, it, null) }
                                 ?.let { entry = entry.copy(eventUid = it) }
                         }
-                        calendarHint = "Termin gespeichert. Der Kalendereintrag ließ sich nicht ändern; " +
+                        calendarHint = "$saved. Der Kalendereintrag ließ sich nicht ändern; " +
                             "er wird beim nächsten Öffnen abgeglichen."
                     }
                 }
@@ -1106,7 +1129,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 SavePlan.Create -> {
                     linked = createEvent(entry.id, fields)?.also { (_, holds) -> entry = entry.copy(eventUid = holds.uid) }
                     if (linked == null) {
-                        calendarHint = "Termin gespeichert. Der Kalendereintrag konnte nicht " +
+                        calendarHint = "$saved. Der Kalendereintrag konnte nicht " +
                             "geschrieben werden — prüfe die Berechtigung und den " +
                             "gewählten Kalender in den Einstellungen."
                     }
@@ -1116,7 +1139,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 is SavePlan.Conflict -> Unit // already returned above
             }
 
-            preferences.appointmentMinutes = draft.minutes
+            // The length a visit starts at follows the last visit; a callback's is fixed.
+            if (kind == AppointmentKind.VISIT) preferences.appointmentMinutes = draft.minutes
             repo.saveAppointment(entry)
             when {
                 linked != null -> linked?.let { (eventId, holds) -> rememberSeen(entry.id, eventId, holds) }
@@ -1278,25 +1302,32 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 val business = repo.business(placeId) ?: return@launch
                 val now = System.currentTimeMillis()
                 // Read again after the sync: it may have brought newer rows.
-                val outcomes = repo.appointments(placeId)
+                val results = repo.appointments(placeId)
                     .filter { it.eventUid != null || it.calendarEventId != null }
-                    .mapNotNull { reconcile(it, business, now, rowWinsOnly = false) }
-                if (outcomes.isEmpty()) return@launch
+                    .mapNotNull { entry -> reconcile(entry, business, now, rowWinsOnly = false)?.let { entry to it } }
+                if (results.isEmpty()) return@launch
 
                 // The sync may have taken long: the user may have moved on. The
                 // status is data and falls back regardless; hint and reload only
                 // for the business still on screen.
                 val stillShown = { (_state.value.screen as? Screen.Detail)?.placeId == placeId }
-                if (Reconcile.DeletedInCalendar in outcomes) {
-                    val fallback = Appointment.statusAfterRemoval(business.status, repo.appointments(placeId), now)
+                val deleted = results.filter { it.second == Reconcile.DeletedInCalendar }.map { it.first }
+                if (deleted.isNotEmpty()) {
+                    // Only a deleted visit can take the status back.
+                    val fallback = if (deleted.any { it.kind == AppointmentKind.VISIT }) {
+                        Appointment.statusAfterRemoval(business.status, repo.appointments(placeId), now)
+                    } else {
+                        null
+                    }
                     fallback?.let { repo.setStatus(placeId, it) }
+                    val what = if (deleted.all { it.kind == AppointmentKind.CALLBACK }) "Der Rückruf" else "Der Termin"
                     if (stillShown()) {
                         _state.update {
                             it.copy(
                                 hint = if (fallback != null) {
-                                    "Der Termin wurde im Kalender gelöscht. Status zurück auf „Angerufen“."
+                                    "$what wurde im Kalender gelöscht. Status zurück auf „Angerufen“."
                                 } else {
-                                    "Der Termin wurde im Kalender gelöscht. Der Status bleibt, wie er ist."
+                                    "$what wurde im Kalender gelöscht. Der Status bleibt, wie er ist."
                                 }
                             )
                         }
@@ -1374,9 +1405,10 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /**
-     * Removes an appointment and its calendar event — a past one too; the
-     * detail view asks first. Where the event is not on this device, the row
-     * goes alone and the device holding the event deletes it after its next sync.
+     * Removes an appointment and its calendar event — a past visit or a
+     * completed callback too; the detail view asks first. Where the event is not
+     * on this device, the row goes alone and the device holding the event
+     * deletes it after its next sync. Only a visit can take the status back.
      */
     fun removeAppointment(appointmentId: String) {
         viewModelScope.launch {
@@ -1385,17 +1417,20 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             val lookup = lookUpEvent(entry)
             val deleted = lookup?.getOrNull()?.let { CalendarStore.delete(getApplication(), it.eventId) }
             repo.deleteAppointment(entry.id)
-            Appointment.statusAfterRemoval(business.status, repo.appointments(entry.placeId), System.currentTimeMillis())
-                ?.let { repo.setStatus(entry.placeId, it) }
+            if (entry.kind == AppointmentKind.VISIT) {
+                Appointment.statusAfterRemoval(business.status, repo.appointments(entry.placeId), System.currentTimeMillis())
+                    ?.let { repo.setStatus(entry.placeId, it) }
+            }
+            val removed = if (entry.kind == AppointmentKind.CALLBACK) "Rückruf entfernt" else "Termin entfernt"
             val linked = entry.eventUid != null || entry.calendarEventId != null
             val hint = when {
                 !preferences.calendarEnabled || !linked -> null
                 // Spec: without read permission nothing is asked — but with the
                 // calendar switched on, the missing permission is said.
-                lookup == null -> "Termin entfernt. Ohne Zugriff auf den Kalender bleibt der Eintrag dort " +
+                lookup == null -> "$removed. Ohne Zugriff auf den Kalender bleibt der Eintrag dort " +
                     "stehen — die Berechtigung lässt sich in den Android-Einstellungen der App erteilen."
-                lookup.isFailure -> "Termin entfernt. Der Kalender ließ sich nicht lesen — den Eintrag dort bitte selbst löschen."
-                deleted == false -> "Termin entfernt. Der Kalendereintrag ließ sich nicht löschen — bitte dort selbst löschen."
+                lookup.isFailure -> "$removed. Der Kalender ließ sich nicht lesen — den Eintrag dort bitte selbst löschen."
+                deleted == false -> "$removed. Der Kalendereintrag ließ sich nicht löschen — bitte dort selbst löschen."
                 else -> null
             }
             hint?.let { text -> _state.update { it.copy(hint = text) } }

@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.AppointmentDraft
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
+import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.Clock
 import io.github.amadeusb.callsheet.data.Contact
 import java.time.format.DateTimeFormatter
@@ -63,9 +64,9 @@ private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EE dd.M
 private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
 /**
- * Setting an appointment on site. A sheet rather than a screen, so the business
- * stays visible behind it — the conversation that produced the appointment is
- * usually still going.
+ * Setting an appointment on site or a callback. A sheet rather than a screen,
+ * so the business stays visible behind it — the conversation that produced the
+ * appointment is usually still going.
  *
  * The layout is header, scrolling timeline, footer, rather than one long scroll:
  * the day has to scroll without taking the save button off the screen with it.
@@ -75,7 +76,8 @@ private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
  * keeps at least 160 dp: title, date row and labels (~160 dp), strip, fields,
  * a conflict notice (~120 dp) and the button (~96 dp) stay within an ordinary
  * phone's sheet — "Termin speichern" is never pushed off the bottom, least of
- * all when a conflict is showing.
+ * all when a conflict is showing. A callback has no place: the location field
+ * is left out, and the durations are a phone call's.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,6 +95,7 @@ fun AppointmentSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        val callback = draft.kind == AppointmentKind.CALLBACK
         // The sheet takes the height it can get. The timeline is the reason
         // this screen exists, and a strip showing two hours is worth less than
         // no strip at all — it looks like the day is empty.
@@ -103,7 +106,7 @@ fun AppointmentSheet(
                 .padding(bottom = 24.dp),
         ) {
             Text(
-                text = "Termin vor Ort",
+                text = if (callback) "Rückruf" else "Termin vor Ort",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
@@ -146,7 +149,7 @@ fun AppointmentSheet(
                     modifier = Modifier.padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Appointment.DURATIONS.forEach { minutes ->
+                    Appointment.durations(draft.kind).forEach { minutes ->
                         FilterChip(
                             selected = draft.minutes == minutes,
                             onClick = { onDraft(draft.copy(minutes = minutes)) },
@@ -155,13 +158,15 @@ fun AppointmentSheet(
                     }
                 }
 
-                SectionLabel("Ort")
-                OutlinedTextField(
-                    value = draft.location,
-                    onValueChange = { onDraft(draft.copy(location = it)) },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    singleLine = false,
-                )
+                if (!callback) {
+                    SectionLabel("Ort")
+                    OutlinedTextField(
+                        value = draft.location,
+                        onValueChange = { onDraft(draft.copy(location = it)) },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        singleLine = false,
+                    )
+                }
 
                 SectionLabel("Notiz")
                 OutlinedTextField(
@@ -169,7 +174,7 @@ fun AppointmentSheet(
                     onValueChange = { onDraft(draft.copy(note = it)) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     singleLine = true,
-                    placeholder = { Text("Besichtigung, Angebot …") },
+                    placeholder = { Text(if (callback) "wegen Angebot nachfragen …" else "Besichtigung, Angebot …") },
                 )
 
                 // Absent without contacts: a choice between „Keiner" and nothing is no choice.
@@ -220,7 +225,7 @@ fun AppointmentSheet(
                     .heightIn(min = 56.dp),
                 shape = RoundedCornerShape(18.dp),
             ) {
-                Text("Termin speichern")
+                Text(if (callback) "Rückruf speichern" else "Termin speichern")
             }
         }
     }
