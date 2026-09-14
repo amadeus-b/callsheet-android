@@ -60,6 +60,13 @@ object Clock {
         zdt(nowMillis).toLocalDate().atStartOfDay(zone).toInstant().toEpochMilli()
 
     /**
+     * Start of the day after the one containing [millis]. Through the calendar
+     * date, not by adding 24 hours: the day the clocks change has 23 or 25.
+     */
+    fun nextDayStart(millis: Long): Long =
+        zdt(millis).toLocalDate().plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+
+    /**
      * Ordinary business hours: Monday to Friday, 8 to 18. Only a hint in the
      * interface, never a prohibition.
      */
