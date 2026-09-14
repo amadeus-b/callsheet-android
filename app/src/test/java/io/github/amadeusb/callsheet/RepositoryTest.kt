@@ -2,6 +2,7 @@ package io.github.amadeusb.callsheet
 
 import androidx.test.core.app.ApplicationProvider
 import io.github.amadeusb.callsheet.calling.CallFlow
+import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.ContactDraft
 import io.github.amadeusb.callsheet.data.Database
@@ -645,50 +646,148 @@ class RepositoryTest {
 
     // -------------------------------------------------------------- Appointment
 
-    @Test
-    fun `an appointment is stored and read back`() = runTest {
-        import("""[{"placeId":"t-1","title":"Gartenbau Merten","phone":"+49 841 111"}]""")
+    // Through the shared helper the repository uses, which aufbau() resets —
+    // a fresh Database(ctx) per call would open a connection nobody closes.
+    private fun count(sql: String): Int =
+        Database.instance(ApplicationProvider.getApplicationContext<android.content.Context>()).readableDatabase
+            .rawQuery(sql, null).use { if (it.moveToFirst()) it.getInt(0) else -1 }
 
-        repo.setAppointment(
-            placeId = "t-1",
-            at = "2026-09-10T14:00:00+02:00",
-            endAt = "2026-09-10T15:00:00+02:00",
-            location = "Zehentstraße 39, 85055 Ingolstadt",
-            eventId = 4711L,
+    private fun execute(sql: String) =
+        Database.instance(ApplicationProvider.getApplicationContext<android.content.Context>()).writableDatabase.execSQL(sql)
+
+    private fun visit(id: String, placeId: String, startsAt: String, endsAt: String? = null, note: String? = null) =
+        AppointmentEntry(
+            id = id, placeId = placeId, startsAt = startsAt, endsAt = endsAt,
+            location = null, note = note, contactId = null,
         )
 
-        val business = repo.business("t-1")!!
-        assertEquals("2026-09-10T14:00:00+02:00", business.appointmentAt)
-        assertEquals("2026-09-10T15:00:00+02:00", business.appointmentEndAt)
-        assertEquals("Zehentstraße 39, 85055 Ingolstadt", business.appointmentLocation)
-        assertEquals(4711L, business.calendarEventId)
+    @Test
+    fun `an appointment is stored, marked for upload and read back`() = runTest {
+        repo.saveAppointment(
+            visit("A-1", "t-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", note = "Besichtigung")
+                .copy(location = "Zehentstraße 39, 85055 Ingolstadt", contactId = "K-1", eventUid = "A-1")
+        )
+
+        val stored = repo.appointment("A-1")!!
+        assertEquals("t-1", stored.placeId)
+        assertEquals("2026-09-10T14:00:00+02:00", stored.startsAt)
+        assertEquals("2026-09-10T15:00:00+02:00", stored.endsAt)
+        assertEquals("Zehentstraße 39, 85055 Ingolstadt", stored.location)
+        assertEquals("Besichtigung", stored.note)
+        assertEquals("K-1", stored.contactId)
+        assertEquals("A-1", stored.eventUid)
+        assertTrue(stored.updatedAt.isNotBlank())
+        assertEquals(1, count("SELECT dirty FROM appointments WHERE id = 'A-1'"))
     }
 
     @Test
-    fun `an appointment can be cleared completely`() = runTest {
-        import("""[{"placeId":"t-2","title":"Gartenbau Merten","phone":"+49 841 111"}]""")
-        repo.setAppointment("t-2", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Irgendwo", 12L)
+    fun `a business's appointments come back earliest first`() = runTest {
+        repo.saveAppointment(visit("A-2", "t-1", "2026-09-12T09:00:00+02:00"))
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00"))
+        repo.saveAppointment(visit("B-1", "t-2", "2026-09-11T09:00:00+02:00"))
 
-        repo.setAppointment("t-2", null, null, null, null)
-
-        val business = repo.business("t-2")!!
-        assertNull(business.appointmentAt)
-        assertNull(business.appointmentEndAt)
-        assertNull(business.appointmentLocation)
-        assertNull(business.calendarEventId)
+        assertEquals(listOf("A-1", "A-2"), repo.appointments("t-1").map { it.id })
     }
 
     @Test
-    fun `a second import leaves the appointment alone`() = runTest {
+    fun `saving an appointment again changes it instead of adding one`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00"))
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T16:00:00+02:00", note = "verschoben"))
+
+        val all = repo.appointments("t-1")
+        assertEquals(1, all.size)
+        assertEquals("2026-09-10T16:00:00+02:00", all.single().startsAt)
+        assertEquals("verschoben", all.single().note)
+    }
+
+    @Test
+    fun `saving an entry without a UID keeps the UID already stored`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00"))
+        repo.setEventUid("A-1", "abc@infomaniak")
+
+        // A draft loaded before the read-back took the UID over carries none.
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T16:00:00+02:00"))
+
+        val stored = repo.appointment("A-1")!!
+        assertEquals("abc@infomaniak", stored.eventUid)
+        assertEquals("2026-09-10T16:00:00+02:00", stored.startsAt)
+    }
+
+    @Test
+    fun `saving leaves this device's calendar link alone`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00"))
+        repo.setCalendarLink("A-1", 4711L, "2026-09-10T14:00:00+02:00", null, null)
+
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T16:00:00+02:00"))
+
+        assertEquals(4711L, repo.appointment("A-1")!!.calendarEventId)
+    }
+
+    @Test
+    fun `deleting an appointment leaves a tombstone`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00"))
+
+        repo.deleteAppointment("A-1")
+
+        assertNull(repo.appointment("A-1"))
+        assertEquals(1, count("SELECT COUNT(*) FROM deletions WHERE table_name = 'appointments' AND row_id = 'A-1'"))
+    }
+
+    @Test
+    fun `the calendar link is local and marks nothing`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00"))
+        execute("UPDATE appointments SET dirty = 0")
+        val before = repo.appointment("A-1")!!.updatedAt
+
+        repo.setCalendarLink("A-1", 4711L, "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Zehentstraße 39")
+
+        val linked = repo.appointment("A-1")!!
+        assertEquals(4711L, linked.calendarEventId)
+        assertEquals("2026-09-10T14:00:00+02:00", linked.seenStartsAt)
+        assertEquals("2026-09-10T15:00:00+02:00", linked.seenEndsAt)
+        assertEquals("Zehentstraße 39", linked.seenLocation)
+        assertEquals(before, linked.updatedAt)
+        assertEquals(0, count("SELECT dirty FROM appointments WHERE id = 'A-1'"))
+
+        repo.setCalendarLink("A-1", null, null, null, null)
+
+        val unlinked = repo.appointment("A-1")!!
+        assertNull(unlinked.calendarEventId)
+        assertNull(unlinked.seenStartsAt)
+    }
+
+    @Test
+    fun `taking over a UID is a change that travels`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00"))
+        execute("UPDATE appointments SET dirty = 0")
+
+        repo.setEventUid("A-1", "abc@infomaniak")
+
+        assertEquals("abc@infomaniak", repo.appointment("A-1")!!.eventUid)
+        assertEquals(1, count("SELECT dirty FROM appointments WHERE id = 'A-1'"))
+    }
+
+    @Test
+    fun `a second import leaves appointments alone`() = runTest {
         import("""[{"placeId":"t-3","title":"Gartenbau Merten","phone":"+49 841 111"}]""")
-        repo.setAppointment("t-3", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Zehentstraße 39", 99L)
+        repo.saveAppointment(visit("A-3", "t-3", "2026-09-10T14:00:00+02:00", note = "Besichtigung"))
 
         import("""[{"placeId":"t-3","title":"Gartenbau Merten GmbH","phone":"+49 841 222"}]""")
 
-        val business = repo.business("t-3")!!
-        assertEquals("Gartenbau Merten GmbH", business.name)
-        assertEquals("2026-09-10T14:00:00+02:00", business.appointmentAt)
-        assertEquals(99L, business.calendarEventId)
+        assertEquals("Gartenbau Merten GmbH", repo.business("t-3")!!.name)
+        assertEquals("Besichtigung", repo.appointments("t-3").single().note)
+    }
+
+    @Test
+    fun `takenEvents names every UID and local event id in use`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00").copy(eventUid = "uid-1"))
+        repo.saveAppointment(visit("A-2", "t-1", "2026-09-11T14:00:00+02:00"))
+        repo.setCalendarLink("A-2", 4711L, null, null, null)
+
+        val taken = repo.takenEvents()
+
+        assertEquals(setOf("uid-1"), taken.uids)
+        assertEquals(setOf(4711L), taken.eventIds)
     }
 
     @Test

@@ -661,6 +661,116 @@ class Repository(context: Context) {
         notifyChanged()
     }
 
+    // ------------------------------------------------------------ Appointments
+
+    /** A business's appointments, earliest first. */
+    suspend fun appointments(placeId: String): List<AppointmentEntry> = withContext(Dispatchers.IO) {
+        helper.readableDatabase
+            .rawQuery("SELECT * FROM appointments WHERE place_id = ?", arrayOf(placeId))
+            .use { c -> allAppointments(c) }
+            // Sorted as instants, not as text: two offsets would sort wrong.
+            .sortedBy { Clock.millis(it.startsAt) ?: Long.MAX_VALUE }
+    }
+
+    suspend fun appointment(id: String): AppointmentEntry? = withContext(Dispatchers.IO) {
+        helper.readableDatabase
+            .rawQuery("SELECT * FROM appointments WHERE id = ?", arrayOf(id))
+            .use { c -> if (c.moveToFirst()) appointmentFromCursor(c) else null }
+    }
+
+    /**
+     * Creates or updates an appointment. What travels is written from [entry],
+     * stamped with a new `updated_at` and marked for upload. This device's
+     * calendar columns are left as they are — [setCalendarLink] owns those.
+     *
+     * A null [AppointmentEntry.eventUid] never clears a stored UID. An entry
+     * loaded before the read-back took a UID over ([setEventUid]) still carries
+     * null; writing that would be the newer row and drop the link on every
+     * device. Nothing in the app clears a UID on purpose.
+     */
+    suspend fun saveAppointment(entry: AppointmentEntry) = withContext(Dispatchers.IO) {
+        val values = ContentValues().apply {
+            put("id", entry.id)
+            put("place_id", entry.placeId)
+            put("starts_at", entry.startsAt)
+            put("ends_at", entry.endsAt)
+            put("location", entry.location)
+            put("note", entry.note)
+            put("contact_id", entry.contactId)
+            if (entry.eventUid != null) put("event_uid", entry.eventUid)
+            put("updated_at", Clock.now())
+            put("dirty", 1)
+        }
+        val db = helper.writableDatabase
+        if (db.update("appointments", values, "id = ?", arrayOf(entry.id)) == 0) {
+            db.insert("appointments", null, values)
+        }
+        notifyChanged()
+    }
+
+    /**
+     * Records which event this device links an appointment to, and what it
+     * saw in that event. A null [eventId] drops the link. Local only: no
+     * `updated_at`, no mark — none of these columns travels.
+     */
+    suspend fun setCalendarLink(
+        id: String,
+        eventId: Long?,
+        seenStartsAt: String?,
+        seenEndsAt: String?,
+        seenLocation: String?,
+    ) = withContext(Dispatchers.IO) {
+        val values = ContentValues().apply {
+            if (eventId == null) putNull("calendar_event_id") else put("calendar_event_id", eventId)
+            put("calendar_seen_starts_at", if (eventId == null) null else seenStartsAt)
+            put("calendar_seen_ends_at", if (eventId == null) null else seenEndsAt)
+            put("calendar_seen_location", if (eventId == null) null else seenLocation)
+        }
+        helper.writableDatabase.update("appointments", values, "id = ?", arrayOf(id))
+        notifyChanged()
+    }
+
+    /**
+     * Takes over the UID found on the linked event. A change that travels —
+     * the other devices look the event up by it.
+     */
+    suspend fun setEventUid(id: String, uid: String) = withContext(Dispatchers.IO) {
+        val values = ContentValues().apply {
+            put("event_uid", uid)
+            put("updated_at", Clock.now())
+            put("dirty", 1)
+        }
+        helper.writableDatabase.update("appointments", values, "id = ?", arrayOf(id))
+        notifyChanged()
+    }
+
+    /** Deletes an appointment and leaves a tombstone, the way [deleteContact] does. */
+    suspend fun deleteAppointment(id: String) = withContext(Dispatchers.IO) {
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            tombstone(db, "appointments", id, Clock.now())
+            db.delete("appointments", "id = ?", arrayOf(id))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        notifyChanged()
+    }
+
+    /** Every event UID and local event id an appointment already holds. */
+    suspend fun takenEvents(): TakenEvents = withContext(Dispatchers.IO) {
+        val uids = HashSet<String>()
+        val eventIds = HashSet<Long>()
+        helper.readableDatabase.rawQuery("SELECT event_uid, calendar_event_id FROM appointments", null).use { c ->
+            while (c.moveToNext()) {
+                if (!c.isNull(0)) uids.add(c.getString(0))
+                if (!c.isNull(1)) eventIds.add(c.getLong(1))
+            }
+        }
+        TakenEvents(uids, eventIds)
+    }
+
     /**
      * Records a deletion. Without it the row would come back from the server with
      * the next sync, because the server cannot tell a deletion from a row that was
@@ -777,6 +887,28 @@ class Repository(context: Context) {
         latitude = c.decimal("latitude"),
         longitude = c.decimal("longitude"),
         additionalNumbers = c.int("additional_numbers") ?: 0,
+    )
+
+    private fun allAppointments(c: Cursor): List<AppointmentEntry> {
+        val list = ArrayList<AppointmentEntry>(c.count)
+        while (c.moveToNext()) list.add(appointmentFromCursor(c))
+        return list
+    }
+
+    private fun appointmentFromCursor(c: Cursor): AppointmentEntry = AppointmentEntry(
+        id = c.text("id") ?: "",
+        placeId = c.text("place_id") ?: "",
+        startsAt = c.text("starts_at") ?: "",
+        endsAt = c.text("ends_at"),
+        location = c.text("location"),
+        note = c.text("note"),
+        contactId = c.text("contact_id"),
+        updatedAt = c.text("updated_at") ?: "",
+        eventUid = c.text("event_uid"),
+        calendarEventId = c.long("calendar_event_id"),
+        seenStartsAt = c.text("calendar_seen_starts_at"),
+        seenEndsAt = c.text("calendar_seen_ends_at"),
+        seenLocation = c.text("calendar_seen_location"),
     )
 
     private fun Cursor.text(column: String): String? {

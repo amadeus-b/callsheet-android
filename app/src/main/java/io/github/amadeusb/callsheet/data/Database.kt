@@ -304,8 +304,9 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         )
 
         /**
-         * Tombstones. Contacts and their numbers are the only rows the app deletes;
-         * without a marker a deletion would come back with the next sync.
+         * Tombstones. Contacts, their numbers and appointments are the only rows
+         * the app deletes; without a marker a deletion would come back with the
+         * next sync.
          */
         private const val TABLE_DELETIONS = """
             CREATE TABLE deletions (

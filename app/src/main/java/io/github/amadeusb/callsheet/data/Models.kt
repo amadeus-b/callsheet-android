@@ -92,6 +92,43 @@ data class CallEntry(
 )
 
 /**
+ * An appointment on site. A business can have any number of them —
+ * one after another, or side by side.
+ *
+ * [eventUid] names the linked calendar event on every device carrying the
+ * shared calendar. [calendarEventId] and the `seen` fields describe this
+ * device's calendar only and never travel.
+ */
+data class AppointmentEntry(
+    val id: String,
+    val placeId: String,
+    val startsAt: String,
+    val endsAt: String?,
+    /** One line, as it goes into the calendar event. */
+    val location: String?,
+    /** „Besichtigung", „Angebot" … */
+    val note: String?,
+    /** One of the business's contacts. A reference and nothing more: it may point at a deleted one. */
+    val contactId: String?,
+    /** As stored. Saving ignores it — the repository stamps every save itself. */
+    val updatedAt: String = "",
+    val eventUid: String? = null,
+    /** The event's `_ID` on this device — a shortcut, see Appointment.locate. */
+    val calendarEventId: Long? = null,
+    /** What this device last saw in the event. All null while it never saw it. */
+    val seenStartsAt: String? = null,
+    val seenEndsAt: String? = null,
+    val seenLocation: String? = null,
+)
+
+/**
+ * The calendar events appointments already hold, by UID and by this device's
+ * event id. An event in here is not offered for linking again: two
+ * appointments sharing one event would change and delete each other's.
+ */
+data class TakenEvents(val uids: Set<String>, val eventIds: Set<Long>)
+
+/**
  * The kind of a phone number — the same categories the Contacts app uses.
  *
  * [vcard] records which TEL type the number carries inside a vCard; later
