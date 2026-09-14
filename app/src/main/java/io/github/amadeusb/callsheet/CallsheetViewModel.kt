@@ -854,6 +854,41 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /**
+     * Writes the title [entry] calls for into its event, and nothing else: the
+     * event's own time, place and description go back as the calendar holds
+     * them. Moving an event is the read-back's decision, not this one's.
+     *
+     * Only where the calendar is switched on, readable and writable. A calendar
+     * that could not be asked, or an event not on this device, is left alone:
+     * the device holding the event writes it after its next sync.
+     */
+    private suspend fun syncEventTitle(entry: AppointmentEntry, business: Business) {
+        val context = getApplication<Application>()
+        if (!preferences.calendarEnabled || !CalendarStore.canRead(context) || !CalendarStore.canWrite(context)) return
+        if (entry.eventUid == null && entry.calendarEventId == null) return
+        val located = calendarLookup { locateEvent(entry) }.getOrNull() ?: return
+        val title = Appointment.eventTitle(entry.kind, business.name, entry.note, done = entry.doneAt != null)
+        if (located.event.title != title) {
+            CalendarStore.update(context, located.eventId, located.event.copy(title = title))
+        }
+    }
+
+    /**
+     * Completes the business's open callbacks due by the end of today and puts
+     * the tick on their events. Called where a call from the app is logged —
+     * whatever its duration: an unanswered call is a callback made too. Returns
+     * how many were completed.
+     */
+    private suspend fun completeDueCallbacks(placeId: String): Int {
+        val now = System.currentTimeMillis()
+        val completed = repo.completeCallbacks(placeId, Clock.nextDayStart(now), Clock.format(now))
+        if (completed.isEmpty()) return 0
+        val business = repo.business(placeId) ?: return completed.size
+        for (id in completed) repo.appointment(id)?.let { syncEventTitle(it, business) }
+        return completed.size
+    }
+
+    /**
      * Opens the sheet for a visit. Without [appointmentId] a new visit starts as
      * before: in two days, snapped to the quarter hour, the last duration used,
      * the business's address. With one, everything comes from that appointment
@@ -1372,6 +1407,13 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                     if (entry.eventUid == null && entry.calendarEventId == null) continue
                     val business = repo.business(entry.placeId) ?: continue
                     reconcile(entry, business, now, rowWinsOnly = true)
+                    // The read-back compares time and place only, so a callback
+                    // completed elsewhere would never get its tick here. With a
+                    // shared calendar the completing device has usually written it
+                    // already, the titles match, and nothing is written.
+                    if (entry.kind == AppointmentKind.CALLBACK) {
+                        repo.appointment(id)?.let { syncEventTitle(it, business) }
+                    }
                 }
             }
             (_state.value.screen as? Screen.Detail)?.let { loadDetail(it.placeId) }
@@ -1587,6 +1629,11 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                     contact = label,
                 )
             )
+            // The call is what completes a callback — not saving the outcome: the
+            // save bar only appears when status or note changed, and a business
+            // already at „Nicht erreicht" rung again without an answer changes
+            // neither. Up at once, so other devices stop listing it as overdue.
+            if (completeDueCallbacks(placeId) > 0) syncNow()
             // Whoever was called can call back: the business belongs in the
             // phone book now, so the number has a name attached to it.
             repo.business(placeId)?.let { store.persistBusiness(it) }
