@@ -39,12 +39,6 @@ data class Business(
     val note: String?,
     val followUpAt: String?,
     val updatedAt: String,
-    /** The appointment on site. Null when none is set. */
-    val appointmentAt: String? = null,
-    val appointmentEndAt: String? = null,
-    val appointmentLocation: String? = null,
-    /** The linked event in the device calendar. Never synchronised. */
-    val calendarEventId: Long? = null,
     /** From the import. Nothing reads them yet. */
     val latitude: Double? = null,
     val longitude: Double? = null,

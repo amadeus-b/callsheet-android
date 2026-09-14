@@ -56,18 +56,6 @@ sealed interface SavePlan {
     data object LocalOnly : SavePlan
 }
 
-/** What the calendar has to say about an appointment the app already knows. */
-sealed interface ReadBack {
-    /** The calendar agrees with the app. */
-    data object Unchanged : ReadBack
-
-    /** The calendar moved or relocated it; these values win. */
-    data class Updated(val startIso: String, val endIso: String, val location: String?) : ReadBack
-
-    /** The event is gone. The only case that needs the user told. */
-    data object Gone : ReadBack
-}
-
 /**
  * An appointment's time and place as the read-back compares them — for the
  * row, for the event, and for what this device last saw in the event.
@@ -213,36 +201,6 @@ object Appointment {
         return listOfNotNull(street?.trim()?.ifEmpty { null }, town)
             .joinToString(", ")
             .ifEmpty { null }
-    }
-
-    /**
-     * Compares what the app holds against what the calendar returned. The
-     * calendar wins on time and location — that is where an appointment gets
-     * moved, on a laptop or in the car.
-     *
-     * A null [eventStartMillis] means the event is gone.
-     */
-    fun readBack(
-        currentAt: String?,
-        currentEnd: String?,
-        currentLocation: String?,
-        eventStartMillis: Long?,
-        eventEndMillis: Long?,
-        eventLocation: String?,
-    ): ReadBack {
-        if (eventStartMillis == null || eventEndMillis == null) return ReadBack.Gone
-        // Compared in milliseconds, not as text. A provider that rounds DTSTART
-        // to the minute, or hands back a different second resolution, would
-        // otherwise look "moved" on every single open and rewrite updated_at
-        // for ever.
-        val sameTime = near(Clock.millis(currentAt), eventStartMillis) &&
-            near(Clock.millis(currentEnd), eventEndMillis)
-        val samePlace = eventLocation?.trim().orEmpty() == currentLocation?.trim().orEmpty()
-        return if (sameTime && samePlace) {
-            ReadBack.Unchanged
-        } else {
-            ReadBack.Updated(Clock.format(eventStartMillis), Clock.format(eventEndMillis), eventLocation)
-        }
     }
 
     /** Within a minute counts as the same moment. */

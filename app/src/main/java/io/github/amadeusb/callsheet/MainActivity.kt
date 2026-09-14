@@ -262,6 +262,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                     business = business,
                     calls = state.detailCalls,
                     contacts = state.detailContacts,
+                    appointments = state.detailAppointments,
                     noteFocus = state.noteFocus,
                     statusSuggestion = state.statusSuggestion,
                     followUpSuggestion = state.followUpSuggestion,
@@ -274,8 +275,8 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                     },
                     onContact = { id -> vm.showContact(business.placeId, id) },
                     onFollowUp = { vm.setFollowUp(business.placeId, it) },
-                    onAppointment = { vm.openAppointment(business.placeId) },
-                    onRemoveAppointment = { vm.removeAppointment(business.placeId) },
+                    onAppointment = { id -> vm.openAppointment(business.placeId, id) },
+                    onRemoveAppointment = vm::removeAppointment,
                     onOpenUrl = ::openUrl,
                     onDismissHint = vm::hintDismissed,
                 )

@@ -324,26 +324,6 @@ class Repository(context: Context) {
     }
 
     /**
-     * Sets the appointment, or clears it when [at] is null. All four fields move
-     * together — a time without an end, or an event id without a time, would be
-     * a state nothing else in the app knows how to read.
-     */
-    suspend fun setAppointment(
-        placeId: String,
-        at: String?,
-        endAt: String?,
-        location: String?,
-        eventId: Long?,
-    ) = withContext(Dispatchers.IO) {
-        updateBusiness(placeId) {
-            if (at == null) putNull("appointment_at") else put("appointment_at", at)
-            if (endAt == null) putNull("appointment_end_at") else put("appointment_end_at", endAt)
-            if (location == null) putNull("appointment_location") else put("appointment_location", location)
-            if (eventId == null) putNull("calendar_event_id") else put("calendar_event_id", eventId)
-        }
-    }
-
-    /**
      * Creates a business entered by hand.
      *
      * Its key carries the [MANUAL_PREFIX] so a later import can never hit it and
@@ -892,10 +872,6 @@ class Repository(context: Context) {
         note = c.text("note"),
         followUpAt = c.text("follow_up_at"),
         updatedAt = c.text("updated_at") ?: "",
-        appointmentAt = c.text("appointment_at"),
-        appointmentEndAt = c.text("appointment_end_at"),
-        appointmentLocation = c.text("appointment_location"),
-        calendarEventId = c.long("calendar_event_id"),
         latitude = c.decimal("latitude"),
         longitude = c.decimal("longitude"),
         additionalNumbers = c.int("additional_numbers") ?: 0,

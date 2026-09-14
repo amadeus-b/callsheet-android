@@ -13,8 +13,9 @@ import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
 import io.github.amadeusb.callsheet.calling.CallFlow
 import io.github.amadeusb.callsheet.calling.Located
-import io.github.amadeusb.callsheet.calling.ReadBack
+import io.github.amadeusb.callsheet.calling.Reconcile
 import io.github.amadeusb.callsheet.calling.SavePlan
+import io.github.amadeusb.callsheet.calling.Slot
 import io.github.amadeusb.callsheet.calling.CallLogReader
 import io.github.amadeusb.callsheet.calling.FollowUp
 import io.github.amadeusb.callsheet.data.AppointmentEntry
@@ -129,6 +130,7 @@ data class State(
     val detail: Business? = null,
     val detailCalls: List<CallEntry> = emptyList(),
     val detailContacts: List<Contact> = emptyList(),
+    val detailAppointments: List<AppointmentEntry> = emptyList(),
     /** When a dial attempt is up for choosing, the numbers hang here. */
     val numberPicker: NumberPicker? = null,
     val contactDraft: ContactDraft = ContactDraft(),
@@ -460,6 +462,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             detail = if (switching) null else _state.value.detail,
             detailCalls = if (switching) emptyList() else _state.value.detailCalls,
             detailContacts = if (switching) emptyList() else _state.value.detailContacts,
+            detailAppointments = if (switching) emptyList() else _state.value.detailAppointments,
             statusSuggestion = if (switching) null else _state.value.statusSuggestion,
             followUpSuggestion = if (switching) null else _state.value.followUpSuggestion,
             hint = if (switching) null else _state.value.hint,
@@ -467,8 +470,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             pendingCall = if (switching) null else _state.value.pendingCall,
         )
         loadDetail(placeId)
-        // No loop: syncAppointment only ever calls loadDetail, never back here.
-        syncAppointment(placeId)
+        // No loop: reconcileAppointments only ever calls loadDetail, never back here.
+        reconcileAppointments(placeId)
     }
 
     fun showToday() {
@@ -1013,86 +1016,141 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /**
-     * Brings a linked appointment back in line with the calendar.
+     * Brings one appointment and its event back in line — the table in
+     * Appointment.reconcile — and returns what it found, or null when nothing
+     * was compared.
      *
-     * The calendar wins: that is where an appointment gets moved, on a laptop or
-     * in the car. The same rule the phone book already follows for names and
-     * numbers.
+     * A calendar that could not be asked is one of those nulls. It is skipped,
+     * never passed on as "not found": seen before and ahead, that would read as
+     * deleted in the calendar and delete the appointment on every device.
      *
-     * A deleted event is the only case that speaks up, because it is the only
-     * one that needs a decision.
+     * With [rowWinsOnly], only an event update is carried out: after a sync
+     * nobody is looking, so whatever would change a row or delete an
+     * appointment waits for the next opening, where a hint can say so.
      */
-    private fun syncAppointment(placeId: String) {
-        viewModelScope.launch {
-            val business = repo.business(placeId) ?: return@launch
-            val eventId = business.calendarEventId ?: return@launch
-            if (!CalendarStore.canRead(getApplication())) return@launch
+    private suspend fun reconcile(
+        entry: AppointmentEntry,
+        business: Business,
+        nowMillis: Long,
+        rowWinsOnly: Boolean,
+    ): Reconcile? {
+        val context = getApplication<Application>()
+        val row = Appointment.rowSlot(entry) ?: return null
+        // Without read permission nothing can be compared, and nothing may be
+        // concluded — the callers check too, this makes it hold for any caller.
+        if (!CalendarStore.canRead(context)) return null
+        val located = calendarLookup { locateEvent(entry) }.getOrElse { return null }
+        val event = located?.event
+        val outcome = Appointment.reconcile(
+            row = row,
+            seen = Appointment.seenSlot(entry),
+            event = event?.let { Slot(it.startMillis, it.endMillis, it.location) },
+            nowMillis = nowMillis,
+        )
+        if (rowWinsOnly && outcome != Reconcile.UpdateEvent) return null
 
-            // A calendar that could not be read is not a deleted event: skip.
-            val event = try {
-                CalendarStore.read(getApplication(), eventId)
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (failed: Exception) {
-                return@launch
+        // The event behind the link carries a UID the row does not know — a
+        // carried-over appointment, or an event DAVx5 has uploaded since. It is
+        // the same event; the other devices look it up by this UID.
+        val uid = if (rowWinsOnly || event == null) null else Appointment.uidToTake(entry.eventUid, event.uid)
+        if (uid != null) repo.setEventUid(entry.id, uid)
+
+        when (outcome) {
+            Reconcile.InStep -> {
+                val holds = Slot(event!!.startMillis, event.endMillis, event.location)
+                // Only when something is new — a link rewritten on every opening
+                // would notify every observer of the database for nothing.
+                if (!Appointment.seenIsCurrent(entry, located!!.eventId, holds)) {
+                    rememberSeen(entry.id, located.eventId, event)
+                }
             }
-            val decision = Appointment.readBack(
-                currentAt = business.appointmentAt,
-                currentEnd = business.appointmentEndAt,
-                currentLocation = business.appointmentLocation,
-                eventStartMillis = event?.startMillis,
-                eventEndMillis = event?.endMillis,
-                eventLocation = event?.location,
-            )
 
-            when (decision) {
-                is ReadBack.Unchanged -> Unit
-
-                is ReadBack.Updated -> {
-                    repo.setAppointment(
-                        placeId, decision.startIso, decision.endIso, decision.location, eventId,
+            is Reconcile.TakeEvent -> {
+                repo.saveAppointment(
+                    entry.copy(
+                        startsAt = Clock.format(outcome.slot.startMillis),
+                        endsAt = outcome.slot.endMillis?.let { Clock.format(it) },
+                        location = outcome.slot.location,
+                        eventUid = uid ?: entry.eventUid,
                     )
-                    loadDetail(placeId)
-                }
+                )
+                rememberSeen(entry.id, located!!.eventId, event!!)
+            }
 
-                is ReadBack.Gone -> {
-                    repo.setAppointment(placeId, null, null, null, null)
-                    // Only the status this appointment set gets taken back. A
-                    // business that has since been declined or blocked keeps
-                    // that — deleting an entry in the calendar is not
-                    // permission to undo a decision made on the phone.
-                    val reset = business.status == Status.APPOINTMENT
-                    if (reset) repo.setStatus(placeId, Status.CALLED)
-                    _state.update {
-                        it.copy(
-                            hint = if (reset) {
-                                "Der Termin wurde im Kalender gelöscht. Status zurück auf „Angerufen“."
-                            } else {
-                                "Der Termin wurde im Kalender gelöscht. Der Status bleibt, wie er ist."
-                            }
-                        )
-                    }
-                    loadDetail(placeId)
+            Reconcile.UpdateEvent -> {
+                // Reading is allowed with the calendar switched off in the
+                // settings; writing is not — the same condition followCalendar
+                // checks before it writes anything.
+                if (!preferences.calendarEnabled || !CalendarStore.canWrite(context)) return outcome
+                val fields = eventFieldsFor(entry, business) ?: return outcome
+                if (CalendarStore.update(context, located!!.eventId, fields)) {
+                    rememberSeen(entry.id, located.eventId, fields)
                 }
             }
+
+            Reconcile.NotYetHere -> Unit
+            Reconcile.DeletedInCalendar -> repo.deleteAppointment(entry.id)
+            Reconcile.Unlink -> repo.setCalendarLink(entry.id, null, null, null, null)
+        }
+        return outcome
+    }
+
+    /**
+     * Reads every linked appointment of a business back from the calendar, on
+     * opening it. A deletion in the calendar is the one case that speaks up,
+     * because it is the one that may take the status back.
+     */
+    private fun reconcileAppointments(placeId: String) {
+        viewModelScope.launch {
+            if (!CalendarStore.canRead(getApplication())) return@launch
+            val business = repo.business(placeId) ?: return@launch
+            val now = System.currentTimeMillis()
+            val outcomes = repo.appointments(placeId)
+                .filter { it.eventUid != null || it.calendarEventId != null }
+                .mapNotNull { reconcile(it, business, now, rowWinsOnly = false) }
+            if (outcomes.isEmpty()) return@launch
+
+            if (Reconcile.DeletedInCalendar in outcomes) {
+                val fallback = Appointment.statusAfterRemoval(business.status, repo.appointments(placeId), now)
+                fallback?.let { repo.setStatus(placeId, it) }
+                _state.update {
+                    it.copy(
+                        hint = if (fallback != null) {
+                            "Der Termin wurde im Kalender gelöscht. Status zurück auf „Angerufen“."
+                        } else {
+                            "Der Termin wurde im Kalender gelöscht. Der Status bleibt, wie er ist."
+                        }
+                    )
+                }
+            }
+            loadDetail(placeId)
         }
     }
 
     /**
-     * Removes the appointment and its calendar event.
-     *
-     * The status only falls back when it is still `appointment`. A business set
-     * to `declined` or `do_not_call` in the meantime keeps that — those are
-     * decisions the user made, and removing an appointment is not permission to
-     * undo them.
+     * Removes an appointment and its calendar event — a past one too; the
+     * detail view asks first. Where the event is not on this device, the row
+     * goes alone and the device holding the event deletes it after its next sync.
      */
-    fun removeAppointment(placeId: String) {
+    fun removeAppointment(appointmentId: String) {
         viewModelScope.launch {
-            val business = repo.business(placeId) ?: return@launch
-            business.calendarEventId?.let { CalendarStore.delete(getApplication(), it) }
-            repo.setAppointment(placeId, null, null, null, null)
-            if (business.status == Status.APPOINTMENT) repo.setStatus(placeId, Status.CALLED)
-            loadDetail(placeId)
+            val entry = repo.appointment(appointmentId) ?: return@launch
+            val business = repo.business(entry.placeId) ?: return@launch
+            val lookup = lookUpEvent(entry)
+            lookup?.getOrNull()?.let { CalendarStore.delete(getApplication(), it.eventId) }
+            repo.deleteAppointment(entry.id)
+            Appointment.statusAfterRemoval(business.status, repo.appointments(entry.placeId), System.currentTimeMillis())
+                ?.let { repo.setStatus(entry.placeId, it) }
+            if (lookup?.isFailure == true && preferences.calendarEnabled) {
+                // The row is gone either way; the event on this device could not
+                // be found to go with it, and nothing will bring that back. Not
+                // said without permission or with the calendar off: nothing was
+                // asked, and nothing went wrong.
+                _state.update {
+                    it.copy(hint = "Termin entfernt. Der Kalender ließ sich nicht lesen — den Eintrag dort bitte selbst löschen.")
+                }
+            }
+            loadDetail(entry.placeId)
         }
     }
 
@@ -1176,6 +1234,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 detail = repo.business(placeId),
                 detailCalls = repo.calls(placeId),
                 detailContacts = contacts,
+                detailAppointments = repo.appointments(placeId),
             )
             // Whatever was changed in the phone book wins — afterwards the
             // record is level with the address book again.

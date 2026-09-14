@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.FollowUp
 import io.github.amadeusb.callsheet.calling.LegitimateInterest
+import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.Business
@@ -79,6 +80,7 @@ fun BusinessDetailScreen(
     business: Business,
     calls: List<CallEntry>,
     contacts: List<Contact>,
+    appointments: List<AppointmentEntry>,
     noteFocus: Boolean,
     statusSuggestion: Status?,
     followUpSuggestion: String?,
@@ -89,13 +91,13 @@ fun BusinessDetailScreen(
     onOutcome: (Status, String) -> Unit,
     onContact: (String?) -> Unit,
     onFollowUp: (String?) -> Unit,
-    onAppointment: () -> Unit,
-    onRemoveAppointment: () -> Unit,
+    onAppointment: (String?) -> Unit,
+    onRemoveAppointment: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
     onDismissHint: () -> Unit,
 ) {
     var blockConfirm by remember { mutableStateOf(false) }
-    var removeAppointment by remember { mutableStateOf(false) }
+    var removeAppointment by remember { mutableStateOf<AppointmentEntry?>(null) }
 
     // Status and note are only taken over by the save button. Until then the
     // draft lives here; it resets as soon as the saved state catches up or a
@@ -258,10 +260,12 @@ fun BusinessDetailScreen(
 
             item(key = "appointment") {
                 Section("Termin vor Ort")
-                AppointmentBlock(
+                AppointmentsBlock(
                     business = business,
+                    appointments = appointments,
+                    contacts = contacts,
                     onSet = onAppointment,
-                    onRemove = { removeAppointment = true },
+                    onRemove = { removeAppointment = it },
                     onOpenUrl = onOpenUrl,
                 )
             }
@@ -333,24 +337,36 @@ fun BusinessDetailScreen(
         )
     }
 
-    if (removeAppointment) {
+    removeAppointment?.let { entry ->
+        val now = System.currentTimeMillis()
+        val ahead = Appointment.isAhead(entry.startsAt, entry.endsAt, now)
+        val fallsBack = Appointment.statusAfterRemoval(
+            business.status, appointments.filter { it.id != entry.id }, now,
+        ) != null
         AlertDialog(
-            onDismissRequest = { removeAppointment = false },
-            title = { Text("Termin entfernen?") },
+            onDismissRequest = { removeAppointment = null },
+            title = { Text(if (ahead) "Termin entfernen?" else "Früheren Termin entfernen?") },
             text = {
                 Text(
-                    "Der Termin wird auch aus dem Kalender gelöscht. " +
-                        "Der Status fällt zurück auf „Angerufen“."
+                    listOfNotNull(
+                        if (ahead) {
+                            "Der Termin wird auch aus dem Kalender gelöscht."
+                        } else {
+                            "Der Termin ist vorbei und bleibt sonst als Nachweis stehen. " +
+                                "Er wird auch aus dem Kalender gelöscht."
+                        },
+                        "Der Status fällt zurück auf „Angerufen“.".takeIf { fallsBack },
+                    ).joinToString(" ")
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    onRemoveAppointment()
-                    removeAppointment = false
+                    onRemoveAppointment(entry.id)
+                    removeAppointment = null
                 }) { Text("Entfernen") }
             },
             dismissButton = {
-                TextButton(onClick = { removeAppointment = false }) { Text("Abbrechen") }
+                TextButton(onClick = { removeAppointment = null }) { Text("Abbrechen") }
             },
         )
     }
@@ -620,69 +636,108 @@ internal fun geoUri(business: Business, address: String?): String? {
 }
 
 /**
- * The appointment on site. Sits above the follow-up because the two are the
- * answers to one question — when does this go on? — and takes effect straight
- * away, the way the follow-up does.
+ * The appointments on site. Sits above the follow-up because the two are the
+ * answers to one question — when does this go on?
+ *
+ * The ones ahead come first, earliest first. Past ones stay as a record,
+ * collapsed, latest first. „Termin anlegen" is always there: a second
+ * appointment is as ordinary as a first.
  */
 @Composable
-private fun AppointmentBlock(
+private fun AppointmentsBlock(
     business: Business,
-    onSet: () -> Unit,
-    onRemove: () -> Unit,
+    appointments: List<AppointmentEntry>,
+    contacts: List<Contact>,
+    onSet: (String?) -> Unit,
+    onRemove: (AppointmentEntry) -> Unit,
     onOpenUrl: (String) -> Unit,
 ) {
+    val (ahead, past) = Appointment.split(appointments, System.currentTimeMillis())
+    var showPast by remember(business.placeId) { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        val set = business.appointmentAt
-        if (set == null) {
-            // A status of "Termin" without a time is the hole this section
-            // exists to close. Say so, and offer the way out — never force it.
-            val statusOnly = business.status == Status.APPOINTMENT
+        if (ahead.isEmpty()) {
+            // A status of "Termin" without a single appointment is the hole this
+            // section exists to close: say so, and offer the way out — never
+            // force it. With only past ones the status is simply what the last
+            // visit left behind; nothing is wrong, so nothing is red.
+            val statusOnly = business.status == Status.APPOINTMENT && appointments.isEmpty()
             Text(
-                text = if (statusOnly) {
-                    "Status „Termin“, aber kein Zeitpunkt gesetzt."
-                } else {
-                    "Kein Termin vereinbart."
+                text = when {
+                    statusOnly -> "Status „Termin“, aber kein Termin steht an."
+                    past.isNotEmpty() -> "Kein Termin steht an."
+                    else -> "Kein Termin vereinbart."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (statusOnly) MaterialTheme.colorScheme.error
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = onSet,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                shape = RoundedCornerShape(14.dp),
-            ) { Text("Termin anlegen") }
-        } else {
+        }
+        ahead.forEach { AppointmentItem(it, contacts, onSet, onRemove, onOpenUrl) }
+
+        if (past.isNotEmpty()) {
+            TextButton(onClick = { showPast = !showPast }) {
+                Text("Frühere Termine (${past.size})")
+            }
+            if (showPast) past.forEach { AppointmentItem(it, contacts, onSet, onRemove, onOpenUrl) }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = { onSet(null) },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            shape = RoundedCornerShape(14.dp),
+        ) { Text("Termin anlegen") }
+    }
+}
+
+@Composable
+private fun AppointmentItem(
+    entry: AppointmentEntry,
+    contacts: List<Contact>,
+    onSet: (String?) -> Unit,
+    onRemove: (AppointmentEntry) -> Unit,
+    onOpenUrl: (String) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text(
+            text = Appointment.readableRange(entry.startsAt, entry.endsAt),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        entry.note?.takeIf { it.isNotBlank() }?.let {
+            Text(text = it, style = MaterialTheme.typography.bodyMedium)
+        }
+        // A deleted contact simply leaves no name behind.
+        contacts.firstOrNull { it.id == entry.contactId }?.let {
             Text(
-                text = Appointment.readableRange(set, business.appointmentEndAt),
-                style = MaterialTheme.typography.titleMedium,
+                text = it.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            business.appointmentLocation?.takeIf { it.isNotBlank() }?.let { where ->
-                Text(
-                    text = where,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .clickable { onOpenUrl(geoUri(where)) }
-                        .padding(vertical = 4.dp),
-                )
+        }
+        entry.location?.takeIf { it.isNotBlank() }?.let { where ->
+            Text(
+                text = where,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clickable { onOpenUrl(geoUri(where)) }
+                    .padding(vertical = 4.dp),
+            )
+        }
+        if (entry.calendarEventId != null) {
+            Text(
+                text = "Im Kalender abgelegt.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { onSet(entry.id) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                Text("Ändern")
             }
-            if (business.calendarEventId != null) {
-                Text(
-                    text = "Im Kalender abgelegt.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onSet, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
-                    Text("Ändern")
-                }
-                OutlinedButton(onClick = onRemove, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
-                    Text("Entfernen")
-                }
+            OutlinedButton(onClick = { onRemove(entry) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                Text("Entfernen")
             }
         }
     }
