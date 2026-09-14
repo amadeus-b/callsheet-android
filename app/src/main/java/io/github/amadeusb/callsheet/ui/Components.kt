@@ -46,7 +46,6 @@ import io.github.amadeusb.callsheet.NumberPicker
 import io.github.amadeusb.callsheet.data.Business
 import io.github.amadeusb.callsheet.data.Status
 import io.github.amadeusb.callsheet.data.DialTarget
-import io.github.amadeusb.callsheet.data.Clock
 
 /** Entry in the industry picker for businesses without an industry. */
 const val UNASSIGNED = "ohne Zuordnung"
