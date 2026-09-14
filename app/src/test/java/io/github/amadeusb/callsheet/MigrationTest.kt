@@ -226,6 +226,16 @@ class MigrationTest {
             // Carried over into appointments as a callback since schema 6.
             assertTrue(c.isNull(2))
         }
+        // The follow-up itself is not lost — it arrives as a callback.
+        db.rawQuery(
+            "SELECT starts_at, kind, updated_at FROM appointments WHERE id = 'followup-alt-1'",
+            null,
+        ).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("2026-09-10T09:00:00+02:00", c.getString(0))
+            assertEquals("callback", c.getString(1))
+            assertEquals("2026-09-07T12:00:00+02:00", c.getString(2))
+        }
     }
 
     @Test
@@ -402,7 +412,7 @@ class MigrationTest {
             assertEquals("followup-alt-1", c.getString(0))
             assertEquals("alt-1", c.getString(1))
             assertEquals("2026-09-10T09:00:00+02:00", c.getString(2))
-            for (i in 3..7) assertTrue("column $i not empty", c.isNull(i))
+            for (i in 3..7) assertTrue("column $i not null", c.isNull(i))
             // The business's timestamp, so the server's carried-over row meets this one as a standstill.
             assertEquals("2026-09-07T12:00:00+02:00", c.getString(8))
             assertEquals("callback", c.getString(9))
