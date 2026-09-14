@@ -608,12 +608,13 @@ private fun PhoneBookBlock(
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Text(
-            text = "Jeder Betrieb mit Telefonnummer wird im Telefonbuch abgelegt, " +
-                "dazu die erfassten Ansprechpartner. Damit zeigt das Telefon " +
-                "einen Namen, auch wenn dort zuerst angerufen wird. Gesperrte " +
-                "Betriebe bleiben draußen. " +
-                "Was du im Telefonbuch änderst, übernimmt die App beim nächsten " +
-                "Öffnen der Akte.",
+            text = "Jeder Betrieb mit Telefonnummer wird im Telefonbuch abgelegt: " +
+                "ein Eintrag je Ansprechpartner, sonst einer für den Betrieb. " +
+                "Damit zeigt das Telefon einen Namen, auch wenn dort zuerst " +
+                "angerufen wird. Gesperrte Betriebe bleiben draußen. " +
+                "Was du bei selbst erfassten Ansprechpartnern im Telefonbuch " +
+                "änderst, übernimmt die App beim nächsten Öffnen der Akte; " +
+                "alles andere schreibt sie beim nächsten Übertragen neu.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -607,15 +607,11 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             _state.value = _state.value.copy(saving = true, contactError = null)
             repo.saveContact(draft).fold(
-                onSuccess = { id ->
+                onSuccess = { _ ->
                     _state.value = _state.value.copy(saving = false)
-                    val business = repo.business(draft.placeId)
-                    repo.contacts(draft.placeId).firstOrNull { it.id == id }?.let {
-                        store.persistContact(it, business)
-                    }
-                    // The business itself belongs there too, otherwise a call
-                    // back from the switchboard stays nameless.
-                    business?.let { store.persistBusiness(it) }
+                    // The whole business follows: the person's own entry, and
+                    // the company entry that makes way for them.
+                    repo.business(draft.placeId)?.let { store.persistBusiness(it) }
                     back()
                     loadDetail(draft.placeId)
                 },
@@ -634,6 +630,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             repo.deleteContact(id)
             store.deleteContact(id)
+            // With the last person gone, the company entry comes back.
+            repo.business(placeId)?.let { store.persistBusiness(it) }
             if (_state.value.screen is Screen.ContactForm) back()
             loadDetail(placeId)
         }
@@ -1366,19 +1364,16 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         if (_state.value.saving) return
         viewModelScope.launch {
             _state.value = _state.value.copy(saving = true, phoneBookHint = null)
-            var people = 0
             var businesses = 0
+            var entries = 0
             for (business in repo.businessesForPhoneBook()) {
-                val contacts = repo.contacts(business.placeId)
-                contacts.forEach { store.persistContact(it, business) }
-                people += contacts.size
-                store.persistBusiness(business)
+                entries += store.persistBusiness(business)
                 businesses++
             }
             _state.value = _state.value.copy(
                 saving = false,
-                phoneBookHint = "Übertragen: $businesses Betriebe und $people " +
-                    "Ansprechpartner. DAVx5 lädt sie beim nächsten Abgleich hoch.",
+                phoneBookHint = "Übertragen: $businesses Betriebe in $entries " +
+                    "Einträgen. DAVx5 lädt sie beim nächsten Abgleich hoch.",
             )
         }
     }
@@ -1412,15 +1407,16 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     private fun loadDetail(placeId: String) {
         viewModelScope.launch {
             val contacts = repo.contacts(placeId)
+            val business = repo.business(placeId)
             _state.value = _state.value.copy(
-                detail = repo.business(placeId),
+                detail = business,
                 detailCalls = repo.calls(placeId),
                 detailContacts = contacts,
                 detailAppointments = repo.appointments(placeId),
             )
             // Whatever was changed in the phone book wins — afterwards the
             // record is level with the address book again.
-            if (store.readBack(contacts)) {
+            if (store.readBack(business, contacts)) {
                 _state.value = _state.value.copy(
                     detailContacts = repo.contacts(placeId),
                 )
