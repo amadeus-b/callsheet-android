@@ -913,6 +913,77 @@ class RepositoryTest {
         assertTrue(repo.appointmentsDue(from, until).single().second.hasNumber)
     }
 
+    // ------------------------------------------------------------- Callbacks
+
+    @Test
+    fun `completeCallbacks completes the business's open callbacks due before the limit`() = runTest {
+        repo.saveAppointment(callback("R-1", "t-1", "2026-09-09T09:00:00+02:00"))
+        repo.saveAppointment(callback("R-2", "t-1", "2026-09-10T16:00:00+02:00"))
+        repo.saveAppointment(callback("R-3", "t-1", "2026-09-11T09:00:00+02:00"))
+        repo.saveAppointment(callback("R-4", "t-1", "2026-09-08T09:00:00+02:00", doneAt = "2026-09-08T09:10:00+02:00"))
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T10:00:00+02:00"))
+        repo.saveAppointment(callback("R-9", "t-2", "2026-09-10T09:00:00+02:00"))
+        execute("UPDATE appointments SET dirty = 0")
+
+        val completed = repo.completeCallbacks(
+            placeId = "t-1",
+            untilMillis = Clock.millis("2026-09-11T00:00:00+02:00")!!,
+            doneAt = "2026-09-10T12:00:00+02:00",
+        )
+
+        assertEquals(setOf("R-1", "R-2"), completed.toSet())
+        assertEquals("2026-09-10T12:00:00+02:00", repo.appointment("R-1")!!.doneAt)
+        assertEquals("2026-09-10T12:00:00+02:00", repo.appointment("R-2")!!.doneAt)
+        assertNull(repo.appointment("R-3")!!.doneAt)
+        // Completed before stays completed when it was.
+        assertEquals("2026-09-08T09:10:00+02:00", repo.appointment("R-4")!!.doneAt)
+        assertNull(repo.appointment("A-1")!!.doneAt)
+        assertNull(repo.appointment("R-9")!!.doneAt)
+        // Completing travels.
+        assertEquals(2, count("SELECT COUNT(*) FROM appointments WHERE dirty = 1"))
+    }
+
+    @Test
+    fun `completeCallbacks with nothing due changes nothing`() = runTest {
+        repo.saveAppointment(callback("R-3", "t-1", "2026-09-11T09:00:00+02:00"))
+        execute("UPDATE appointments SET dirty = 0")
+
+        val completed = repo.completeCallbacks("t-1", Clock.millis("2026-09-11T00:00:00+02:00")!!, "2026-09-10T12:00:00+02:00")
+
+        assertTrue(completed.isEmpty())
+        assertEquals(0, count("SELECT COUNT(*) FROM appointments WHERE dirty = 1"))
+    }
+
+    @Test
+    fun `agenda lists open callbacks of any day and visits from today on, earliest first`() = runTest {
+        import(
+            """[
+              {"placeId":"t-4","title":"Elektro Meier","phone":"+49 841 111"},
+              {"placeId":"t-5","title":"Gartenbau Merten","phone":"+49 841 222"}
+            ]"""
+        )
+        repo.saveAppointment(callback("R-old", "t-4", "2026-09-01T09:00:00+02:00"))
+        repo.saveAppointment(callback("R-done", "t-4", "2026-09-09T09:00:00+02:00", doneAt = "2026-09-09T09:05:00+02:00"))
+        repo.saveAppointment(visit("A-yesterday", "t-5", "2026-09-09T10:00:00+02:00"))
+        repo.saveAppointment(visit("A-today", "t-5", "2026-09-10T08:00:00+02:00"))
+        repo.saveAppointment(visit("A-next-week", "t-4", "2026-09-17T10:00:00+02:00"))
+
+        val listed = repo.agenda(Clock.millis("2026-09-10T00:00:00+02:00")!!)
+
+        assertEquals(listOf("R-old", "A-today", "A-next-week"), listed.map { it.first.id })
+        assertEquals(listOf("t-4", "t-5", "t-4"), listed.map { it.second.placeId })
+    }
+
+    @Test
+    fun `a blocked business never appears in the agenda`() = runTest {
+        import("""[{"placeId":"t-7","title":"Gesperrt","phone":"+49 841 111"}]""")
+        repo.saveAppointment(callback("R-7", "t-7", "2026-09-01T09:00:00+02:00"))
+        repo.saveAppointment(visit("A-7", "t-7", "2026-09-17T10:00:00+02:00"))
+        repo.setStatus("t-7", Status.DO_NOT_CALL)
+
+        assertTrue(repo.agenda(Clock.millis("2026-09-10T00:00:00+02:00")!!).isEmpty())
+    }
+
     private companion object {
         /** Made-up data in the field structure from docs/data-model.md. */
         const val FIRST_IMPORT = """

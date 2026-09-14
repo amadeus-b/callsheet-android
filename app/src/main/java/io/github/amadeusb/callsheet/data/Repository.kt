@@ -258,18 +258,48 @@ class Repository(context: Context) {
                 .filter { it.first in fromMillis..toMillis }
                 .sortedBy { it.first }
                 .map { it.second }
-
-            val businesses = HashMap<String, Business?>()
-            due.mapNotNull { appointment ->
-                val business = businesses.getOrPut(appointment.placeId) {
-                    db.rawQuery(
-                        "SELECT b.*, $NUMBERS_SUBQUERY FROM businesses b WHERE b.place_id = ?",
-                        arrayOf(appointment.placeId),
-                    ).use { c -> if (c.moveToFirst()) fromCursor(c) else null }
-                }
-                business?.let { appointment to it }
-            }
+            withBusinesses(db, due)
         }
+
+    /**
+     * What the agenda lists, each with its business, earliest first: every open
+     * callback, however old — it is work not done — and the visits from
+     * [todayStartMillis] on. Completed callbacks and earlier visits are left
+     * out, and so is everything at a blocked business. Grouping is
+     * Agenda.sections' job.
+     */
+    suspend fun agenda(todayStartMillis: Long): List<Pair<AppointmentEntry, Business>> =
+        withContext(Dispatchers.IO) {
+            val db = helper.readableDatabase
+            val listed = db.rawQuery(
+                "SELECT a.* FROM appointments a JOIN businesses b ON b.place_id = a.place_id WHERE b.status <> ?",
+                arrayOf(Status.DO_NOT_CALL.key),
+            ).use { c -> allAppointments(c) }
+                .mapNotNull { a -> Clock.millis(a.startsAt)?.let { it to a } }
+                .filter { (start, a) ->
+                    if (a.kind == AppointmentKind.CALLBACK) a.doneAt == null else start >= todayStartMillis
+                }
+                .sortedBy { it.first }
+                .map { it.second }
+            withBusinesses(db, listed)
+        }
+
+    /** Each appointment with its business, read once per business. The list query's numbers included. */
+    private fun withBusinesses(
+        db: android.database.sqlite.SQLiteDatabase,
+        appointments: List<AppointmentEntry>,
+    ): List<Pair<AppointmentEntry, Business>> {
+        val businesses = HashMap<String, Business?>()
+        return appointments.mapNotNull { appointment ->
+            val business = businesses.getOrPut(appointment.placeId) {
+                db.rawQuery(
+                    "SELECT b.*, $NUMBERS_SUBQUERY FROM businesses b WHERE b.place_id = ?",
+                    arrayOf(appointment.placeId),
+                ).use { c -> if (c.moveToFirst()) fromCursor(c) else null }
+            }
+            business?.let { appointment to it }
+        }
+    }
 
     /** The blocked businesses — only so a mistaken block can be taken back. */
     suspend fun blockedBusinesses(): List<Business> = withContext(Dispatchers.IO) {
@@ -812,6 +842,41 @@ class Repository(context: Context) {
         }
         notifyChanged()
     }
+
+    /**
+     * Completes the open callbacks of [placeId] that start before [untilMillis]:
+     * `done_at` = [doneAt], stamped and marked for upload, in one transaction.
+     * Returns the ids completed — the caller marks their calendar events.
+     */
+    suspend fun completeCallbacks(placeId: String, untilMillis: Long, doneAt: String): List<String> =
+        withContext(Dispatchers.IO) {
+            val db = helper.writableDatabase
+            val due = db.rawQuery(
+                "SELECT * FROM appointments WHERE place_id = ? AND kind = ? AND done_at IS NULL",
+                arrayOf(placeId, AppointmentKind.CALLBACK.key),
+            ).use { c -> allAppointments(c) }
+                .filter { (Clock.millis(it.startsAt) ?: Long.MAX_VALUE) < untilMillis }
+                .map { it.id }
+            if (due.isEmpty()) return@withContext emptyList()
+
+            val now = Clock.now()
+            db.beginTransaction()
+            try {
+                for (id in due) {
+                    val values = ContentValues().apply {
+                        put("done_at", doneAt)
+                        put("updated_at", now)
+                        put("dirty", 1)
+                    }
+                    db.update("appointments", values, "id = ?", arrayOf(id))
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            notifyChanged()
+            due
+        }
 
     /** Every event UID and local event id an appointment already holds. */
     suspend fun takenEvents(): TakenEvents = withContext(Dispatchers.IO) {
