@@ -3,6 +3,7 @@ package io.github.amadeusb.callsheet.contacts
 import android.Manifest
 import android.content.ContentProviderOperation
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.ContactsContract
@@ -11,6 +12,8 @@ import android.provider.ContactsContract.CommonDataKinds.Note
 import android.provider.ContactsContract.CommonDataKinds.Organization
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.provider.ContactsContract.CommonDataKinds.StructuredName
+import android.provider.ContactsContract.CommonDataKinds.StructuredPostal
+import android.provider.ContactsContract.CommonDataKinds.Website
 import android.provider.ContactsContract.Data
 import android.provider.ContactsContract.RawContacts
 import androidx.core.content.ContextCompat
@@ -21,16 +24,59 @@ import kotlinx.coroutines.withContext
 /** An address book account on the phone, as the Contacts app shows it. */
 data class AddressBookAccount(val name: String, val type: String)
 
+/** The label the address book shows a business's main number under. */
+const val MAIN_NUMBER_LABEL = "Hauptadresse"
+
+/** A person's name as the phone book stores it. */
+data class PersonName(val given: String?, val family: String) {
+
+    /** Given and family name as one line, the way the app shows the person. */
+    val display: String
+        get() = listOfNotNull(given, family).joinToString(" ")
+
+    companion object {
+        /**
+         * The last word becomes the family name, the rest the given name. A
+         * single word is all family name. Null for a blank name.
+         */
+        fun of(name: String): PersonName? {
+            val words = name.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+            if (words.isEmpty()) return null
+            if (words.size == 1) return PersonName(null, words.single())
+            return PersonName(words.dropLast(1).joinToString(" "), words.last())
+        }
+    }
+}
+
+/** A business address as it goes into the phone book. */
+data class PostalAddress(
+    val street: String?,
+    val postalCode: String?,
+    val city: String?,
+    val country: String,
+)
+
+enum class WebsiteKind { WORK, OTHER }
+
+/** A link on an entry: the business's website, or the map. */
+data class PhoneBookWebsite(val url: String, val kind: WebsiteKind)
+
 /** A contact as the app writes it into the phone book. */
 data class ContactFields(
     /** The app's stable id — it stays the same across updates. */
     val sourceId: String,
-    val name: String,
+    /**
+     * Null for a company-only entry. It gets no name row at all, so Android
+     * and DAVx5 both fall back to the organisation.
+     */
+    val name: PersonName?,
     val organization: String?,
     val role: String?,
     val email: String?,
     val note: String?,
     val numbers: List<PhoneBookNumber>,
+    val address: PostalAddress? = null,
+    val websites: List<PhoneBookWebsite> = emptyList(),
 )
 
 /**
@@ -52,6 +98,8 @@ object PhoneBook {
         Email.CONTENT_ITEM_TYPE,
         Organization.CONTENT_ITEM_TYPE,
         Note.CONTENT_ITEM_TYPE,
+        StructuredPostal.CONTENT_ITEM_TYPE,
+        Website.CONTENT_ITEM_TYPE,
     )
 
     fun canRead(context: Context): Boolean =
@@ -139,53 +187,86 @@ object PhoneBook {
                 return b
             }
 
-            ops.add(
-                row()
-                    .withValue(Data.MIMETYPE, StructuredName.CONTENT_ITEM_TYPE)
-                    .withValue(StructuredName.DISPLAY_NAME, fields.name)
-                    .build()
-            )
-            fields.numbers.forEach { number ->
-                ops.add(
-                    row()
-                        .withValue(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE)
-                        .withValue(Phone.NUMBER, number.number)
-                        .withValue(Phone.TYPE, ContactMerge.toAndroidType(number.kind))
-                        .build()
-                )
-            }
-            fields.email?.takeIf { it.isNotBlank() }?.let { mail ->
-                ops.add(
-                    row()
-                        .withValue(Data.MIMETYPE, Email.CONTENT_ITEM_TYPE)
-                        .withValue(Email.ADDRESS, mail)
-                        .withValue(Email.TYPE, Email.TYPE_WORK)
-                        .build()
-                )
-            }
-            if (!fields.organization.isNullOrBlank() || !fields.role.isNullOrBlank()) {
-                ops.add(
-                    row()
-                        .withValue(Data.MIMETYPE, Organization.CONTENT_ITEM_TYPE)
-                        .withValue(Organization.COMPANY, fields.organization)
-                        .withValue(Organization.TITLE, fields.role)
-                        .withValue(Organization.TYPE, Organization.TYPE_WORK)
-                        .build()
-                )
-            }
-            fields.note?.takeIf { it.isNotBlank() }?.let { note ->
-                ops.add(
-                    row()
-                        .withValue(Data.MIMETYPE, Note.CONTENT_ITEM_TYPE)
-                        .withValue(Note.NOTE, note)
-                        .build()
-                )
-            }
+            dataRows(fields).forEach { values -> ops.add(row().withValues(values).build()) }
 
             context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
             version(context, account, fields.sourceId)
         }
         result.getOrNull()
+    }
+
+    /**
+     * The data rows of an entry, without the raw contact id — [write] adds that.
+     * Kept apart so the shape of an entry can be tested without a contacts
+     * provider.
+     */
+    internal fun dataRows(fields: ContactFields): List<ContentValues> {
+        val rows = ArrayList<ContentValues>()
+        fun row(mimeType: String, fill: ContentValues.() -> Unit) {
+            rows += ContentValues().apply {
+                put(Data.MIMETYPE, mimeType)
+                fill()
+            }
+        }
+
+        fields.name?.let { name ->
+            // Given and family name set explicitly: with only a display name
+            // Android splits a company like a person.
+            row(StructuredName.CONTENT_ITEM_TYPE) {
+                put(StructuredName.DISPLAY_NAME, name.display)
+                put(StructuredName.GIVEN_NAME, name.given)
+                put(StructuredName.FAMILY_NAME, name.family)
+            }
+        }
+        fields.numbers.forEach { number ->
+            row(Phone.CONTENT_ITEM_TYPE) {
+                put(Phone.NUMBER, number.number)
+                if (number.label != null) {
+                    put(Phone.TYPE, Phone.TYPE_CUSTOM)
+                    put(Phone.LABEL, number.label)
+                } else {
+                    put(Phone.TYPE, ContactMerge.toAndroidType(number.kind))
+                }
+            }
+        }
+        fields.email?.takeIf { it.isNotBlank() }?.let { mail ->
+            row(Email.CONTENT_ITEM_TYPE) {
+                put(Email.ADDRESS, mail)
+                put(Email.TYPE, Email.TYPE_WORK)
+            }
+        }
+        if (!fields.organization.isNullOrBlank() || !fields.role.isNullOrBlank()) {
+            row(Organization.CONTENT_ITEM_TYPE) {
+                put(Organization.COMPANY, fields.organization)
+                put(Organization.TITLE, fields.role)
+                put(Organization.TYPE, Organization.TYPE_WORK)
+            }
+        }
+        fields.address?.let { address ->
+            row(StructuredPostal.CONTENT_ITEM_TYPE) {
+                put(StructuredPostal.STREET, address.street)
+                put(StructuredPostal.POSTCODE, address.postalCode)
+                put(StructuredPostal.CITY, address.city)
+                put(StructuredPostal.COUNTRY, address.country)
+                put(StructuredPostal.TYPE, StructuredPostal.TYPE_WORK)
+            }
+        }
+        fields.websites.forEach { site ->
+            row(Website.CONTENT_ITEM_TYPE) {
+                put(Website.URL, site.url)
+                put(
+                    Website.TYPE,
+                    when (site.kind) {
+                        WebsiteKind.WORK -> Website.TYPE_WORK
+                        WebsiteKind.OTHER -> Website.TYPE_OTHER
+                    },
+                )
+            }
+        }
+        fields.note?.takeIf { it.isNotBlank() }?.let { note ->
+            row(Note.CONTENT_ITEM_TYPE) { put(Note.NOTE, note) }
+        }
+        return rows
     }
 
     /** Reads the entry back exactly as the phone book currently holds it. */
@@ -282,6 +363,6 @@ object PhoneBook {
 fun List<io.github.amadeusb.callsheet.data.PhoneNumber>.toPhoneBookNumbers(): List<PhoneBookNumber> =
     map { PhoneBookNumber(it.number, it.kind) }
 
-/** A business's main number goes into the phone book as the switchboard. */
+/** A business's main number goes into the phone book under [MAIN_NUMBER_LABEL]. */
 fun businessNumber(number: String): List<PhoneBookNumber> =
-    listOf(PhoneBookNumber(number, PhoneType.MAIN))
+    listOf(PhoneBookNumber(number, PhoneType.MAIN, label = MAIN_NUMBER_LABEL))

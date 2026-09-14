@@ -6,8 +6,14 @@ import io.github.amadeusb.callsheet.data.ContactDraft
 import io.github.amadeusb.callsheet.data.PhoneDraft
 import io.github.amadeusb.callsheet.data.PhoneType
 
-/** A number as the phone book holds it. */
-data class PhoneBookNumber(val number: String, val kind: PhoneType)
+/**
+ * A number as the phone book holds it.
+ *
+ * [label] replaces the type with a text of its own — the business's main number
+ * carries one, because DAVx5 has no phone type it would upload as `TYPE=MAIN`.
+ * Reading back ignores it.
+ */
+data class PhoneBookNumber(val number: String, val kind: PhoneType, val label: String? = null)
 
 /**
  * A contact as the phone book hands it over.

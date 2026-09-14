@@ -34,7 +34,7 @@ class ContactStore(
             account = account,
             fields = ContactFields(
                 sourceId = contact.id,
-                name = contact.name,
+                name = PersonName.of(contact.name),
                 organization = business?.name,
                 role = contact.role,
                 email = contact.email,
@@ -59,7 +59,7 @@ class ContactStore(
             account = account,
             fields = ContactFields(
                 sourceId = business.placeId,
-                name = business.name,
+                name = null,
                 organization = business.name,
                 role = business.industry,
                 email = business.email,
