@@ -4,6 +4,25 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.5.0
+
+- **A follow-up is an appointment now: a callback.** „in 2 Tagen", „nächste
+  Woche", „nächster Monat" and the date picker open the appointment sheet, set
+  to that time. A callback has a note, a person to ask for, its own calendar
+  entry „Rückruf …", and its own **Ändern** and **Entfernen**. A business can
+  have several.
+- **A call completes it.** Calling the business from the app completes every
+  callback that was due by the end of today, answered or not. The calendar entry
+  stays and gets a „✓" in front of its title. Completed callbacks stay as a
+  record under **Erledigte Rückrufe**.
+- **The calendar button opens „Termine"**: overdue callbacks first, then today,
+  then every coming day — not only today any more.
+- Callbacks never change the status.
+- **Update the sync server first, then every phone.** Existing follow-ups become
+  callbacks on both sides without a calendar entry; they get one when saved
+  again. A phone still on 1.4.0 shows callbacks as appointments on site, and a
+  follow-up set there is lost.
+
 ## 1.4.0
 
 - **Several appointments per business.** A site visit and then a meeting about

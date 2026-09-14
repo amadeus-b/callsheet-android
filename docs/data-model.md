@@ -84,7 +84,7 @@ Working fields, **never overwritten by an import**:
 ```
 status          TEXT NOT NULL DEFAULT 'new'
 note            TEXT
-follow_up_at    TEXT            -- ISO-8601 with a time, not just a date
+follow_up_at    TEXT            -- no longer used since schema 6, emptied; callbacks are appointments
 appointment_at       TEXT       -- no longer used since schema 4, emptied; see `appointments`
 appointment_end_at   TEXT       -- no longer used since schema 4
 appointment_location TEXT       -- no longer used since schema 4
@@ -101,11 +101,12 @@ without it, searching for „müller" would not find „Müller".
 
 ### `appointments`
 
-Appointments on site, any number per business — one after another, or side by
-side. Synchronised like contacts: a UUID per row, deleted through tombstones.
+Appointments, any number per business — on site („visit") or a callback — one
+after another, or side by side. Synchronised like contacts: a UUID per row,
+deleted through tombstones.
 
 ```
-id                      TEXT PRIMARY KEY  -- UUID; carried-over appointments: 'legacy-<place_id>'
+id                      TEXT PRIMARY KEY  -- UUID; carried over: 'legacy-<place_id>' (schema 4), 'followup-<place_id>' (schema 6)
 place_id                TEXT NOT NULL
 starts_at               TEXT NOT NULL     -- ISO-8601 with a time and a zone
 ends_at                 TEXT
@@ -118,6 +119,8 @@ calendar_event_id       INTEGER           -- local: the event's _ID on this devi
 calendar_seen_starts_at TEXT              -- local: what this device last saw in the event
 calendar_seen_ends_at   TEXT              -- local
 calendar_seen_location  TEXT              -- local
+kind                    TEXT              -- 'visit' | 'callback'; NULL reads as 'visit'
+done_at                 TEXT              -- when a callback was completed; NULL while open, always for a visit
 dirty                   INTEGER NOT NULL DEFAULT 0
 ```
 
@@ -127,6 +130,17 @@ appointments without a contact person.
 Schema 4 carried each business's single appointment over into a row
 `legacy-<place_id>`, the same id the server's migration writes, and emptied the
 old columns on both sides.
+
+Schema 6 carried each business's follow-up over into a callback
+`followup-<place_id>` — the same id the server's migration 008 writes, with the
+business's `updated_at` and `dirty` — and emptied `follow_up_at` on both sides.
+Carried-over callbacks have no calendar event until they are next saved: every
+device would otherwise write its own into the shared calendar.
+
+`kind` is nullable on both sides: the server fills only gaps where `NULL`
+stands, and a 1.4.0 device creates appointments without it. A callback is
+completed by a call to its business (`done_at`); saving never clears
+`done_at`, the same way it never clears `event_uid`.
 
 ### `status` — allowed values
 
@@ -300,6 +314,11 @@ DAVx5, the appointment reaches the server the same way; the app itself speaks
 - After a sync, appointments changed elsewhere move their events and deleted
   ones take their events along.
 - Busy times for the picker are read from every visible calendar, and only read.
+- A callback's event is titled „Rückruf <business>", with the note after a dash.
+  Completed, the title gets a leading „✓" and the event stays: CalDAV events
+  have no completed state, only tasks do. After a sync, a callback completed on
+  another device gets the tick here if its title still lacks it. The tick is not
+  read back.
 
 ## Import
 
@@ -309,7 +328,7 @@ without a new build.
 
 1. Matching happens on `place_id`.
 2. New businesses are created with `status = 'new'`.
-3. Known businesses: **master data only.** Status, note, follow-up,
+3. Known businesses: **master data only.** Status, note, callbacks,
    appointments and the call history stay untouched. A fresh export must never
    overwrite the work.
 4. Phone numbers are normalised: `phoneUnformatted` preferred, brought to E.164

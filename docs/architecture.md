@@ -37,8 +37,9 @@ The detail view, reached by tapping a row:
 - all master data, address, website tappable
 - contacts with their numbers, each individually dialable
 - a **note field**, writable directly
-- a **follow-up** with quick choices („in 2 Tagen", „nächste Woche",
-  „nächster Monat") and a free pick of date and time
+- **appointments on site** and **callbacks**, each opening the same sheet; the
+  callbacks' quick choices („in 2 Tagen", „nächste Woche", „nächster Monat")
+  and the free pick of date and time only preset its time
 - **status buttons** in a row, big enough for a thumb
 - this business's **call history** with date, duration and note
 
@@ -46,11 +47,12 @@ Further down sits the provenance of the data — which research run, collected
 when. That gets needed when somebody on the phone asks where the number came
 from.
 
-### Today
+### Agenda
 
-Follow-ups that are due, sorted by time — **including the overdue ones** from
-previous days, at the top and set apart visually. Without them, missed call-backs
-disappear silently, and those are exactly the ones that cost business.
+Behind the calendar button: open callbacks that are overdue — from any day, at
+the top and set apart visually — then today, then every later day with something
+on it. Callbacks and appointments on site mixed by time. Grouping is a pure
+function (`calling/Agenda.kt`), tested without Android.
 
 ## Call flow
 
@@ -67,11 +69,14 @@ The most important path through the app:
    duration. The entry sometimes appears with a delay, hence three attempts a
    second apart (see [Development](development.md)).
 5. Result:
-   - **Duration 0** → propose `no_answer`, plus a follow-up in two days at a
+   - **Duration 0** → propose `no_answer`, plus a callback in two days at a
      **different time of day** than this attempt. Calling three times at ten
      o'clock gets the same result three times.
    - **Duration > 0** → the note field takes focus, the status choice is open.
 6. An entry is written to `calls` and the business's `updated_at` is refreshed.
+7. Open callbacks of that business due by the end of today are completed
+   (`done_at`), and their calendar events get a „✓" in the title. Here and not
+   on saving the outcome: the save bar only appears when status or note changed.
 
 Every proposal can be overridden — even a duration of 0 can mean somebody picked
 up and hung up straight away.
@@ -81,14 +86,14 @@ up and hung up straight away.
 ```
 io.github.amadeusb.callsheet
 ├── data/       database, models, import, phone numbers, target rule
-├── calling/    dialling, reading the call log, follow-up dates
+├── calling/    dialling, reading the call log, callback dates, the agenda
 ├── contacts/   merging with the Android contacts
 ├── ui/         Compose screens and building blocks
 └── CallsheetViewModel
 ```
 
 The split is drawn so that the logic stays testable without an Android UI:
-import, target rule, number normalisation, follow-up computation and contact
+import, target rule, number normalisation, callback computation and contact
 merging carry no Compose dependency.
 
 ## Technical decisions

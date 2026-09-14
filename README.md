@@ -20,12 +20,11 @@ The user interface is German; the code and documentation are English.
 - **Work list** filtered by industry, city and status, with full-text search
 - **Dials at a tap** via `ACTION_DIAL` — the app never places a call itself
 - **Call duration** read automatically from the Android call log
-- **Status, note and follow-up** in one go after hanging up
-- **Appointments on site**, as many per business as the work needs, each with a
-  time, a length, an address, a note and a contact person, mirrored into the
-  device's calendar
-- **"Today"** with the day's appointments above follow-ups that are due *and*
-  overdue
+- **Status and note** in one go after hanging up
+- **Appointments on site and callbacks**, as many per business as the work
+  needs, each with a time, a length, a note and a contact person, mirrored into
+  the device's calendar; a call completes the callbacks due
+- **"Termine"**: overdue callbacks, then today, then every coming day
 - **Contacts** per business, merged with the device's phone book
 - **Hand-entered businesses**, for the referral that arrives over the phone
 - **Do-not-call** enforced as a hard exclusion in the database query, not a filter
@@ -99,7 +98,7 @@ trying it out, not for published releases.
 
 | Document | Contents |
 |---|---|
-| [Usage](docs/usage.md) | import, daily flow, blocking, follow-ups, appointments |
+| [Usage](docs/usage.md) | import, daily flow, blocking, callbacks, appointments, agenda |
 | [Architecture](docs/architecture.md) | screens, call flow, technical decisions |
 | [Data model](docs/data-model.md) | import format, tables, phone book merge |
 | [Development](docs/development.md) | toolchain, tests, known pitfalls |
@@ -116,7 +115,7 @@ The restraint is deliberate: every library has to pay for itself.
 ## Synchronisation
 
 Off by default. Enter a server address and access key in the settings screen
-and the app keeps businesses, contacts, calls and follow-ups in step with that
+and the app keeps businesses, contacts, calls and appointments in step with that
 server; leave both fields empty and nothing changes about how the app behaves —
 it works only on the device, as before.
 

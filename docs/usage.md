@@ -17,7 +17,7 @@ on screen.
    after reading it, it reports how many businesses are new, how many were
    updated and how many have no phone number.
 
-Importing the same or an extended file later is safe: status, note, follow-up,
+Importing the same or an extended file later is safe: status, note, callbacks,
 appointments and call history stay untouched, only the master data is refreshed.
 
 ## Synchronising with a server
@@ -51,22 +51,43 @@ Two things the app cannot enforce:
    press **call** yourself. The app never calls on its own.
 2. After hanging up, switch back to the app. It reads the duration from the call
    log and proposes an outcome.
-3. **Duration 0** → proposes „nicht erreicht" plus a follow-up in two days at a
+3. **Duration 0** → proposes „nicht erreicht" plus a callback in two days at a
    different time of day. Every proposal can be overridden: somebody may well
    have picked up and hung up immediately.
 4. **Duration above 0** → the note field takes focus, the status is set by hand.
 
+A call placed from the app completes every open callback of that business that
+was due by the end of today — whether anybody answered or not. The calendar
+entry keeps its place and gets a „✓" in front of its title.
+
 When a business has several numbers — its own and its contacts' — dialling asks
 which one. Fax numbers are left out. The log then records who was called.
 
-## Follow-ups
+## Callbacks
 
-The **Heute** screen lists everything due, sorted by time, **including the
-overdue ones** from previous days. Those sit at the top and are set apart —
-missed call-backs should not disappear silently.
+A callback („Rückruf") is an appointment to ring a business again. The detail
+view lists them under **Wiedervorlage**: the open ones with their time, note and
+contact person, an overdue one in red, each with **Ändern** and **Entfernen**.
+Completed callbacks stay as a record under **Erledigte Rückrufe**, collapsed.
 
-In the detail view a follow-up can be set through the quick choices („in 2
-Tagen", „nächste Woche", „nächster Monat") or by picking a date and time.
+„in 2 Tagen", „nächste Woche", „nächster Monat" and **Datum & Uhrzeit …** open
+the same sheet as an appointment on site, already set to that time: 15 minutes,
+no place. Add a note — „wegen Angebot nachfragen" — and the person to ask for,
+then **Rückruf speichern**. After an unanswered call the suggestion card does
+the same with **Übernehmen**. A business can have several callbacks.
+
+Saved with the calendar switched on, a callback is written into the calendar as
+„Rückruf <business>", the same way an appointment is. A callback never changes
+the business's status.
+
+## The agenda
+
+The calendar button at the top of the work list opens **Termine**: first the
+overdue callbacks — set apart, from whichever day, so a missed callback does not
+disappear silently — then today, with today's appointments on site (past ones
+included) and the callbacks still ahead, then every later day that has something
+on it. Each row says „Rückruf" or „Vor Ort", the time and the note. Completed
+callbacks and appointments from earlier days are not listed.
 
 ## Appointments on site
 
@@ -167,7 +188,7 @@ is transferred. Contacts that did not originate in the app are never touched.
 If somebody says on the phone „rufen Sie hier nie wieder an", that is an
 objection. The **Sperre** button in the detail view enforces it: the business
 appears in no list afterwards — not in the work list, not in the search, not in
-„Heute", not even with the filters cleared.
+„Termine", not even with the filters cleared.
 
 A mistake can be taken back in the **settings**, which list every blocked
 business.
