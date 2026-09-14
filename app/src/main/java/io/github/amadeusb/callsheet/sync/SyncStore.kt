@@ -241,13 +241,17 @@ class SyncStore(context: Context) {
             (local?.optString("status") == Merge.BLOCKED || row.optString("status") == Merge.BLOCKED)
 
         if (local != null && !Merge.isNewer(remoteAt, local.optString("updated_at", null))) {
+            // The incoming version is no newer, so it replaces nothing. It may
+            // still carry columns this row has never had a value for.
+            val filled = Merge.isSameMoment(remoteAt, local.optString("updated_at", null)) &&
+                fillGaps(db, table, id, local, row, tableColumns)
             if (blocked && local.optString("status") != Merge.BLOCKED) {
                 db.update("businesses", ContentValues().apply {
                     put("status", Merge.BLOCKED)
                     put("dirty", 1)
                 }, "place_id = ?", arrayOf(id))
             }
-            return false
+            return filled
         }
 
         val values = if (table == "calls" && local != null) {
@@ -281,6 +285,45 @@ class SyncStore(context: Context) {
         } else {
             db.update(table, values, "$key = ?", arrayOf(id))
         }
+        return true
+    }
+
+    /**
+     * Fills the columns this row has no value for from an incoming row at a
+     * standstill — the server's `fillGaps` in receive.js, for the same reason:
+     * equally old versions may not overwrite each other's answers, but a NULL
+     * where the other side has a value is not a conflict, it is a gap.
+     *
+     * The app grows the gaps itself. A 1.4.0 phone stored the callbacks it
+     * pulled without `kind` and `done_at`, its schema had neither; after the
+     * update they read as visits, and the refetch (Preferences.refetchedForCallbacks)
+     * brings each one down again with the same `updated_at`. Only this fills
+     * them in.
+     *
+     * Every synchronised table, as on the server. The only columns where this
+     * could bring back something emptied are the business's old ones —
+     * `follow_up_at` and the `appointment_` columns — where an old app's upload
+     * after the server's migration left a value there: nothing reads them, and
+     * the row stays unmarked.
+     *
+     * Never marks the row: the values came from the server. Local-only columns
+     * are never touched — [Rows.toValues] leaves them out, and [local] never
+     * carries them. No gap, no write; returns whether there was one.
+     */
+    private fun fillGaps(
+        db: SQLiteDatabase,
+        table: String,
+        id: String,
+        local: JSONObject,
+        row: JSONObject,
+        tableColumns: Set<String>,
+    ): Boolean {
+        val gaps = Rows.toValues(row, tableColumns)
+        for (name in gaps.keySet().toList()) {
+            if (!local.isNull(name) || gaps.get(name) == null) gaps.remove(name)
+        }
+        if (gaps.size() == 0) return false
+        db.update(table, gaps, "${Rows.key(table)} = ?", arrayOf(id))
         return true
     }
 

@@ -16,6 +16,17 @@ object Merge {
         return left > right
     }
 
+    /**
+     * Are `a` and `b` the same moment? Parsed, for the reason [isNewer] gives:
+     * `10:00+02:00` and `08:00Z` are one instant written two ways. The
+     * server's `isSameMoment`.
+     */
+    fun isSameMoment(a: String?, b: String?): Boolean {
+        val left = Clock.millis(a) ?: return false
+        val right = Clock.millis(b) ?: return false
+        return left == right
+    }
+
     /** The block is never lifted, whichever side is younger. */
     const val BLOCKED = "do_not_call"
 }

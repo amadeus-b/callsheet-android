@@ -91,6 +91,14 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
                 prefs.watermark = 0
                 prefs.refetchedForAppointments = true
             }
+            // Once more, on the first sync that runs on schema 6 — see
+            // Preferences.refetchedForCallbacks. The callbacks a 1.4.0 app
+            // stored without their kind come down again at a standstill, and
+            // apply fills the gaps.
+            if (!prefs.refetchedForCallbacks) {
+                prefs.watermark = 0
+                prefs.refetchedForCallbacks = true
+            }
             var rounds = 0
             val total = store.pendingCount()
             onProgress(total, total)

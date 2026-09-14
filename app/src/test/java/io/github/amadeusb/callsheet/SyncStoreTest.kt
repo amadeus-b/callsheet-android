@@ -502,6 +502,83 @@ class SyncStoreTest {
     }
 
     @Test
+    fun `a standstill fills a callback's kind and completion a 1_4_0 phone could not store`() {
+        // Pulled while on 1.4.0: the row is here, its kind and done_at were dropped.
+        einTermin("T1", "2026-09-07T10:00:00+02:00", dirty = 0)
+        val incoming = terminJson("T1", "2026-09-07T10:00:00+02:00")
+            .put("kind", "callback").put("done_at", "2026-09-15T09:05:00+02:00")
+
+        val applied = store.apply(leereAntwort().put("appointments", JSONArray(listOf(incoming))))
+
+        Database(ctx).readableDatabase.rawQuery(
+            "SELECT kind, done_at, note, starts_at, location, dirty FROM appointments WHERE id = 'T1'", null,
+        ).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("callback", c.getString(0))
+            assertEquals("2026-09-15T09:05:00+02:00", c.getString(1))
+            assertEquals("Angebot", c.getString(2))
+            // Gaps only: what this device holds stays.
+            assertEquals("2026-09-10T14:00:00+02:00", c.getString(3))
+            assertEquals("Zehentstraße 39", c.getString(4))
+            // Filled from the server, so nothing to send back.
+            assertEquals(0, c.getInt(5))
+        }
+        // Written, so the calendar follows: a row that became a callback gets its title.
+        assertEquals(listOf("T1"), applied.written)
+    }
+
+    @Test
+    fun `a standstill never overwrites a value stored here`() {
+        schreibe(
+            "INSERT INTO appointments (id, place_id, starts_at, note, updated_at, kind, done_at, dirty) VALUES " +
+                "('T1', 'P1', '2026-09-15T09:00:00+02:00', 'lokal', '2026-09-07T10:00:00+02:00', 'callback', " +
+                "'2026-09-15T09:05:00+02:00', 0)"
+        )
+        // No gap on either side: every column the incoming row fills is set here.
+        val incoming = terminJson("T1", "2026-09-07T10:00:00+02:00")
+            .put("kind", "visit").put("done_at", JSONObject.NULL).put("event_uid", JSONObject.NULL)
+
+        val applied = store.apply(leereAntwort().put("appointments", JSONArray(listOf(incoming))))
+
+        Database(ctx).readableDatabase.rawQuery(
+            "SELECT kind, done_at, note, starts_at, dirty FROM appointments WHERE id = 'T1'", null,
+        ).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("callback", c.getString(0))
+            assertEquals("2026-09-15T09:05:00+02:00", c.getString(1))
+            assertEquals("lokal", c.getString(2))
+            assertEquals("2026-09-15T09:00:00+02:00", c.getString(3))
+            assertEquals(0, c.getInt(4))
+        }
+        assertTrue(applied.written.isEmpty())
+    }
+
+    @Test
+    fun `a standstill fills gaps in every synchronised table, the way the server does`() {
+        einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 0)
+
+        store.apply(antwort(betriebJson("P1", "vom Server", "2026-09-07T08:00:00Z")))
+
+        assertEquals("vom Server", note("P1"))
+        assertEquals(0, store.pendingCount())
+    }
+
+    @Test
+    fun `an incoming callback arrives with its kind and completion`() {
+        val incoming = terminJson("R1", "2026-09-07T10:00:00+02:00")
+            .put("kind", "callback").put("done_at", "2026-09-15T09:05:00+02:00")
+
+        store.apply(leereAntwort().put("appointments", JSONArray(listOf(incoming))))
+
+        Database(ctx).readableDatabase.rawQuery("SELECT kind, done_at, dirty FROM appointments WHERE id = 'R1'", null).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("callback", c.getString(0))
+            assertEquals("2026-09-15T09:05:00+02:00", c.getString(1))
+            assertEquals(0, c.getInt(2))
+        }
+    }
+
+    @Test
     fun `an incoming appointment no newer than a local tombstone is not written`() {
         // Deleted here, not yet uploaded; the server still hands out the older row.
         schreibe("INSERT INTO deletions (table_name, row_id, deleted_at) VALUES ('appointments', 'T1', '2026-09-07T11:00:00+02:00')")

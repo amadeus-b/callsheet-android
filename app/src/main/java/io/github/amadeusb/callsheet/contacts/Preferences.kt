@@ -68,6 +68,26 @@ class Preferences(context: Context) {
         get() = store.getBoolean(REFETCHED_FOR_APPOINTMENTS, false)
         set(value) = store.edit().putBoolean(REFETCHED_FOR_APPOINTMENTS, value).apply()
 
+    /**
+     * Whether this device has fetched the server's stock from the start since
+     * it learnt about callbacks (schema 6).
+     *
+     * While it still ran 1.4.0, the server delivered callbacks to it — the ones
+     * migration 008 carried over, and any another device created or completed —
+     * and the old app stored them without `kind` and `done_at` while its
+     * watermark moved past. After the update they read as visits, and nothing
+     * brings the two columns down again: the rows do not change on the server.
+     * Worse, saving one through „Ändern" would send `kind: 'visit'` with a newer
+     * `updated_at` and turn the callback into a visit on every device.
+     *
+     * One fetch from zero delivers each row again at a standstill, and the
+     * store fills the gaps (SyncStore.fillGaps). A flag for the reason
+     * [refetchedForAppointments] gives.
+     */
+    var refetchedForCallbacks: Boolean
+        get() = store.getBoolean(REFETCHED_FOR_CALLBACKS, false)
+        set(value) = store.edit().putBoolean(REFETCHED_FOR_CALLBACKS, value).apply()
+
     /** Whether appointments get mirrored into the device calendar at all. */
     var calendarEnabled: Boolean
         get() = store.getBoolean(CALENDAR_ENABLED, false)
@@ -106,6 +126,7 @@ class Preferences(context: Context) {
         const val WATERMARK = "sync_watermark"
         const val LAST_SYNC_AT = "last_sync_at"
         const val REFETCHED_FOR_APPOINTMENTS = "refetched_for_appointments"
+        const val REFETCHED_FOR_CALLBACKS = "refetched_for_callbacks"
         const val CALENDAR_ENABLED = "calendar_enabled"
         const val CALENDAR_ID = "calendar_id"
         const val APPOINTMENT_MINUTES = "appointment_minutes"

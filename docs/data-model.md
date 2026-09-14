@@ -239,7 +239,14 @@ The server names the tables it synchronises in `tables`. Marks are cleared only
 for those; a server from before appointments ignores the table without a word,
 and its rows stay marked — counted as open — until the server is updated. The
 first sync after upgrading to schema 4 fetches from watermark 0 once, because a
-1.3.x app skipped appointments while its watermark moved past them.
+1.3.x app skipped appointments while its watermark moved past them. The first
+sync on schema 6 does so once more: a 1.4.0 app stored the callbacks it pulled
+without `kind` and `done_at`.
+
+Like the server, the app fills gaps at a standstill: an incoming row with the
+same `updated_at` writes only into columns that are NULL here, never over a
+value, and never marks the row. That is what brings a callback's `kind` down
+onto a row a 1.4.0 app stored without it.
 
 A column added to a table later must be **nullable**. The server fills a gap in
 a row it already holds only where it finds NULL; a column declared NOT NULL with
