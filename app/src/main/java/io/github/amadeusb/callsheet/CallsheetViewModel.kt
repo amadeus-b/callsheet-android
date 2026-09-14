@@ -892,8 +892,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
     /**
      * Opens the sheet for a new callback at [startIso] — from a quick choice,
-     * the date picker or the suggestion after a call. Nothing is saved until
-     * „Rückruf speichern".
+     * the date picker or the suggestion after a call. Taken as given: the
+     * detail view snaps what it computes to the quarter hour and leaves the
+     * picker's time alone. Nothing is saved until „Rückruf speichern".
      */
     fun openCallback(placeId: String, startIso: String) =
         openSheet(placeId, null, AppointmentKind.CALLBACK, startIso)

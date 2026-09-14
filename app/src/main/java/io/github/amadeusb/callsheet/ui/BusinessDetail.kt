@@ -828,7 +828,7 @@ private fun CallbacksBlock(
         }
 
         // Gone once a callback at exactly that time exists — saved from this very card.
-        if (suggestion != null && open.none { it.startsAt == suggestion }) {
+        if (suggestion != null && open.none { it.startsAt == Appointment.snapToQuarter(suggestion) }) {
             Spacer(Modifier.height(8.dp))
             Card(
                 colors = CardDefaults.cardColors(
@@ -842,21 +842,24 @@ private fun CallbacksBlock(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Spacer(Modifier.height(8.dp))
-                    Button(onClick = { onCallback(suggestion) }) { Text("Übernehmen") }
+                    Button(onClick = { onCallback(Appointment.snapToQuarter(suggestion)) }) { Text("Übernehmen") }
                 }
             }
         }
 
         Spacer(Modifier.height(8.dp))
+        // Computed from now, so snapped to the quarter hour the way a new visit
+        // is: the sheet moves in quarters and could not reproduce 16:32. The
+        // picker below is the user's own choice and stays as given.
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             QuickButton("in 2 Tagen", Modifier.weight(1f)) {
-                onCallback(FollowUp.inTwoDays())
+                onCallback(Appointment.snapToQuarter(FollowUp.inTwoDays()))
             }
             QuickButton("nächste Woche", Modifier.weight(1f)) {
-                onCallback(FollowUp.nextWeek())
+                onCallback(Appointment.snapToQuarter(FollowUp.nextWeek()))
             }
             QuickButton("nächster Monat", Modifier.weight(1f)) {
-                onCallback(FollowUp.nextMonth())
+                onCallback(Appointment.snapToQuarter(FollowUp.nextMonth()))
             }
         }
 
