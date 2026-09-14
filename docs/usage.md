@@ -150,12 +150,17 @@ can therefore never hit one of them and never overwrite it.
 ## Contacts
 
 Every business can carry contacts with a role, an email address and several
-numbers. They go into the device's phone book, into the address book account
-chosen in the settings — so a call back has a name attached.
+numbers. The business goes into the device's phone book, into the address book
+account chosen in the settings — so a call back has a name attached. There is one
+entry per contact person, including the one from the imprint, each with the
+company name, the main number („Hauptadresse“), address, website, a map link and
+a note. A business without any contact person gets a single entry under its
+company name.
 
-If such a contact is edited in the phone book, the app takes over name, email and
-numbers the next time the record is opened. Role and note stay as they are in the
-app. Contacts that did not originate in the app are never touched.
+If a contact saved in the app is edited in the phone book, the app takes over
+name, email and numbers the next time the record is opened. Role and note stay as
+they are in the app. Everything else is written anew the next time the business
+is transferred. Contacts that did not originate in the app are never touched.
 
 ## Blocking a business
 

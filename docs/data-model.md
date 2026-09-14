@@ -243,15 +243,27 @@ the address book account chosen in the settings. When that is a CardDAV address
 book managed by DAVx5, the entries reach the server the same way; the app itself
 speaks **no** CardDAV and needs no credentials.
 
-- The app recognises its own entries by `RawContacts.SOURCE_ID`: it holds the
-  contact's id, or the business's `place_id`. Other people's contacts are never
-  touched.
-- Every business that has a number goes in, together with the contacts saved by
-  hand. Blocked businesses stay out. Writing happens when a contact is saved,
-  after a call, and on demand from the settings.
-- The other direction: opening a record reads the app's own entries back. If
-  `RawContacts.VERSION` has moved on, the phone book wins for name, email and
-  numbers. Role and note stay as they are in the app.
+- **One entry per person, the company name on every one.** People are the
+  imported `contact_name` and the contacts saved by hand; a hand-saved person
+  with the imported name counts once. A business with nobody gets one entry
+  without a personal name, so the company name shows.
+- The app recognises its own entries by `RawContacts.SOURCE_ID`. The `place_id`
+  entry holds the imported person, or the company when there is nobody; it is
+  removed while only hand-saved people exist. A hand-saved person's entry holds
+  the contact's id. Other people's contacts are never touched.
+- Every entry carries the person's own numbers and the business's main number
+  under the label „Hauptadresse“ (DAVx5 has no phone type it uploads as
+  `TYPE=MAIN`), the email, the business address, the website, a map link and a
+  note with industry, rating and research run. Rules in
+  `contacts/PhoneBookEntries.kt`.
+- Every business that has a number goes in. Blocked businesses stay out.
+  Writing happens when a contact is saved or deleted, after a call, and on
+  demand from the settings.
+- The other direction: opening a record reads the entries of hand-saved people
+  back. If `RawContacts.VERSION` has moved on, the phone book wins for name,
+  email and numbers — except the business's main number and email, which are on
+  every entry and not the person's. Role and note stay as they are in the app.
+  The `place_id` entry is never read back.
 - People newly created in the phone book are **not** pulled in — they have no
   link to a business.
 
