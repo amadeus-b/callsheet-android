@@ -3959,3 +3959,331 @@ Expected: the appointment shows the new time, and the calendar holds **one** eve
 - [ ] **Step 5: Report**
 
 Tell the user what was seen at each step. A duplicate event or a vanished appointment is a finding, not a flake; do not release until it is understood. The release itself (`tools/release.sh minor`) is the user's.
+
+---
+
+## Addendum — fixes after the final review (approved by the user on 2026-09-14)
+
+The whole-branch review after Tasks 1–12 found four multi-device defects in the plan's own code, plus one spec rule the plan left out. Task 14 fixes them. Question 3 of that review (first sight on a device: should "row wins" really move an event that was moved in the calendar?) is **not** part of it; it waits for the user's decision.
+
+What changes against the spec, on purpose:
+
+- **A UID is only ever taken over by a row that has none.** The spec (The calendar → "The event behind the shortcut carries a different UID") lets a row take whatever UID it finds behind its shortcut. With appointments carried over from 1.3.x that makes two devices trade UIDs back and forth on every opening while two events sit in the calendar. Now: a row without a UID takes the event's; a row whose UID names another event on this device moves its shortcut there and deletes the stale copy; otherwise the row's UID stands. The rare case the spec guarded against — a server replacing a UID — then degrades to "the other devices do not find the event and save `LocalOnly`", which creates no duplicate and deletes nothing.
+- **A failed update keeps the shortcut.** Only what this device saw is forgotten.
+
+### Task 14: Multi-device fixes
+
+**Files:**
+- Modify: `…/calling/Appointment.kt` (`uidToTake`, new `relinkTo`)
+- Modify: `…/data/Repository.kt` (new `linkedWithoutUid`)
+- Modify: `…/CallsheetViewModel.kt` (`saveAppointment`, `removeAppointment`, `reconcile`, `syncNow`; new `captureMissingUids`)
+- Test: `AppointmentTest.kt`, `RepositoryTest.kt`
+
+**Interfaces:**
+- `Appointment.uidToTake(rowUid: String?, eventUid: String?): String?` — non-null only when `rowUid` is null and `eventUid` is not blank
+- `Appointment.relinkTo(rowUid: String?, eventUid: String?, shortcutId: Long, rowUidEventId: Long?): Long?`
+- `Repository.linkedWithoutUid(): List<AppointmentEntry>`
+- private `suspend fun captureMissingUids(): Int` in the view model
+
+- [ ] **Step 1: Write the failing tests**
+
+In `AppointmentTest.kt`, replace the test `a different UID behind the shortcut is taken over` with:
+
+```kotlin
+    @Test
+    fun `a row without a UID takes the one behind its shortcut`() {
+        assertEquals("abc@infomaniak", Appointment.uidToTake(rowUid = null, eventUid = "abc@infomaniak"))
+    }
+
+    @Test
+    fun `a row that has a UID never trades it for another`() {
+        // Two devices, each with a shortcut to its own copy, would otherwise
+        // swap UIDs on every opening.
+        assertNull(Appointment.uidToTake(rowUid = "legacy-P1", eventUid = "abc@infomaniak"))
+    }
+
+    @Test
+    fun `a row whose UID names another event here moves its shortcut there`() {
+        assertEquals(815L, Appointment.relinkTo(rowUid = "legacy-P1", eventUid = "abc@infomaniak", shortcutId = 4711L, rowUidEventId = 815L))
+    }
+
+    @Test
+    fun `no relinking without a UID, with the same UID, or when the row's UID is not here`() {
+        assertNull(Appointment.relinkTo(rowUid = null, eventUid = "abc@infomaniak", shortcutId = 4711L, rowUidEventId = null))
+        assertNull(Appointment.relinkTo(rowUid = "A-1", eventUid = "A-1", shortcutId = 4711L, rowUidEventId = 4711L))
+        assertNull(Appointment.relinkTo(rowUid = "A-1", eventUid = "abc@infomaniak", shortcutId = 4711L, rowUidEventId = null))
+        assertNull(Appointment.relinkTo(rowUid = "A-1", eventUid = "abc@infomaniak", shortcutId = 4711L, rowUidEventId = 4711L))
+    }
+```
+
+The tests `the same UID is nothing to take over` and `an empty UID after inserting keeps the link local` stay.
+
+In `RepositoryTest.kt`, below `takenEvents names every UID and local event id in use`:
+
+```kotlin
+    @Test
+    fun `linkedWithoutUid lists rows linked on this device that have no UID yet`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00"))
+        repo.setCalendarLink("A-1", 4711L, null, null, null)
+        repo.saveAppointment(visit("A-2", "t-1", "2026-09-11T14:00:00+02:00").copy(eventUid = "uid-2"))
+        repo.setCalendarLink("A-2", 815L, null, null, null)
+        repo.saveAppointment(visit("A-3", "t-1", "2026-09-12T14:00:00+02:00"))
+
+        assertEquals(listOf("A-1"), repo.linkedWithoutUid().map { it.id })
+    }
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.AppointmentTest" --tests "io.github.amadeusb.callsheet.RepositoryTest"`
+Expected: FAIL — compile errors for `relinkTo` and `linkedWithoutUid`
+
+- [ ] **Step 3: The rules in `Appointment.kt`**
+
+Replace `uidToTake` and add `relinkTo` below it:
+
+```kotlin
+    /**
+     * The UID a row takes over from its event, or null when there is nothing to take.
+     *
+     * Only a row without a UID takes one: an event the app just created, one it
+     * adopted, or a carried-over appointment whose event DAVx5 has uploaded. A
+     * row that has a UID keeps it, whatever its shortcut finds — two devices
+     * each holding a copy of the event would otherwise trade UIDs on every
+     * opening, and both copies would stay in the calendar.
+     */
+    fun uidToTake(rowUid: String?, eventUid: String?): String? =
+        eventUid?.takeIf { rowUid == null && it.isNotBlank() }
+
+    /**
+     * Where the shortcut should point instead, or null to leave it.
+     *
+     * The event behind the shortcut ([shortcutId]) carries [eventUid], the row
+     * holds [rowUid], and [rowUidEventId] is the event that UID finds on this
+     * device. When the row's UID names a different event here, that event is the
+     * appointment's; the shortcut points at a stale copy.
+     */
+    fun relinkTo(rowUid: String?, eventUid: String?, shortcutId: Long, rowUidEventId: Long?): Long? {
+        if (rowUid == null || eventUid == rowUid) return null
+        return rowUidEventId?.takeIf { it != shortcutId }
+    }
+```
+
+- [ ] **Step 4: `Repository.linkedWithoutUid`**
+
+Below `takenEvents`:
+
+```kotlin
+    /** Appointments linked on this device whose UID is not known yet. */
+    suspend fun linkedWithoutUid(): List<AppointmentEntry> = withContext(Dispatchers.IO) {
+        helper.readableDatabase
+            .rawQuery("SELECT * FROM appointments WHERE calendar_event_id IS NOT NULL AND event_uid IS NULL", null)
+            .use { c -> allAppointments(c) }
+    }
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.AppointmentTest" --tests "io.github.amadeusb.callsheet.RepositoryTest"`
+Expected: PASS
+
+- [ ] **Step 6: Reading back — relink, and write only the slot**
+
+In `reconcile` in `CallsheetViewModel.kt`, directly after `val event = located?.event` and before `Appointment.reconcile(…)`, handle a shortcut whose event carries a different UID than the row:
+
+```kotlin
+        // The shortcut's event carries another UID than the row, and the row's
+        // UID names a different event on this device: that one is the
+        // appointment's. The copy behind the shortcut is a duplicate — written
+        // by this device before the row learnt its UID — and goes.
+        if (!rowWinsOnly && located != null && entry.eventUid != null && event?.uid != entry.eventUid) {
+            val rowUid = entry.eventUid
+            val found = calendarLookup { CalendarStore.findByUid(context, rowUid) }.getOrElse { return null }
+            val target = Appointment.relinkTo(rowUid, event?.uid, located.eventId, found)
+            if (target != null) {
+                if (preferences.calendarEnabled && CalendarStore.canWrite(context)) {
+                    CalendarStore.delete(context, located.eventId)
+                }
+                repo.setCalendarLink(entry.id, target, null, null, null)
+                return null
+            }
+        }
+```
+
+The line `val uid = if (rowWinsOnly || event == null) null else Appointment.uidToTake(entry.eventUid, event.uid)` stays; `uidToTake` now only answers for a row without a UID. Replace its comment with:
+
+```kotlin
+        // A row without a UID takes the one its event carries — a carried-over
+        // appointment, or an event DAVx5 has uploaded since. A row that has one
+        // keeps it (see Appointment.uidToTake).
+```
+
+Replace the `is Reconcile.TakeEvent` branch:
+
+```kotlin
+            is Reconcile.TakeEvent -> {
+                // Only time and place come from the calendar, written onto the
+                // row as it stands now — not onto the entry read before the
+                // lookup, or a note or contact saved in between would be undone.
+                val fresh = repo.appointment(entry.id) ?: return null
+                repo.saveAppointment(
+                    fresh.copy(
+                        startsAt = Clock.format(outcome.slot.startMillis),
+                        endsAt = outcome.slot.endMillis?.let { Clock.format(it) },
+                        location = outcome.slot.location,
+                        eventUid = fresh.eventUid ?: uid,
+                    )
+                )
+                rememberSeen(entry.id, located!!.eventId, event!!)
+            }
+```
+
+- [ ] **Step 7: Saving — keep the shortcut on a failed update, and require write access**
+
+In `saveAppointment`:
+
+1. Replace `val calendarUsable = preferences.calendarEnabled && readable && !calendarUnreadable` with:
+
+```kotlin
+            val writable = CalendarStore.canWrite(context)
+            val calendarUsable = preferences.calendarEnabled && readable && writable && !calendarUnreadable
+```
+
+   and in the `calendarHint` `when`, change the condition `!readable ->` to `!readable || !writable ->` (the message stays).
+
+2. In `is SavePlan.Update`, the success line becomes (no UID is traded any more; `uidToTake` returns null for a row that has one):
+
+```kotlin
+                    entry = entry.copy(eventUid = entry.eventUid ?: Appointment.uidToTake(null, located?.event?.uid))
+```
+
+3. Add `var keepShortcut: Long? = null` next to `var dropLink = false`, with the comment `// The event is still there, but what this device saw in it is stale: keep the shortcut, forget S.` In the `else` branch of the failed update ("Still there but not writable, or not readable"), replace `dropLink = true` with:
+
+```kotlin
+                        keepShortcut = plan.eventId
+                        // Taken now if the event had a UID the row lacks — without
+                        // one, a lost shortcut could never be found again.
+                        afterFailure.getOrNull()?.uid?.let { found ->
+                            Appointment.uidToTake(entry.eventUid, found)?.let { entry = entry.copy(eventUid = it) }
+                        }
+```
+
+   and replace that branch's comment's second sentence onward with: `This device keeps its shortcut and forgets what it saw, so the next opening sees the event for the first time and lets the row win.`
+
+4. In the `when` after `repo.saveAppointment(entry)`, add a last branch after `dropLink -> …`:
+
+```kotlin
+                else -> keepShortcut?.let { repo.setCalendarLink(entry.id, it, null, null, null) }
+```
+
+5. At the end of the coroutine, after `loadDetail(draft.placeId)`, add:
+
+```kotlin
+            // Up at once: until the row reaches the server, a device that gets the
+            // moved event through DAVx5 first would take the calendar's time onto
+            // its older row — and that row, stamped newer, would win.
+            syncNow()
+```
+
+- [ ] **Step 8: Removing — say when the event stays, and sync**
+
+In `removeAppointment`:
+
+1. Replace `lookup?.getOrNull()?.let { CalendarStore.delete(getApplication(), it.eventId) }` with:
+
+```kotlin
+            val deleted = lookup?.getOrNull()?.let { CalendarStore.delete(getApplication(), it.eventId) }
+```
+
+2. Replace the whole `if (lookup?.isFailure == true && preferences.calendarEnabled) { … }` block with:
+
+```kotlin
+            val linked = entry.eventUid != null || entry.calendarEventId != null
+            val hint = when {
+                !preferences.calendarEnabled || !linked -> null
+                // Spec: without read permission nothing is asked — but with the
+                // calendar switched on, the missing permission is said.
+                lookup == null -> "Termin entfernt. Ohne Zugriff auf den Kalender bleibt der Eintrag dort " +
+                    "stehen — die Berechtigung lässt sich in den Android-Einstellungen der App erteilen."
+                lookup.isFailure -> "Termin entfernt. Der Kalender ließ sich nicht lesen — den Eintrag dort bitte selbst löschen."
+                deleted == false -> "Termin entfernt. Der Kalendereintrag ließ sich nicht löschen — bitte dort selbst löschen."
+                else -> null
+            }
+            hint?.let { text -> _state.update { it.copy(hint = text) } }
+```
+
+3. After `loadDetail(entry.placeId)`, add `syncNow()`.
+
+- [ ] **Step 9: Capture missing UIDs after a sync**
+
+Below `followCalendar`, add:
+
+```kotlin
+    /**
+     * Takes the UID from the event of every appointment linked on this device
+     * without one — above all the ones carried over from 1.3.x. Until a row has
+     * its UID, another device cannot find the event and would create a second
+     * one when the appointment is changed there.
+     *
+     * Runs after a sync, never before: taking a UID stamps the row as changed,
+     * and a row older than the server's would then win over it.
+     *
+     * Returns how many rows took a UID. A calendar that cannot be read skips the row.
+     */
+    private suspend fun captureMissingUids(): Int {
+        val context = getApplication<Application>()
+        if (!CalendarStore.canRead(context)) return 0
+        var taken = 0
+        for (entry in repo.linkedWithoutUid()) {
+            val eventId = entry.calendarEventId ?: continue
+            val uid = calendarLookup { CalendarStore.read(context, eventId) }.getOrNull()?.uid
+            Appointment.uidToTake(null, uid)?.let {
+                repo.setEventUid(entry.id, it)
+                taken++
+            }
+        }
+        return taken
+    }
+```
+
+In `syncNow`, replace
+
+```kotlin
+            if (result is SyncResult.Ok) {
+                refreshList()
+                loadToday()
+            }
+```
+
+with:
+
+```kotlin
+            if (result is SyncResult.Ok) {
+                refreshList()
+                loadToday()
+                // The UIDs taken here go up with the next run, started at once.
+                if (captureMissingUids() > 0) syncNow()
+            }
+```
+
+(`running` is already false at that point, so the second run starts; it captures nothing more and ends.)
+
+- [ ] **Step 10: Build and test**
+
+Run: `./gradlew assembleDebug testDebugUnitTest`
+Expected: BUILD SUCCESSFUL, all tests pass
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add app/src/main/java/io/github/amadeusb/callsheet/calling/Appointment.kt app/src/main/java/io/github/amadeusb/callsheet/data/Repository.kt app/src/main/java/io/github/amadeusb/callsheet/CallsheetViewModel.kt app/src/test/java/io/github/amadeusb/callsheet/AppointmentTest.kt app/src/test/java/io/github/amadeusb/callsheet/RepositoryTest.kt docs/superpowers/plans/2026-09-14-multiple-appointments.md
+git commit -m "Mehrere Geräte: UID nur übernehmen, wenn keine da ist, Kopien ablösen, nach Speichern abgleichen"
+```
+
+### Additions to Task 13 (on the phone), after Task 14
+
+With two phones carrying the same Infomaniak calendar:
+
+6. **The calendar arriving before the row.** On phone A change an appointment's time *and* its Notiz. Let DAVx5 synchronise phone B, open the business on B. Expected: B shows A's new time and A's Notiz — not B's old one — on both phones after a sync.
+7. **A carried-over appointment edited on the other phone.** Right after installing 1.4.0 on both phones, change a carried-over appointment (one that had a calendar entry under 1.3.1) on the phone that did *not* create the entry. Let both phones and DAVx5 synchronise, open the business on both. Expected: one calendar entry for it, not two, and opening it again on either phone changes nothing.
+8. **No permission, calendar on.** With the calendar switched on in the app, revoke calendar permission, remove a linked appointment. Expected: the hint that the entry stays in the calendar.

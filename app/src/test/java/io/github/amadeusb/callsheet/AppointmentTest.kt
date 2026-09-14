@@ -505,9 +505,28 @@ class AppointmentTest {
     // --- the UID ---------------------------------------------------------------
 
     @Test
-    fun `a different UID behind the shortcut is taken over`() {
+    fun `a row without a UID takes the one behind its shortcut`() {
         assertEquals("abc@infomaniak", Appointment.uidToTake(rowUid = null, eventUid = "abc@infomaniak"))
-        assertEquals("abc@infomaniak", Appointment.uidToTake(rowUid = "A-1", eventUid = "abc@infomaniak"))
+    }
+
+    @Test
+    fun `a row that has a UID never trades it for another`() {
+        // Two devices, each with a shortcut to its own copy, would otherwise
+        // swap UIDs on every opening.
+        assertNull(Appointment.uidToTake(rowUid = "legacy-P1", eventUid = "abc@infomaniak"))
+    }
+
+    @Test
+    fun `a row whose UID names another event here moves its shortcut there`() {
+        assertEquals(815L, Appointment.relinkTo(rowUid = "legacy-P1", eventUid = "abc@infomaniak", shortcutId = 4711L, rowUidEventId = 815L))
+    }
+
+    @Test
+    fun `no relinking without a UID, with the same UID, or when the row's UID is not here`() {
+        assertNull(Appointment.relinkTo(rowUid = null, eventUid = "abc@infomaniak", shortcutId = 4711L, rowUidEventId = null))
+        assertNull(Appointment.relinkTo(rowUid = "A-1", eventUid = "A-1", shortcutId = 4711L, rowUidEventId = 4711L))
+        assertNull(Appointment.relinkTo(rowUid = "A-1", eventUid = "abc@infomaniak", shortcutId = 4711L, rowUidEventId = null))
+        assertNull(Appointment.relinkTo(rowUid = "A-1", eventUid = "abc@infomaniak", shortcutId = 4711L, rowUidEventId = 4711L))
     }
 
     @Test

@@ -791,6 +791,17 @@ class RepositoryTest {
     }
 
     @Test
+    fun `linkedWithoutUid lists rows linked on this device that have no UID yet`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00"))
+        repo.setCalendarLink("A-1", 4711L, null, null, null)
+        repo.saveAppointment(visit("A-2", "t-1", "2026-09-11T14:00:00+02:00").copy(eventUid = "uid-2"))
+        repo.setCalendarLink("A-2", 815L, null, null, null)
+        repo.saveAppointment(visit("A-3", "t-1", "2026-09-12T14:00:00+02:00"))
+
+        assertEquals(listOf("A-1"), repo.linkedWithoutUid().map { it.id })
+    }
+
+    @Test
     fun `appointmentsDue returns one row per appointment, earliest first`() = runTest {
         import(
             """[

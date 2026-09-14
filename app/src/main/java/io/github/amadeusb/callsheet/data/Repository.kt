@@ -763,6 +763,13 @@ class Repository(context: Context) {
         TakenEvents(uids, eventIds)
     }
 
+    /** Appointments linked on this device whose UID is not known yet. */
+    suspend fun linkedWithoutUid(): List<AppointmentEntry> = withContext(Dispatchers.IO) {
+        helper.readableDatabase
+            .rawQuery("SELECT * FROM appointments WHERE calendar_event_id IS NOT NULL AND event_uid IS NULL", null)
+            .use { c -> allAppointments(c) }
+    }
+
     /**
      * Records a deletion. Without it the row would come back from the server with
      * the next sync, because the server cannot tell a deletion from a row that was

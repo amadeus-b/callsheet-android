@@ -344,15 +344,29 @@ object Appointment {
     }
 
     /**
-     * The UID to take over from an event, or null when there is nothing to take.
+     * The UID a row takes over from its event, or null when there is nothing to take.
      *
-     * An event the app created should carry the appointment's id; one that came
-     * back without a UID leaves the link local until DAVx5 has written one. An
-     * event behind the shortcut with a different UID is the same event — the
-     * row takes its UID so the other devices look for that one.
+     * Only a row without a UID takes one: an event the app just created, one it
+     * adopted, or a carried-over appointment whose event DAVx5 has uploaded. A
+     * row that has a UID keeps it, whatever its shortcut finds — two devices
+     * each holding a copy of the event would otherwise trade UIDs on every
+     * opening, and both copies would stay in the calendar.
      */
     fun uidToTake(rowUid: String?, eventUid: String?): String? =
-        eventUid?.takeIf { it.isNotBlank() && it != rowUid }
+        eventUid?.takeIf { rowUid == null && it.isNotBlank() }
+
+    /**
+     * Where the shortcut should point instead, or null to leave it.
+     *
+     * The event behind the shortcut ([shortcutId]) carries [eventUid], the row
+     * holds [rowUid], and [rowUidEventId] is the event that UID finds on this
+     * device. When the row's UID names a different event here, that event is the
+     * appointment's; the shortcut points at a stale copy.
+     */
+    fun relinkTo(rowUid: String?, eventUid: String?, shortcutId: Long, rowUidEventId: Long?): Long? {
+        if (rowUid == null || eventUid == rowUid) return null
+        return rowUidEventId?.takeIf { it != shortcutId }
+    }
 
     /**
      * Finds an appointment's event on this device: through the shortcut while
