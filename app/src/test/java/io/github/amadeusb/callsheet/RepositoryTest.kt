@@ -691,6 +691,16 @@ class RepositoryTest {
     }
 
     @Test
+    fun `a callback is stored without a place, whatever the entry carries`() = runTest {
+        // Adopting an event, or taking one over in the read-back, copies the event's location.
+        repo.saveAppointment(callback("R-1", "t-1", "2026-09-15T09:00:00+02:00").copy(location = "Zehentstraße 39"))
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00").copy(location = "Zehentstraße 39"))
+
+        assertNull(repo.appointment("R-1")!!.location)
+        assertEquals("Zehentstraße 39", repo.appointment("A-1")!!.location)
+    }
+
+    @Test
     fun `a row with a kind this app does not know reads as a visit`() = runTest {
         // A later app, or another server, may send a kind this one has never heard of.
         execute(

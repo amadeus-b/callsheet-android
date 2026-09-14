@@ -726,6 +726,12 @@ class Repository(context: Context) {
      * The same holds for [AppointmentEntry.doneAt]: a sheet opened before a
      * call completed the callback carries none, and saving it must not reopen
      * the callback. Nothing in the app reopens one.
+     *
+     * A callback never has a place — a phone call happens nowhere. Adopting an
+     * event and the read-back's taking one over both copy the event's location
+     * onto the entry; here, the one write they share, it stays behind. The
+     * next read-back then finds the row and the event apart and writes the
+     * row's empty place into the event.
      */
     suspend fun saveAppointment(entry: AppointmentEntry) = withContext(Dispatchers.IO) {
         val values = ContentValues().apply {
@@ -733,7 +739,7 @@ class Repository(context: Context) {
             put("place_id", entry.placeId)
             put("starts_at", entry.startsAt)
             put("ends_at", entry.endsAt)
-            put("location", entry.location)
+            put("location", if (entry.kind == AppointmentKind.CALLBACK) null else entry.location)
             put("note", entry.note)
             put("contact_id", entry.contactId)
             if (entry.eventUid != null) put("event_uid", entry.eventUid)

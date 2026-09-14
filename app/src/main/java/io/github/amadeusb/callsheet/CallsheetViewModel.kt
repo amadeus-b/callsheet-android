@@ -1084,8 +1084,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
             when (plan) {
                 // Adopting takes the calendar's time, place and UID, and leaves
-                // the event exactly as it is. Gone, or unreadable, between listing
-                // the day and pressing save: keep the draft and no link.
+                // the event exactly as it is — a callback's place excepted, the
+                // repository stores it without one. Gone, or unreadable, between
+                // listing the day and pressing save: keep the draft and no link.
                 is SavePlan.Adopt -> {
                     calendarLookup { CalendarStore.read(context, plan.eventId) }.getOrNull()?.let { event ->
                         entry = entry.copy(
@@ -1276,7 +1277,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             is Reconcile.TakeEvent -> {
-                // Only time and place come from the calendar, written onto the
+                // Only time and place come from the calendar (a callback's place
+                // stays empty, see Repository.saveAppointment), written onto the
                 // row as it stands now — not onto the entry read before the
                 // lookup, or a note or contact saved in between would be undone.
                 val fresh = repo.appointment(entry.id) ?: return null
