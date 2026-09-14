@@ -209,10 +209,20 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         }
         if (old < 6) {
             for (sql in COLUMNS_APPOINTMENTS_6) db.execSQL(sql)
+            // The server goes first. A 1.4.0 device syncing after migration 008
+            // pulled the server's carried-over callbacks and stored them as it
+            // could — without a kind, which schema 5 did not have — while the
+            // follow-up they came from stayed on the business. Such a row is a
+            // callback all the same; nothing else carries that id.
+            db.execSQL("UPDATE appointments SET kind = 'callback' WHERE id LIKE 'followup-%' AND kind IS NULL")
             // Every follow-up becomes a callback. The id is fixed, not a fresh
             // UUID: the server's migration 008 writes the same
             // 'followup-' || place_id, so the two meet as one row. updated_at
             // comes from the business for the same reason.
+            //
+            // OR IGNORE for the rows pulled above: what the server sent is at
+            // least as new as the follow-up, and without it the database would
+            // not open at all.
             //
             // dirty is the business's: a follow-up not uploaded yet goes up as
             // a callback, one the server already has is not sent again. No
@@ -220,7 +230,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             // same callback; it gets one when it is next saved.
             db.execSQL(
                 """
-                INSERT INTO appointments (id, place_id, starts_at, updated_at, kind, dirty)
+                INSERT OR IGNORE INTO appointments (id, place_id, starts_at, updated_at, kind, dirty)
                 SELECT 'followup-' || place_id, place_id, follow_up_at, updated_at, 'callback', dirty
                 FROM businesses
                 WHERE follow_up_at IS NOT NULL AND follow_up_at <> ''

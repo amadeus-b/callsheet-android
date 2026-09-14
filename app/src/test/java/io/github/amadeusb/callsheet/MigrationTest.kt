@@ -430,6 +430,51 @@ class MigrationTest {
         }
     }
 
+    /**
+     * Rollout is server first. A 1.4.0 phone syncing after migration 008 pulled
+     * the server's carried-over callback for alt-1 and stored it with the
+     * columns it had — no kind, no done_at — while alt-1's follow_up_at stayed
+     * set: 008 gave the business no new sequence number. Here the callback was
+     * also moved on another device since, so the pulled row is ahead of the
+     * follow-up it came from.
+     */
+    private fun createVersionFourWithAPulledCallback() {
+        createVersionFour()
+        val db = context.openOrCreateDatabase("callsheet.db", 0, null)
+        db.execSQL(
+            "INSERT INTO appointments (id, place_id, starts_at, updated_at, dirty) " +
+                "VALUES ('followup-alt-1', 'alt-1', '2026-09-10T10:30:00+02:00', '2026-09-08T08:00:00+02:00', 0)"
+        )
+        db.close()
+    }
+
+    @Test
+    fun `an upgrade from version four keeps a callback pulled while on 1_4_0, and makes it one`() {
+        createVersionFourWithAPulledCallback()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery(
+            "SELECT starts_at, updated_at, dirty, kind, done_at FROM appointments WHERE id = 'followup-alt-1'",
+            null,
+        ).use { c ->
+            assertEquals(1, c.count)
+            assertTrue(c.moveToFirst())
+            // What came from the server stays; the follow-up behind it is older.
+            assertEquals("2026-09-10T10:30:00+02:00", c.getString(0))
+            assertEquals("2026-09-08T08:00:00+02:00", c.getString(1))
+            assertEquals(0, c.getInt(2))
+            // Only the kind the old schema could not hold is added.
+            assertEquals("callback", c.getString(3))
+            assertTrue(c.isNull(4))
+        }
+        // The other follow-up is carried over as before.
+        db.rawQuery("SELECT kind FROM appointments WHERE id = 'followup-alt-2'", null).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("callback", c.getString(0))
+        }
+    }
+
     @Test
     fun `an upgrade from version four empties follow_up_at without marking the business`() {
         createVersionFour()
