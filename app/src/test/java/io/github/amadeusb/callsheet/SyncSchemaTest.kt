@@ -51,7 +51,7 @@ class SyncSchemaTest {
         val alt = ctx.openOrCreateDatabase("callsheet.db", 0, null)
         alt.execSQL("CREATE TABLE businesses (place_id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'new', note TEXT, updated_at TEXT NOT NULL)")
         alt.execSQL("CREATE TABLE calls (id TEXT PRIMARY KEY, place_id TEXT NOT NULL, started_at TEXT NOT NULL, duration_seconds INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'call')")
-        alt.execSQL("CREATE TABLE contacts (id TEXT PRIMARY KEY, place_id TEXT NOT NULL, name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)")
+        alt.execSQL("CREATE TABLE contacts (id TEXT PRIMARY KEY, place_id TEXT NOT NULL, name TEXT NOT NULL, role TEXT, email TEXT, note TEXT, position INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, contact_version INTEGER)")
         alt.execSQL("CREATE TABLE contact_numbers (id TEXT PRIMARY KEY, contact_id TEXT NOT NULL, number TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'other', position INTEGER NOT NULL DEFAULT 0)")
         alt.execSQL("INSERT INTO businesses (place_id, name, status, note, updated_at) VALUES ('P1', 'Elektro Meier', 'called', 'Rückruf', '2026-09-07T10:00:00+02:00')")
         alt.execSQL("INSERT INTO calls (id, place_id, started_at, duration_seconds, kind) VALUES ('C1', 'P1', '2026-09-07T10:00:00+02:00', 42, 'call')")
