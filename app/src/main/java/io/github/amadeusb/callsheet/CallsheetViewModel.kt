@@ -36,6 +36,7 @@ import io.github.amadeusb.callsheet.contacts.AddressBookAccount
 import io.github.amadeusb.callsheet.contacts.ContactStore
 import io.github.amadeusb.callsheet.contacts.Preferences
 import io.github.amadeusb.callsheet.contacts.PhoneBook
+import io.github.amadeusb.callsheet.sync.AppliedAppointments
 import io.github.amadeusb.callsheet.sync.FailureKind
 import io.github.amadeusb.callsheet.sync.isAcceptableServerAddress
 import io.github.amadeusb.callsheet.sync.SyncClient
@@ -248,8 +249,10 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             _syncState.value = _syncState.value.copy(running = true)
+            // Filled on the sync thread, read here after it returns.
+            val applied = java.util.Collections.synchronizedList(ArrayList<AppliedAppointments>())
             val result = withContext(Dispatchers.IO) {
-                syncEngine.sync(SyncClient(url, token), ::reportUploadProgress)
+                syncEngine.sync(SyncClient(url, token), ::reportUploadProgress) { applied.add(it) }
             }
             // NETWORK and RATE_LIMITED stay silent on an automatic run — both are
             // common and self-healing, and showing them here would make the
@@ -270,6 +273,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 running = false, error = error, uploadRemaining = 0, uploadTotal = 0,
             )
             refreshSyncState()
+            // Whatever came down is real, even when the run did not finish.
+            followCalendar(applied.toList())
             if (result is SyncResult.Ok) {
                 refreshList()
                 loadToday()
@@ -321,8 +326,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             preferences.serverToken = token
             if (addressChanged) withContext(Dispatchers.IO) { syncEngine.resetForFullResync() }
 
+            val applied = java.util.Collections.synchronizedList(ArrayList<AppliedAppointments>())
             val result = withContext(Dispatchers.IO) {
-                syncEngine.sync(SyncClient(preferences.serverUrl!!, token), ::reportUploadProgress)
+                syncEngine.sync(SyncClient(preferences.serverUrl!!, token), ::reportUploadProgress) { applied.add(it) }
             }
             val failure = (result as? SyncResult.Failed)?.message
             _syncState.value = _syncState.value.copy(
@@ -336,6 +342,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 error = null,
             )
             refreshSyncState()
+            followCalendar(applied.toList())
             if (result is SyncResult.Ok) {
                 refreshList()
                 loadToday()
@@ -1124,6 +1131,44 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
             loadDetail(placeId)
+        }
+    }
+
+    /**
+     * Brings the calendar along after a sync. An appointment changed on another
+     * device moves its event here; a deleted one takes its event with it — with
+     * a shared calendar the removing device has usually done that already, and
+     * deleting an event that is gone changes nothing.
+     *
+     * Only where the app may write the calendar at all.
+     */
+    private fun followCalendar(applied: List<AppliedAppointments>) {
+        if (applied.isEmpty()) return
+        val context = getApplication<Application>()
+        if (!preferences.calendarEnabled || !CalendarStore.canRead(context) || !CalendarStore.canWrite(context)) return
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            for (batch in applied) {
+                for (removed in batch.removed) {
+                    // A calendar that could not be asked keeps the event; the
+                    // appointment is gone regardless, and nothing else is at stake.
+                    calendarLookup {
+                        Appointment.locate(
+                            calendarEventId = removed.calendarEventId,
+                            eventUid = removed.eventUid,
+                            read = { CalendarStore.read(context, it) },
+                            find = { CalendarStore.findByUid(context, it) },
+                        )
+                    }.getOrNull()?.let { CalendarStore.delete(context, it.eventId) }
+                }
+                for (id in batch.written.distinct()) {
+                    val entry = repo.appointment(id) ?: continue
+                    if (entry.eventUid == null && entry.calendarEventId == null) continue
+                    val business = repo.business(entry.placeId) ?: continue
+                    reconcile(entry, business, now, rowWinsOnly = true)
+                }
+            }
+            (_state.value.screen as? Screen.Detail)?.let { loadDetail(it.placeId) }
         }
     }
 
