@@ -31,21 +31,25 @@ class ContactStore(
      * the `place_id` entry once it is no longer one of them — people saved by
      * hand have taken its place.
      *
-     * @return how many entries were written.
+     * @return how many entries were written; one that failed does not count.
      */
     suspend fun persistBusiness(business: Business): Int {
         val account = preferences.account ?: return 0
         if (!active) return 0
         val entries = PhoneBookEntries.forBusiness(business, repo.contacts(business.placeId))
+        var written = 0
         for (entry in entries) {
-            val version = PhoneBook.write(context, account, entry)
+            // A failed write keeps the last version: recording none would make
+            // the next opening take the entry's old content for an edit.
+            val version = PhoneBook.write(context, account, entry) ?: continue
+            written++
             // Only people saved by hand are read back, so only they need it.
             if (entry.sourceId != business.placeId) repo.setContactVersion(entry.sourceId, version)
         }
         if (entries.none { it.sourceId == business.placeId }) {
             PhoneBook.delete(context, account, business.placeId)
         }
-        return entries.size
+        return written
     }
 
     suspend fun deleteContact(id: String) {

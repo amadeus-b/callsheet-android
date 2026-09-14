@@ -1367,8 +1367,16 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             var businesses = 0
             var entries = 0
             for (business in repo.businessesForPhoneBook()) {
-                entries += store.persistBusiness(business)
-                businesses++
+                // One business that fails must not stop the run: the rest still
+                // belong in the phone book, and the button would stay disabled.
+                try {
+                    entries += store.persistBusiness(business)
+                    businesses++
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    continue
+                }
             }
             _state.value = _state.value.copy(
                 saving = false,
