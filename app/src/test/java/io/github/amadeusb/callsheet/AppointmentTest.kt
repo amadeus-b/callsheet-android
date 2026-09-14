@@ -7,6 +7,7 @@ import io.github.amadeusb.callsheet.calling.Reconcile
 import io.github.amadeusb.callsheet.calling.SavePlan
 import io.github.amadeusb.callsheet.calling.Slot
 import io.github.amadeusb.callsheet.data.AppointmentEntry
+import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.Clock
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.PhoneNumber
@@ -90,6 +91,18 @@ class AppointmentTest {
     fun `minutesBetween falls back to the default without an end`() {
         assertEquals(Appointment.DEFAULT_MINUTES, Appointment.minutesBetween("2026-09-10T14:00:00+02:00", null))
         assertEquals(Appointment.DEFAULT_MINUTES, Appointment.minutesBetween(null, null))
+    }
+
+    @Test
+    fun `a callback falls back to its own length`() {
+        assertEquals(15, Appointment.minutesBetween("2026-09-10T14:00:00+02:00", null, Appointment.defaultMinutes(AppointmentKind.CALLBACK)))
+        assertEquals(Appointment.DEFAULT_MINUTES, Appointment.defaultMinutes(AppointmentKind.VISIT))
+    }
+
+    @Test
+    fun `a callback is offered short durations`() {
+        assertEquals(listOf(15, 30), Appointment.durations(AppointmentKind.CALLBACK))
+        assertEquals(Appointment.DURATIONS, Appointment.durations(AppointmentKind.VISIT))
     }
 
     // --- overlapping --------------------------------------------------------
@@ -264,12 +277,20 @@ class AppointmentTest {
 
     @Test
     fun `saving an appointment still ahead sets the status`() {
-        assertEquals(Status.APPOINTMENT, Appointment.statusAfterSave("2026-09-11T09:00:00+02:00", "2026-09-11T10:00:00+02:00", noon))
+        assertEquals(
+            Status.APPOINTMENT,
+            Appointment.statusAfterSave(AppointmentKind.VISIT, "2026-09-11T09:00:00+02:00", "2026-09-11T10:00:00+02:00", noon),
+        )
     }
 
     @Test
     fun `entering a past appointment after the fact leaves the status alone`() {
-        assertNull(Appointment.statusAfterSave("2026-09-01T09:00:00+02:00", "2026-09-01T10:00:00+02:00", noon))
+        assertNull(Appointment.statusAfterSave(AppointmentKind.VISIT, "2026-09-01T09:00:00+02:00", "2026-09-01T10:00:00+02:00", noon))
+    }
+
+    @Test
+    fun `saving a callback never sets the status`() {
+        assertNull(Appointment.statusAfterSave(AppointmentKind.CALLBACK, "2026-09-11T09:00:00+02:00", "2026-09-11T09:15:00+02:00", noon))
     }
 
     @Test
@@ -291,6 +312,49 @@ class AppointmentTest {
     fun `removing never touches a status other than appointment`() {
         assertNull(Appointment.statusAfterRemoval(Status.DECLINED, emptyList(), noon))
         assertNull(Appointment.statusAfterRemoval(Status.DO_NOT_CALL, emptyList(), noon))
+    }
+
+    @Test
+    fun `a callback still ahead does not keep the status at appointment`() {
+        val onlyACallback = listOf(
+            entry("R-1", "2026-09-12T09:00:00+02:00", "2026-09-12T09:15:00+02:00").copy(kind = AppointmentKind.CALLBACK),
+        )
+
+        assertEquals(Status.CALLED, Appointment.statusAfterRemoval(Status.APPOINTMENT, onlyACallback, noon))
+    }
+
+    // --- callbacks: overdue, open and completed ---------------------------------
+
+    private fun callback(id: String, startsAt: String, doneAt: String? = null) =
+        entry(id, startsAt).copy(kind = AppointmentKind.CALLBACK, doneAt = doneAt)
+
+    @Test
+    fun `an open callback whose start has passed is overdue`() {
+        assertTrue(Appointment.isOverdue(callback("R-1", "2026-09-10T11:00:00+02:00"), noon))
+        assertTrue(Appointment.isOverdue(callback("R-2", "2026-09-01T09:00:00+02:00"), noon))
+    }
+
+    @Test
+    fun `a callback ahead, a completed one and a visit are never overdue`() {
+        assertFalse(Appointment.isOverdue(callback("R-1", "2026-09-10T13:00:00+02:00"), noon))
+        assertFalse(Appointment.isOverdue(callback("R-2", "2026-09-10T11:00:00+02:00", doneAt = "2026-09-10T11:05:00+02:00"), noon))
+        assertFalse(Appointment.isOverdue(entry("A-1", "2026-09-01T09:00:00+02:00"), noon))
+    }
+
+    @Test
+    fun `callbacks split into open earliest first and completed latest first, visits left out`() {
+        val all = listOf(
+            callback("open-late", "2026-09-20T09:00:00+02:00"),
+            callback("done-early", "2026-09-01T09:00:00+02:00", doneAt = "2026-09-01T09:10:00+02:00"),
+            entry("visit", "2026-09-11T09:00:00+02:00"),
+            callback("open-early", "2026-09-05T09:00:00+02:00"),
+            callback("done-late", "2026-09-08T09:00:00+02:00", doneAt = "2026-09-08T09:10:00+02:00"),
+        )
+
+        val (open, done) = Appointment.splitCallbacks(all)
+
+        assertEquals(listOf("open-early", "open-late"), open.map { it.id })
+        assertEquals(listOf("done-late", "done-early"), done.map { it.id })
     }
 
     // --- reconcile: the read-back table ---------------------------------------
@@ -598,9 +662,27 @@ class AppointmentTest {
 
     @Test
     fun `the event title carries the note when there is one`() {
-        assertEquals("Ortstermin Elektro Meier – Angebot", Appointment.eventTitle("Elektro Meier", "Angebot"))
-        assertEquals("Ortstermin Elektro Meier", Appointment.eventTitle("Elektro Meier", " "))
-        assertEquals("Ortstermin Elektro Meier", Appointment.eventTitle("Elektro Meier", null))
+        assertEquals("Ortstermin Elektro Meier – Angebot", Appointment.eventTitle(AppointmentKind.VISIT, "Elektro Meier", "Angebot"))
+        assertEquals("Ortstermin Elektro Meier", Appointment.eventTitle(AppointmentKind.VISIT, "Elektro Meier", " "))
+        assertEquals("Ortstermin Elektro Meier", Appointment.eventTitle(AppointmentKind.VISIT, "Elektro Meier", null))
+    }
+
+    @Test
+    fun `a callback's title says so, and a completed one carries a tick`() {
+        assertEquals(
+            "Rückruf Elektro Meier – wegen Angebot nachfragen",
+            Appointment.eventTitle(AppointmentKind.CALLBACK, "Elektro Meier", "wegen Angebot nachfragen"),
+        )
+        assertEquals("Rückruf Elektro Meier", Appointment.eventTitle(AppointmentKind.CALLBACK, "Elektro Meier", null))
+        assertEquals(
+            "✓ Rückruf Elektro Meier",
+            Appointment.eventTitle(AppointmentKind.CALLBACK, "Elektro Meier", null, done = true),
+        )
+    }
+
+    @Test
+    fun `a visit never carries a tick`() {
+        assertEquals("Ortstermin Elektro Meier", Appointment.eventTitle(AppointmentKind.VISIT, "Elektro Meier", null, done = true))
     }
 
     @Test

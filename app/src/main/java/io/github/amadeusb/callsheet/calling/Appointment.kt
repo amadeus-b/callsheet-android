@@ -1,6 +1,7 @@
 package io.github.amadeusb.callsheet.calling
 
 import io.github.amadeusb.callsheet.data.AppointmentEntry
+import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.Clock
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.Status
@@ -117,6 +118,24 @@ object Appointment {
     /** The durations offered as chips. */
     val DURATIONS: List<Int> = listOf(30, 60, 90, 120)
 
+    /** The length a fresh callback starts at. A phone call, not a visit. */
+    const val CALLBACK_MINUTES: Int = 15
+
+    /** The durations offered as chips for a callback. */
+    val CALLBACK_DURATIONS: List<Int> = listOf(15, 30)
+
+    /** The length an appointment of [kind] falls back to where none is known. */
+    fun defaultMinutes(kind: AppointmentKind): Int = when (kind) {
+        AppointmentKind.VISIT -> DEFAULT_MINUTES
+        AppointmentKind.CALLBACK -> CALLBACK_MINUTES
+    }
+
+    /** The chips the sheet offers for [kind]. */
+    fun durations(kind: AppointmentKind): List<Int> = when (kind) {
+        AppointmentKind.VISIT -> DURATIONS
+        AppointmentKind.CALLBACK -> CALLBACK_DURATIONS
+    }
+
     private val range: DateTimeFormatter =
         DateTimeFormatter.ofPattern("EE, dd.MM.", Locale.GERMAN)
 
@@ -143,14 +162,15 @@ object Appointment {
     }
 
     /**
-     * How long an appointment runs. Falls back to [DEFAULT_MINUTES] when either
-     * end is missing or unreadable, so the picker always has a length to show.
+     * How long an appointment runs. Falls back to [fallback] when either end is
+     * missing or unreadable, so the picker always has a length to show — a
+     * callback's own, where the caller passes it.
      */
-    fun minutesBetween(startIso: String?, endIso: String?): Int {
-        val start = Clock.millis(startIso) ?: return DEFAULT_MINUTES
-        val end = Clock.millis(endIso) ?: return DEFAULT_MINUTES
+    fun minutesBetween(startIso: String?, endIso: String?, fallback: Int = DEFAULT_MINUTES): Int {
+        val start = Clock.millis(startIso) ?: return fallback
+        val end = Clock.millis(endIso) ?: return fallback
         val minutes = ((end - start) / 60_000L).toInt()
-        return if (minutes > 0) minutes else DEFAULT_MINUTES
+        return if (minutes > 0) minutes else fallback
     }
 
     /**
@@ -218,25 +238,51 @@ object Appointment {
     }
 
     /**
-     * The status to set after saving, or null to leave it. An appointment still
-     * ahead means one was agreed; a past one entered after the fact says
-     * nothing about where the business stands now.
+     * The status to set after saving, or null to leave it. A visit still ahead
+     * means one was agreed; a past one entered after the fact says nothing
+     * about where the business stands now. A callback is the app's own
+     * reminder to ring again and never says anything about the status.
      */
-    fun statusAfterSave(startsAt: String, endsAt: String?, nowMillis: Long): Status? =
-        if (isAhead(startsAt, endsAt, nowMillis)) Status.APPOINTMENT else null
+    fun statusAfterSave(kind: AppointmentKind, startsAt: String, endsAt: String?, nowMillis: Long): Status? =
+        if (kind == AppointmentKind.VISIT && isAhead(startsAt, endsAt, nowMillis)) Status.APPOINTMENT else null
 
     /**
-     * The status after an appointment went away — removed, or deleted in the
-     * calendar — or null to leave it. [remaining] are the business's
-     * appointments without that one.
+     * The status after a visit went away — removed, or deleted in the calendar —
+     * or null to leave it. [remaining] are the business's appointments without
+     * that one; only visits among them count.
      *
-     * Only the status an appointment set is taken back, and only once none is
-     * left ahead. `declined` and `do_not_call` are decisions made on the phone;
-     * a removed appointment is not permission to undo them.
+     * Only the status a visit set is taken back, and only once none is left
+     * ahead. `declined` and `do_not_call` are decisions made on the phone; a
+     * removed appointment is not permission to undo them. Callers only ask when
+     * the one that went away was a visit.
      */
     fun statusAfterRemoval(status: Status, remaining: List<AppointmentEntry>, nowMillis: Long): Status? {
         if (status != Status.APPOINTMENT) return null
-        return if (remaining.none { isAhead(it.startsAt, it.endsAt, nowMillis) }) Status.CALLED else null
+        val visitAhead = remaining.any { it.kind == AppointmentKind.VISIT && isAhead(it.startsAt, it.endsAt, nowMillis) }
+        return if (visitAhead) null else Status.CALLED
+    }
+
+    /**
+     * An open callback whose start has passed. It stays open work until a call
+     * completes it. A visit is never overdue: once its time is past it
+     * happened, or it did not.
+     */
+    fun isOverdue(entry: AppointmentEntry, nowMillis: Long): Boolean {
+        if (entry.kind != AppointmentKind.CALLBACK || entry.doneAt != null) return false
+        val start = Clock.millis(entry.startsAt) ?: return false
+        return start < nowMillis
+    }
+
+    /**
+     * A business's callbacks as the detail view lists them: open ones earliest
+     * first, completed ones latest completion first. Visits are left out.
+     */
+    fun splitCallbacks(entries: List<AppointmentEntry>): Pair<List<AppointmentEntry>, List<AppointmentEntry>> {
+        val (done, open) = entries
+            .filter { it.kind == AppointmentKind.CALLBACK }
+            .partition { it.doneAt != null }
+        return open.sortedBy { Clock.millis(it.startsAt) ?: Long.MAX_VALUE } to
+            done.sortedByDescending { Clock.millis(it.doneAt) ?: 0L }
     }
 
     /** The row's slot. Null when its start cannot be read. */
@@ -398,9 +444,19 @@ object Appointment {
         return read(eventId)?.let { Located(eventId, it) }
     }
 
-    /** „Ortstermin Elektro Meier – Angebot", or without a note „Ortstermin Elektro Meier". */
-    fun eventTitle(businessName: String, note: String?): String {
-        val head = "Ortstermin $businessName".trim()
+    /**
+     * „Ortstermin Elektro Meier – Angebot", „Rückruf Elektro Meier – wegen
+     * Angebot nachfragen", and „✓ Rückruf Elektro Meier" once a callback is
+     * completed. Without a note the part from the dash on is left out.
+     *
+     * The tick is the only way a calendar can show a completed callback: an
+     * event (VEVENT) has no completed state, only a task (VTODO) has.
+     */
+    fun eventTitle(kind: AppointmentKind, businessName: String, note: String?, done: Boolean = false): String {
+        val head = when (kind) {
+            AppointmentKind.VISIT -> "Ortstermin $businessName"
+            AppointmentKind.CALLBACK -> "${if (done) "✓ " else ""}Rückruf $businessName"
+        }.trim()
         val tail = note?.trim()?.ifEmpty { null } ?: return head
         return "$head – $tail"
     }

@@ -818,10 +818,10 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     /** The event as the app writes it for [entry]: title, time, place, and who to ask for. */
     private suspend fun eventFieldsFor(entry: AppointmentEntry, business: Business): EventFields? {
         val start = Clock.millis(entry.startsAt) ?: return null
-        val end = Clock.millis(entry.endsAt) ?: (start + Appointment.DEFAULT_MINUTES * 60_000L)
+        val end = Clock.millis(entry.endsAt) ?: (start + Appointment.defaultMinutes(entry.kind) * 60_000L)
         val contact = entry.contactId?.let { id -> repo.contacts(entry.placeId).firstOrNull { it.id == id } }
         return EventFields(
-            title = Appointment.eventTitle(business.name, entry.note),
+            title = Appointment.eventTitle(entry.kind, business.name, entry.note, done = entry.doneAt != null),
             startMillis = start,
             endMillis = end,
             location = entry.location,
@@ -1123,7 +1123,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 dropLink -> repo.setCalendarLink(entry.id, null, null, null, null)
                 else -> keepShortcut?.let { repo.setCalendarLink(entry.id, it, keepSeen?.first, keepSeen?.second, keepSeen?.third) }
             }
-            Appointment.statusAfterSave(entry.startsAt, entry.endsAt, System.currentTimeMillis())
+            Appointment.statusAfterSave(entry.kind, entry.startsAt, entry.endsAt, System.currentTimeMillis())
                 ?.let { repo.setStatus(draft.placeId, it) }
             _state.update { it.copy(appointmentDraft = null, hint = calendarHint) }
             loadDetail(draft.placeId)
