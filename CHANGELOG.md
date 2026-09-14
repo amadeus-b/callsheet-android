@@ -4,6 +4,26 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.4.0
+
+- **Several appointments per business.** A site visit and then a meeting about
+  the quote, or two at once with different people: each appointment has its own
+  time, place, note and contact person, its own calendar entry, and its own
+  **Ändern** and **Entfernen**. Past ones stay as a record under **Frühere
+  Termine**.
+- **Termine heute** lists appointments, not businesses. Two at one business are
+  two rows, each with its note.
+- **A shared calendar knows which entry belongs to which appointment on every
+  phone.** Entries are linked by their calendar UID instead of one phone's entry
+  number, so a second phone no longer writes a copy of an entry DAVx5 already
+  brought over, and an appointment changed on one phone moves its entry on the
+  others.
+- **Removing an appointment** only puts the status back to „Angerufen" when no
+  other appointment is still ahead. Removing a past one asks first.
+- **Update the sync server first.** An older server ignores appointments; the
+  app then keeps them as „offen" until it is updated rather than losing them.
+- The first sync after the update fetches everything from the server once.
+
 ## 1.3.1
 
 - **The address opens the map on the point**, not on a search for the street.

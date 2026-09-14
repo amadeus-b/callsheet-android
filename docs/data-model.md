@@ -85,10 +85,10 @@ Working fields, **never overwritten by an import**:
 status          TEXT NOT NULL DEFAULT 'new'
 note            TEXT
 follow_up_at    TEXT            -- ISO-8601 with a time, not just a date
-appointment_at       TEXT       -- the appointment on site, ISO-8601 with a time
-appointment_end_at   TEXT       -- its end; the two together give the duration
-appointment_location TEXT       -- one line, as it goes into the calendar event
-calendar_event_id    INTEGER    -- the linked event; local to this device
+appointment_at       TEXT       -- no longer used since schema 4, emptied; see `appointments`
+appointment_end_at   TEXT       -- no longer used since schema 4
+appointment_location TEXT       -- no longer used since schema 4
+calendar_event_id    INTEGER    -- no longer used since schema 4
 updated_at      TEXT NOT NULL   -- ISO-8601
 dirty           INTEGER NOT NULL DEFAULT 0   -- 1 while a change is waiting to sync
 ```
@@ -98,6 +98,35 @@ phone number is present **and** the business is not closed.
 
 There is also a `search_text` column: SQLite only lower-cases ASCII on its own;
 without it, searching for „müller" would not find „Müller".
+
+### `appointments`
+
+Appointments on site, any number per business — one after another, or side by
+side. Synchronised like contacts: a UUID per row, deleted through tombstones.
+
+```
+id                      TEXT PRIMARY KEY  -- UUID; carried-over appointments: 'legacy-<place_id>'
+place_id                TEXT NOT NULL
+starts_at               TEXT NOT NULL     -- ISO-8601 with a time and a zone
+ends_at                 TEXT
+location                TEXT              -- one line, as it goes into the calendar event
+note                    TEXT              -- "Besichtigung", "Angebot" …
+contact_id              TEXT              -- one of the business's contacts, or null
+updated_at              TEXT NOT NULL
+event_uid               TEXT              -- iCalendar UID of the linked event, or null
+calendar_event_id       INTEGER           -- local: the event's _ID on this device
+calendar_seen_starts_at TEXT              -- local: what this device last saw in the event
+calendar_seen_ends_at   TEXT              -- local
+calendar_seen_location  TEXT              -- local
+dirty                   INTEGER NOT NULL DEFAULT 0
+```
+
+`contact_id` is a reference and nothing more: deleting a contact leaves its
+appointments without a contact person.
+
+Schema 4 carried each business's single appointment over into a row
+`legacy-<place_id>`, the same id the server's migration writes, and emptied the
+old columns on both sides.
 
 ### `status` — allowed values
 
@@ -164,7 +193,7 @@ data from the research and the import keeps maintaining it.
 ### `deletions`
 
 A tombstone table, so a deletion made on one side does not come back with the
-next sync. Contacts and their numbers are the only rows the app ever deletes.
+next sync. Contacts, their numbers and appointments are the only rows the app ever deletes.
 
 ```
 table_name  TEXT NOT NULL
@@ -183,11 +212,16 @@ it is compared as an instant in time, never as a string: two equivalent
 timestamps written with a different offset or format must resolve the same
 way.
 
-The appointment's time, end and location travel like every other working field.
-`calendar_event_id` does not: it names an entry in *this* device's calendar
-provider, and the same number on another device would be a different appointment
-or none at all. A second device therefore learns when and where the appointment
-is, and links it to its own calendar the next time it is saved there.
+An appointment travels with its `event_uid`: the calendar is shared, and the UID
+is the same event on every device. `calendar_event_id` and the
+`calendar_seen_` columns do not — an event's `_ID`, and what one device last
+saw in its copy of the event, mean nothing on the next.
+
+The server names the tables it synchronises in `tables`. Marks are cleared only
+for those; a server from before appointments ignores the table without a word,
+and its rows stay marked — counted as open — until the server is updated. The
+first sync after upgrading to schema 4 fetches from watermark 0 once, because a
+1.3.x app skipped appointments while its watermark moved past them.
 
 A column added to a table later must be **nullable**. The server fills a gap in
 a row it already holds only where it finds NULL; a column declared NOT NULL with
@@ -229,14 +263,26 @@ calendar chosen in the settings. When that is a CalDAV calendar managed by
 DAVx5, the appointment reaches the server the same way; the app itself speaks
 **no** CalDAV and needs no credentials.
 
-- The app recognises its own appointment by the event id it stores on the
-  business. Other people's appointments are never touched — an appointment that
-  already exists can be *linked*, which records that the two are the same thing
-  and leaves the entry exactly as it was.
-- Writing happens when an appointment is saved or changed.
-- The other direction: opening a record reads the event back. Moved or
-  relocated, the calendar wins. Deleted, the appointment is cleared and the
-  status falls back to `called` — but only if it was still `appointment`.
+- An appointment is linked to its event by the event's iCalendar UID
+  (`UID_2445`), which DAVx5 keeps the same on every device. An event the app
+  creates gets the appointment's id as its UID. The event's `_ID` on this device
+  is kept as a shortcut, used while the event behind it exists.
+- Other people's appointments are never touched — an existing event can be
+  *linked*, which records that the two are the same thing and leaves the entry
+  exactly as it was. An event another appointment already holds is not offered.
+- An appointment whose event exists but has not reached this device is saved
+  without touching the calendar; the device holding the event updates it after
+  its next sync.
+- The other direction: opening a record reads each appointment's event back,
+  comparing the row, the event and what this device last saw in the event. Moved
+  only in the calendar, the calendar wins; everywhere else the row wins and the
+  event is updated. An event not found that this device never saw means nothing
+  yet. One seen before and gone is a deletion while the appointment is ahead —
+  the appointment goes, and the status falls back to `called` if it was still
+  `appointment` and no other appointment is ahead — and only a lost link once it
+  is past.
+- After a sync, appointments changed elsewhere move their events and deleted
+  ones take their events along.
 - Busy times for the picker are read from every visible calendar, and only read.
 
 ## Import
@@ -247,9 +293,9 @@ without a new build.
 
 1. Matching happens on `place_id`.
 2. New businesses are created with `status = 'new'`.
-3. Known businesses: **master data only.** Status, note, follow-up, the
-   appointment and its calendar link, and the call history stay untouched. A
-   fresh export must never overwrite the work.
+3. Known businesses: **master data only.** Status, note, follow-up,
+   appointments and the call history stay untouched. A fresh export must never
+   overwrite the work.
 4. Phone numbers are normalised: `phoneUnformatted` preferred, brought to E.164
    (`+49…`). No number → `is_target = 0`.
 5. A summary follows: how many new, how many updated, how many without a phone.
