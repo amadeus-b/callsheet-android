@@ -23,15 +23,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import io.github.amadeusb.callsheet.calling.Agenda
+import io.github.amadeusb.callsheet.calling.AgendaGroup
+import io.github.amadeusb.callsheet.calling.AgendaSection
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.Business
 
+/**
+ * Everything coming up: overdue callbacks at the top and set apart — a missed
+ * callback must not disappear silently — then today, then every later day that
+ * has something on it. Callbacks and visits mixed by time, each row saying
+ * which it is.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TodayScreen(
-    appointments: List<Pair<AppointmentEntry, Business>>,
-    overdue: List<Business>,
-    dueToday: List<Business>,
+fun AgendaScreen(
+    sections: List<AgendaSection<Pair<AppointmentEntry, Business>>>,
     onBack: () -> Unit,
     onDial: (Business) -> Unit,
     onOpen: (Business) -> Unit,
@@ -39,7 +46,7 @@ fun TodayScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Heute") },
+                title = { Text("Termine") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
@@ -53,9 +60,9 @@ fun TodayScreen(
             )
         },
     ) { inner ->
-        if (appointments.isEmpty() && overdue.isEmpty() && dueToday.isEmpty()) {
+        if (sections.isEmpty()) {
             Column(modifier = Modifier.padding(inner).fillMaxSize()) {
-                EmptyState("Keine Wiedervorlage offen. Nichts, was heute noch drängt.")
+                EmptyState("Keine Termine und keine offenen Rückrufe.")
             }
             return@Scaffold
         }
@@ -65,76 +72,44 @@ fun TodayScreen(
                 .padding(inner)
                 .fillMaxSize(),
         ) {
-            // Above the follow-ups: an appointment is somewhere to be at a
-            // particular time, and the day has to be planned around it.
-            if (appointments.isNotEmpty()) {
-                item(key = "header-appointments") {
+            sections.forEach { section ->
+                val overdue = section.group == AgendaGroup.OVERDUE
+                item(key = "header-${section.group}-${section.dayStartMillis}") {
                     GroupHeader(
-                        title = "Termine heute (${appointments.size})",
-                        subtitle = "Vor Ort. Fahrzeit einplanen.",
-                        background = MaterialTheme.colorScheme.tertiaryContainer,
-                        foreground = MaterialTheme.colorScheme.onTertiaryContainer,
+                        title = Agenda.title(section),
+                        subtitle = if (overdue) "Liegengeblieben. Diese zuerst." else null,
+                        background = when (section.group) {
+                            AgendaGroup.OVERDUE -> MaterialTheme.colorScheme.errorContainer
+                            AgendaGroup.TODAY -> MaterialTheme.colorScheme.tertiaryContainer
+                            AgendaGroup.DAY -> MaterialTheme.colorScheme.secondaryContainer
+                        },
+                        foreground = when (section.group) {
+                            AgendaGroup.OVERDUE -> MaterialTheme.colorScheme.onErrorContainer
+                            AgendaGroup.TODAY -> MaterialTheme.colorScheme.onTertiaryContainer
+                            AgendaGroup.DAY -> MaterialTheme.colorScheme.onSecondaryContainer
+                        },
                     )
                 }
-                items(appointments, key = { "t-" + it.first.id }) { (appointment, business) ->
-                    BusinessRow(
-                        business = business,
-                        onDial = { onDial(business) },
-                        onOpen = { onOpen(business) },
-                        appointment = appointment,
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                }
-            }
-
-            if (overdue.isNotEmpty()) {
-                item(key = "header-overdue") {
-                    GroupHeader(
-                        title = "Überfällig (${overdue.size})",
-                        subtitle = "Aus den Vortagen liegengeblieben. Diese zuerst.",
-                        background = MaterialTheme.colorScheme.errorContainer,
-                        foreground = MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                }
-                items(overdue, key = { "u-" + it.placeId }) { business ->
+                // Each entry sits in exactly one section, so its id is a unique key.
+                items(section.items, key = { it.first.id }) { (entry, business) ->
                     Column(
-                        modifier = Modifier.background(
-                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
-                        )
+                        modifier = if (overdue) {
+                            Modifier.background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f))
+                        } else {
+                            Modifier
+                        }
                     ) {
                         BusinessRow(
                             business = business,
                             onDial = { onDial(business) },
                             onOpen = { onOpen(business) },
-                            showFollowUp = true,
-                            overdue = true,
+                            // The overdue ones come from any day: they need their date.
+                            label = Agenda.rowLabel(entry, withDate = overdue),
+                            overdue = overdue,
                         )
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-            }
-
-            item(key = "header-today") {
-                GroupHeader(
-                    title = "Heute fällig (${dueToday.size})",
-                    subtitle = null,
-                    background = MaterialTheme.colorScheme.secondaryContainer,
-                    foreground = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
-            }
-            if (dueToday.isEmpty()) {
-                item(key = "today-empty") {
-                    EmptyState("Für heute steht nichts mehr an.")
-                }
-            }
-            items(dueToday, key = { "h-" + it.placeId }) { business ->
-                BusinessRow(
-                    business = business,
-                    onDial = { onDial(business) },
-                    onOpen = { onOpen(business) },
-                    showFollowUp = true,
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
 
             item(key = "footer") { Column(Modifier.height(24.dp)) {} }

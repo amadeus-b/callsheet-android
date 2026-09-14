@@ -65,7 +65,7 @@ fun WorkListScreen(
     onFilterChange: (Filter) -> Unit,
     onDial: (Business) -> Unit,
     onOpen: (Business) -> Unit,
-    onToday: () -> Unit,
+    onAgenda: () -> Unit,
     onSettings: () -> Unit,
     onNewBusiness: () -> Unit,
 ) {
@@ -76,8 +76,8 @@ fun WorkListScreen(
             TopAppBar(
                 title = { Text("Callsheet") },
                 actions = {
-                    IconButton(onClick = onToday) {
-                        Icon(Icons.Filled.DateRange, contentDescription = "Heute")
+                    IconButton(onClick = onAgenda) {
+                        Icon(Icons.Filled.DateRange, contentDescription = "Termine")
                     }
                     IconButton(onClick = onSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Einstellungen")

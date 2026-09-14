@@ -40,7 +40,7 @@ import io.github.amadeusb.callsheet.ui.WorkListScreen
 import io.github.amadeusb.callsheet.ui.BusinessDetailScreen
 import io.github.amadeusb.callsheet.ui.SettingsScreen
 import io.github.amadeusb.callsheet.ui.BusinessFormScreen
-import io.github.amadeusb.callsheet.ui.TodayScreen
+import io.github.amadeusb.callsheet.ui.AgendaScreen
 import io.github.amadeusb.callsheet.calendar.CalendarStore
 import io.github.amadeusb.callsheet.contacts.PhoneBook
 import io.github.amadeusb.callsheet.ui.NumberPickerDialog
@@ -248,7 +248,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             onFilterChange = vm::setFilter,
             onDial = vm::queryNumbers,
             onOpen = { vm.openBusiness(it.placeId) },
-            onToday = vm::showToday,
+            onAgenda = vm::showAgenda,
             onSettings = vm::showSettings,
             onNewBusiness = vm::showBusinessForm,
         )
@@ -306,10 +306,8 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             }
         }
 
-        is Screen.Today -> TodayScreen(
-            appointments = state.appointmentsToday,
-            overdue = state.overdue,
-            dueToday = state.dueToday,
+        is Screen.Agenda -> AgendaScreen(
+            sections = state.agenda,
             onBack = { vm.back() },
             onDial = vm::queryNumbers,
             onOpen = { vm.openBusiness(it.placeId) },

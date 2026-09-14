@@ -42,9 +42,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.NumberPicker
-import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.Business
 import io.github.amadeusb.callsheet.data.Status
 import io.github.amadeusb.callsheet.data.DialTarget
@@ -103,9 +101,9 @@ fun BusinessRow(
     onDial: () -> Unit,
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
-    showFollowUp: Boolean = false,
-    /** The appointment this row stands for, in „Termine heute". */
-    appointment: AppointmentEntry? = null,
+    /** What this row stands for in the agenda: „Rückruf · 09:00 – 09:15 · …". */
+    label: String? = null,
+    /** An overdue callback: the label in the error colour. */
     overdue: Boolean = false,
 ) {
     Row(
@@ -145,22 +143,14 @@ fun BusinessRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            appointment?.let {
+            label?.let {
                 Text(
-                    text = Appointment.rowLabel(it),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (showFollowUp && business.followUpAt != null) {
-                Text(
-                    text = "Wiedervorlage " + Clock.readable(business.followUpAt),
+                    text = it,
                     style = MaterialTheme.typography.bodySmall,
                     color = if (overdue) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.primary,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

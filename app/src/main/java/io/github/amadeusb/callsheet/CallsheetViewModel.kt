@@ -9,6 +9,8 @@ import io.github.amadeusb.callsheet.calendar.BusyTimes
 import io.github.amadeusb.callsheet.calendar.CalendarAccount
 import io.github.amadeusb.callsheet.calendar.CalendarStore
 import io.github.amadeusb.callsheet.calendar.EventFields
+import io.github.amadeusb.callsheet.calling.Agenda
+import io.github.amadeusb.callsheet.calling.AgendaSection
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
 import io.github.amadeusb.callsheet.calling.CallFlow
@@ -64,7 +66,8 @@ import java.util.UUID
 sealed interface Screen {
     data object WorkList : Screen
     data class Detail(val placeId: String) : Screen
-    data object Today : Screen
+    /** The agenda behind the calendar button. */
+    data object Agenda : Screen
     data object Settings : Screen
     data object BusinessForm : Screen
 
@@ -150,8 +153,6 @@ data class State(
     val statusSuggestion: Status? = null,
     val followUpSuggestion: String? = null,
     val hint: String? = null,
-    val overdue: List<Business> = emptyList(),
-    val dueToday: List<Business> = emptyList(),
     val blockedBusinesses: List<Business> = emptyList(),
     val lastImportResult: ImportResult? = null,
     /** Phone book: whether to store, where to, and what is on offer. */
@@ -164,7 +165,8 @@ data class State(
     val calendar: CalendarAccount? = null,
     val calendars: List<CalendarAccount> = emptyList(),
     val appointmentDraft: AppointmentDraft? = null,
-    val appointmentsToday: List<Pair<AppointmentEntry, Business>> = emptyList(),
+    /** What the agenda shows, grouped. */
+    val agenda: List<AgendaSection<Pair<AppointmentEntry, Business>>> = emptyList(),
     val outsideBusinessHours: Boolean = false,
     val draft: BusinessDraft = BusinessDraft(),
     val formError: String? = null,
@@ -302,7 +304,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         followCalendar(applied.toList())
         if (result is SyncResult.Ok) {
             refreshList()
-            loadToday()
+            loadAgenda()
             // The UIDs taken here go up with the next run, started at once.
             if (captureMissingUids() > 0) syncNow()
         }
@@ -374,7 +376,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             followCalendar(applied.toList())
             if (result is SyncResult.Ok) {
                 refreshList()
-                loadToday()
+                loadAgenda()
             }
         }
     }
@@ -470,7 +472,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         when (previous) {
             is Screen.WorkList -> refreshList()
             is Screen.Detail -> loadDetail(previous.placeId)
-            is Screen.Today -> loadToday()
+            is Screen.Agenda -> loadAgenda()
             is Screen.Settings -> loadBlocked()
             is Screen.BusinessForm -> Unit
             is Screen.ContactForm -> Unit
@@ -510,25 +512,16 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         reconcileAppointments(placeId)
     }
 
-    fun showToday() {
-        _state.value = _state.value.copy(screen = Screen.Today, history = historyFor(Screen.Today))
-        loadToday()
+    fun showAgenda() {
+        _state.update { it.copy(screen = Screen.Agenda, history = historyFor(Screen.Agenda)) }
+        loadAgenda()
     }
 
-    private fun loadToday() {
+    private fun loadAgenda() {
         viewModelScope.launch {
             val now = System.currentTimeMillis()
-            val due = repo.due(Clock.todayStart(now) + 24L * 60 * 60 * 1000)
-            val (late, today) = due.partition { FollowUp.isOverdue(it.followUpAt, now) }
-            val appointments = repo.appointmentsDue(
-                fromMillis = Clock.todayStart(now),
-                toMillis = Clock.todayStart(now) + 24L * 60 * 60 * 1000,
-            )
-            _state.value = _state.value.copy(
-                overdue = late,
-                dueToday = today,
-                appointmentsToday = appointments,
-            )
+            val listed = repo.agenda(Clock.todayStart(now))
+            _state.update { it.copy(agenda = Agenda.sections(listed, { pair -> pair.first }, now)) }
         }
     }
 
