@@ -771,6 +771,19 @@ class Repository(context: Context) {
     }
 
     /**
+     * Whether an appointment other than [appointmentId] points at an event —
+     * by [uid] or by this device's [eventId]. Such an event is not a stale copy
+     * to delete, and its UID is not one to take.
+     */
+    suspend fun heldByOther(appointmentId: String, uid: String?, eventId: Long?): Boolean = withContext(Dispatchers.IO) {
+        if (uid == null && eventId == null) return@withContext false
+        helper.readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM appointments WHERE id <> ? AND (event_uid = ? OR calendar_event_id = ?)",
+            arrayOf(appointmentId, uid ?: "", eventId?.toString() ?: ""),
+        ).use { c -> c.moveToFirst() && c.getInt(0) > 0 }
+    }
+
+    /**
      * Records a deletion. Without it the row would come back from the server with
      * the next sync, because the server cannot tell a deletion from a row that was
      * never there.

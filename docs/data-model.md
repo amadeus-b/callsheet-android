@@ -274,13 +274,14 @@ DAVx5, the appointment reaches the server the same way; the app itself speaks
   without touching the calendar; the device holding the event updates it after
   its next sync.
 - The other direction: opening a record reads each appointment's event back,
-  comparing the row, the event and what this device last saw in the event. Moved
-  only in the calendar, the calendar wins; everywhere else the row wins and the
-  event is updated. An event not found that this device never saw means nothing
-  yet. One seen before and gone is a deletion while the appointment is ahead —
-  the appointment goes, and the status falls back to `called` if it was still
-  `appointment` and no other appointment is ahead — and only a lost link once it
-  is past.
+  comparing the row, the event and what this device last saw in the event. Seen
+  here for the first time, or moved only in the calendar, the calendar wins;
+  where the row changed, the row wins and the event is updated. With a server
+  configured, this waits for a sync. An event not found that this device never
+  saw means nothing yet. One seen before and gone is a deletion while the
+  appointment is ahead — the appointment goes, and the status falls back to
+  `called` if it was still `appointment` and no other appointment is ahead — and
+  only a lost link once it is past.
 - After a sync, appointments changed elsewhere move their events and deleted
   ones take their events along.
 - Busy times for the picker are read from every visible calendar, and only read.

@@ -802,6 +802,19 @@ class RepositoryTest {
     }
 
     @Test
+    fun `heldByOther sees another row pointing at the event by UID or by id, never the row itself`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00").copy(eventUid = "uid-1"))
+        repo.setCalendarLink("A-1", 4711L, null, null, null)
+        repo.saveAppointment(visit("A-2", "t-1", "2026-09-11T14:00:00+02:00"))
+
+        assertTrue(repo.heldByOther("A-2", "uid-1", null))
+        assertTrue(repo.heldByOther("A-2", null, 4711L))
+        assertFalse(repo.heldByOther("A-1", "uid-1", 4711L))
+        assertFalse(repo.heldByOther("A-2", "uid-9", 815L))
+        assertFalse(repo.heldByOther("A-2", null, null))
+    }
+
+    @Test
     fun `appointmentsDue returns one row per appointment, earliest first`() = runTest {
         import(
             """[

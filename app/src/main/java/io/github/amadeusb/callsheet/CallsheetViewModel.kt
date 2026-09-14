@@ -41,6 +41,7 @@ import io.github.amadeusb.callsheet.sync.FailureKind
 import io.github.amadeusb.callsheet.sync.isAcceptableServerAddress
 import io.github.amadeusb.callsheet.sync.SyncClient
 import io.github.amadeusb.callsheet.sync.SyncEngine
+import io.github.amadeusb.callsheet.sync.SyncGate
 import io.github.amadeusb.callsheet.sync.SyncResult
 import io.github.amadeusb.callsheet.sync.SyncStore
 import kotlinx.coroutines.CancellationException
@@ -204,6 +205,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     private val store = ContactStore(application, repo, preferences)
     private val syncStore = SyncStore(application)
     private val syncEngine = SyncEngine(syncStore, preferences)
+    private val syncGate = SyncGate<SyncResult?>()
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
@@ -241,47 +243,53 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     /**
      * Runs a sync when a server is configured. Errors stay in the settings screen:
      * in the middle of a call, a network hiccup is not worth a message.
+     *
+     * Never dropped: requested while a sync runs, it waits and gets a run of its
+     * own (see SyncGate).
      */
     fun syncNow(quiet: Boolean = true) {
-        val url = preferences.serverUrl ?: return
-        val token = preferences.serverToken ?: return
-        if (_syncState.value.running) return
+        viewModelScope.launch { syncAndWait(quiet) }
+    }
 
-        viewModelScope.launch {
-            _syncState.value = _syncState.value.copy(running = true)
-            // Filled on the sync thread, read here after it returns.
-            val applied = java.util.Collections.synchronizedList(ArrayList<AppliedAppointments>())
-            val result = withContext(Dispatchers.IO) {
-                syncEngine.sync(SyncClient(url, token), ::reportUploadProgress) { applied.add(it) }
-            }
-            // NETWORK and RATE_LIMITED stay silent on an automatic run — both are
-            // common and self-healing, and showing them here would make the
-            // settings screen look broken most of the time; every other kind,
-            // including SERVER and TOO_LARGE, is shown even when quiet, because
-            // none of them gets better on its own and "shown" only ever means one
-            // line in the settings — it interrupts nothing.
-            val error = when (result) {
-                is SyncResult.Failed ->
-                    if (quiet && (result.kind == FailureKind.NETWORK || result.kind == FailureKind.RATE_LIMITED)) {
-                        null
-                    } else {
-                        result.message
-                    }
-                else -> null
-            }
-            _syncState.value = _syncState.value.copy(
-                running = false, error = error, uploadRemaining = 0, uploadTotal = 0,
-            )
-            refreshSyncState()
-            // Whatever came down is real, even when the run did not finish.
-            followCalendar(applied.toList())
-            if (result is SyncResult.Ok) {
-                refreshList()
-                loadToday()
-                // The UIDs taken here go up with the next run, started at once.
-                if (captureMissingUids() > 0) syncNow()
-            }
+    /** [syncNow], waiting for the run that covers this request. Null without a server. */
+    private suspend fun syncAndWait(quiet: Boolean = true): SyncResult? = syncGate.run {
+        val url = preferences.serverUrl ?: return@run null
+        val token = preferences.serverToken ?: return@run null
+
+        _syncState.value = _syncState.value.copy(running = true)
+        // Filled on the sync thread, read here after it returns.
+        val applied = java.util.Collections.synchronizedList(ArrayList<AppliedAppointments>())
+        val result = withContext(Dispatchers.IO) {
+            syncEngine.sync(SyncClient(url, token), ::reportUploadProgress) { applied.add(it) }
         }
+        // NETWORK and RATE_LIMITED stay silent on an automatic run — both are
+        // common and self-healing, and showing them here would make the
+        // settings screen look broken most of the time; every other kind,
+        // including SERVER and TOO_LARGE, is shown even when quiet, because
+        // none of them gets better on its own and "shown" only ever means one
+        // line in the settings — it interrupts nothing.
+        val error = when (result) {
+            is SyncResult.Failed ->
+                if (quiet && (result.kind == FailureKind.NETWORK || result.kind == FailureKind.RATE_LIMITED)) {
+                    null
+                } else {
+                    result.message
+                }
+            else -> null
+        }
+        _syncState.value = _syncState.value.copy(
+            running = false, error = error, uploadRemaining = 0, uploadTotal = 0,
+        )
+        refreshSyncState()
+        // Whatever came down is real, even when the run did not finish.
+        followCalendar(applied.toList())
+        if (result is SyncResult.Ok) {
+            refreshList()
+            loadToday()
+            // The UIDs taken here go up with the next run, started at once.
+            if (captureMissingUids() > 0) syncNow()
+        }
+        result
     }
 
     fun openServerDialog() {
@@ -329,8 +337,10 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             if (addressChanged) withContext(Dispatchers.IO) { syncEngine.resetForFullResync() }
 
             val applied = java.util.Collections.synchronizedList(ArrayList<AppliedAppointments>())
-            val result = withContext(Dispatchers.IO) {
-                syncEngine.sync(SyncClient(preferences.serverUrl!!, token), ::reportUploadProgress) { applied.add(it) }
+            val result = syncGate.run {
+                withContext(Dispatchers.IO) {
+                    syncEngine.sync(SyncClient(preferences.serverUrl!!, token), ::reportUploadProgress) { applied.add(it) }
+                }
             }
             val failure = (result as? SyncResult.Failed)?.message
             _syncState.value = _syncState.value.copy(
@@ -1065,13 +1075,17 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         // The shortcut's event carries another UID than the row, and the row's
         // UID names a different event on this device: that one is the
         // appointment's. The copy behind the shortcut is a duplicate — written
-        // by this device before the row learnt its UID — and goes.
+        // by this device before the row learnt its UID — and goes. Only when no
+        // other appointment points at that copy — then it is not a copy but that
+        // appointment's event.
         if (!rowWinsOnly && located != null && entry.eventUid != null && event?.uid != entry.eventUid) {
             val rowUid = entry.eventUid
             val found = calendarLookup { CalendarStore.findByUid(context, rowUid) }.getOrElse { return null }
             val target = Appointment.relinkTo(rowUid, event?.uid, located.eventId, found)
             if (target != null) {
-                if (preferences.calendarEnabled && CalendarStore.canWrite(context)) {
+                if (preferences.calendarEnabled && CalendarStore.canWrite(context) &&
+                    !repo.heldByOther(entry.id, event?.uid, located.eventId)
+                ) {
                     CalendarStore.delete(context, located.eventId)
                 }
                 repo.setCalendarLink(entry.id, target, null, null, null)
@@ -1084,7 +1098,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             event = event?.let { Slot(it.startMillis, it.endMillis, it.location) },
             nowMillis = nowMillis,
         )
-        if (rowWinsOnly && outcome != Reconcile.UpdateEvent) return null
+        // After a sync nothing may change a row; recording what an event in step
+        // holds is local and may.
+        if (rowWinsOnly && outcome != Reconcile.UpdateEvent && outcome != Reconcile.InStep) return null
 
         // A row without a UID takes the one its event carries — a carried-over
         // appointment, or an event DAVx5 has uploaded since. A row that has one
@@ -1144,6 +1160,13 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     private fun reconcileAppointments(placeId: String) {
         viewModelScope.launch {
             if (!CalendarStore.canRead(getApplication())) return@launch
+            // Nothing is taken from the calendar onto a row before this device
+            // knows the server's version of it — an older row stamped newer
+            // would win over a change made elsewhere. No sync, no read-back:
+            // the next opening tries again.
+            if (preferences.serverUrl != null && preferences.serverToken != null) {
+                if (syncAndWait() !is SyncResult.Ok) return@launch
+            }
             val business = repo.business(placeId) ?: return@launch
             val now = System.currentTimeMillis()
             val outcomes = repo.appointments(placeId)
@@ -1224,7 +1247,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         for (entry in repo.linkedWithoutUid()) {
             val eventId = entry.calendarEventId ?: continue
             val uid = calendarLookup { CalendarStore.read(context, eventId) }.getOrNull()?.uid
-            Appointment.uidToTake(null, uid)?.let {
+            Appointment.uidToTake(null, uid)?.takeUnless { repo.heldByOther(entry.id, it, null) }?.let {
                 repo.setEventUid(entry.id, it)
                 taken++
             }

@@ -78,10 +78,10 @@ sealed interface Reconcile {
     /** Row and event agree. Only what this device saw is recorded. */
     data object InStep : Reconcile
 
-    /** Moved or relocated in the calendar, and nowhere else: the row takes [slot]. */
+    /** Moved or relocated in the calendar, or seen here for the first time and different: the row takes [slot]. */
     data class TakeEvent(val slot: Slot) : Reconcile
 
-    /** Changed on another device, or this calendar is behind: the event is updated from the row. */
+    /** Changed on another device: the event is updated from the row. */
     data object UpdateEvent : Reconcile
 
     /** Not found, and never seen on this device: it may not have arrived yet. */
@@ -256,14 +256,16 @@ object Appointment {
      *
      * | S     | E = S | R = S | result                          |
      * |-------|-------|-------|---------------------------------|
-     * | none  |       |       | E = R: in step, else R wins     |
+     * | none  |       |       | E = R: in step, else E wins     |
      * | set   | yes   | yes   | in step                         |
      * | set   | no    | yes   | E wins                          |
      * | set   | yes   | no    | R wins                          |
      * | set   | no    | no    | E = R: in step, else R wins     |
      *
      * Where both changed, the row wins: it is what every device shows, and the
-     * calendar gives no modification time to compare.
+     * calendar gives no modification time to compare. On first sight the
+     * calendar wins — the user's decision: what a device has never seen, it
+     * takes as it stands in the calendar.
      */
     fun reconcile(row: Slot, seen: Slot?, event: Slot?, nowMillis: Long): Reconcile {
         if (event == null) {
@@ -272,7 +274,7 @@ object Appointment {
             return if (last > nowMillis) Reconcile.DeletedInCalendar else Reconcile.Unlink
         }
         if (sameSlot(event, row)) return Reconcile.InStep
-        if (seen == null) return Reconcile.UpdateEvent
+        if (seen == null) return Reconcile.TakeEvent(event)
         val onlyTheCalendarMoved = !sameSlot(event, seen) && sameSlot(row, seen)
         return if (onlyTheCalendarMoved) Reconcile.TakeEvent(event) else Reconcile.UpdateEvent
     }

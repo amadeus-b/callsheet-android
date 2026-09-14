@@ -310,9 +310,9 @@ class AppointmentTest {
     }
 
     @Test
-    fun `first sight of an event that differs lets the row win`() {
-        // This device's calendar may simply not have caught up.
-        assertEquals(Reconcile.UpdateEvent, Appointment.reconcile(row = later, seen = null, event = planned, nowMillis = dayBefore))
+    fun `first sight of an event that differs lets the event win`() {
+        // Decided by the user: the calendar is the truth a device has not seen yet.
+        assertEquals(Reconcile.TakeEvent(planned), Appointment.reconcile(row = later, seen = null, event = planned, nowMillis = dayBefore))
     }
 
     @Test

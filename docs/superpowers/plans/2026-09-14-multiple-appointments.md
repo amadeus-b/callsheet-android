@@ -4287,3 +4287,322 @@ With two phones carrying the same Infomaniak calendar:
 6. **The calendar arriving before the row.** On phone A change an appointment's time *and* its Notiz. Let DAVx5 synchronise phone B, open the business on B. Expected: B shows A's new time and A's Notiz — not B's old one — on both phones after a sync.
 7. **A carried-over appointment edited on the other phone.** Right after installing 1.4.0 on both phones, change a carried-over appointment (one that had a calendar entry under 1.3.1) on the phone that did *not* create the entry. Let both phones and DAVx5 synchronise, open the business on both. Expected: one calendar entry for it, not two, and opening it again on either phone changes nothing.
 8. **No permission, calendar on.** With the calendar switched on in the app, revoke calendar permission, remove a linked appointment. Expected: the hint that the entry stays in the calendar.
+
+---
+
+### Task 15: Read-back after a pull, no lost sync requests, guarded relink, the calendar wins on first sight
+
+Decided by the user after Task 14's review, on branch `termine-robust` (not merged into `main` without asking):
+
+1. **Taking anything from the calendar waits for a pull.** With a server configured, the read-back on opening a business runs only after a sync that started after the opening has gone through. A failed sync skips the read-back until the next opening. A sync requested while one is running is not dropped: it gets a run of its own that starts after the request; requests queued behind the same run share it.
+2. **Relinking deletes the stale copy only when no other appointment row points at it** (by `event_uid` or `calendar_event_id`). The UID sweep likewise never gives a row a UID another row already holds.
+3. **First sight: the calendar wins.** A device that has never seen an appointment's event (S empty) takes the event's time and place onto the row when they differ, instead of writing the row into the event. This reverses the spec's first-sight rule (The calendar → Reading back, first table row). Known cost, accepted: a device whose calendar DAVx5 has not brought level yet takes the older time and, stamped newer, wins over the change made elsewhere. After a sync, where nothing may change a row, an event in step is now recorded as seen.
+
+**Files:**
+- Create: `…/sync/SyncGate.kt`
+- Modify: `…/calling/Appointment.kt` (`reconcile`), `…/data/Repository.kt` (new `heldByOther`), `…/CallsheetViewModel.kt` (`syncNow`, `connectServer`, `reconcileAppointments`, `reconcile`, `captureMissingUids`), `docs/data-model.md`
+- Test: create `SyncGateTest.kt`; modify `AppointmentTest.kt`, `RepositoryTest.kt`
+
+**Interfaces:**
+- `class SyncGate<T> { suspend fun run(block: suspend () -> T): T }`
+- `Repository.heldByOther(appointmentId: String, uid: String?, eventId: Long?): Boolean`
+- private `suspend fun syncAndWait(quiet: Boolean = true): SyncResult?` in the view model — null when no server is configured
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `app/src/test/java/io/github/amadeusb/callsheet/SyncGateTest.kt`:
+
+```kotlin
+package io.github.amadeusb.callsheet
+
+import io.github.amadeusb.callsheet.sync.SyncGate
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class SyncGateTest {
+
+    @Test
+    fun `requests one after another each get a run`() = runTest {
+        val gate = SyncGate<Int>()
+        var runs = 0
+
+        gate.run { ++runs }
+        gate.run { ++runs }
+
+        assertEquals(2, runs)
+    }
+
+    @Test
+    fun `a request made during a run is not lost, it gets a run after it`() = runTest {
+        val gate = SyncGate<Int>()
+        val release = CompletableDeferred<Unit>()
+        var runs = 0
+
+        val first = async { gate.run { runs++; release.await(); runs } }
+        yield()
+        val second = async { gate.run { ++runs } }
+        yield()
+        release.complete(Unit)
+
+        assertEquals(1, first.await())
+        assertEquals(2, second.await())
+        assertEquals(2, runs)
+    }
+
+    @Test
+    fun `requests queued behind the same run share the next one`() = runTest {
+        val gate = SyncGate<Int>()
+        val release = CompletableDeferred<Unit>()
+        var runs = 0
+
+        val first = async { gate.run { runs++; release.await(); runs } }
+        yield()
+        val second = async { gate.run { ++runs } }
+        val third = async { gate.run { ++runs } }
+        yield()
+        release.complete(Unit)
+
+        first.await()
+        assertEquals(2, second.await())
+        assertEquals(2, third.await())
+        assertEquals(2, runs)
+    }
+
+    @Test
+    fun `a run that failed covers nobody waiting for it`() = runTest {
+        val gate = SyncGate<Int>()
+        val release = CompletableDeferred<Unit>()
+        var runs = 0
+
+        val failing = async {
+            runCatching { gate.run { runs++; release.await(); error("offline") } }
+        }
+        yield()
+        val waiting = async { gate.run { ++runs } }
+        yield()
+        release.complete(Unit)
+
+        failing.await()
+        assertEquals(2, waiting.await())
+    }
+}
+```
+
+
+In `AppointmentTest.kt`, replace the test `first sight of an event that differs lets the row win` with:
+
+```kotlin
+    @Test
+    fun `first sight of an event that differs lets the event win`() {
+        // Decided by the user: the calendar is the truth a device has not seen yet.
+        assertEquals(Reconcile.TakeEvent(planned), Appointment.reconcile(row = later, seen = null, event = planned, nowMillis = dayBefore))
+    }
+```
+
+In `RepositoryTest.kt`, below `linkedWithoutUid lists rows linked on this device that have no UID yet`:
+
+```kotlin
+    @Test
+    fun `heldByOther sees another row pointing at the event by UID or by id, never the row itself`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00").copy(eventUid = "uid-1"))
+        repo.setCalendarLink("A-1", 4711L, null, null, null)
+        repo.saveAppointment(visit("A-2", "t-1", "2026-09-11T14:00:00+02:00"))
+
+        assertTrue(repo.heldByOther("A-2", "uid-1", null))
+        assertTrue(repo.heldByOther("A-2", null, 4711L))
+        assertFalse(repo.heldByOther("A-1", "uid-1", 4711L))
+        assertFalse(repo.heldByOther("A-2", "uid-9", 815L))
+        assertFalse(repo.heldByOther("A-2", null, null))
+    }
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.SyncGateTest" --tests "io.github.amadeusb.callsheet.AppointmentTest" --tests "io.github.amadeusb.callsheet.RepositoryTest"`
+Expected: FAIL — compile errors for `SyncGate` and `heldByOther` (the reconcile test cannot run until the sources compile)
+
+- [ ] **Step 3: `SyncGate`**
+
+Create `app/src/main/java/io/github/amadeusb/callsheet/sync/SyncGate.kt`:
+
+```kotlin
+package io.github.amadeusb.callsheet.sync
+
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/**
+ * One sync at a time, and no request lost.
+ *
+ * A request made while a run is in progress waits for it and then gets a run
+ * that starts after the request — the running one was built before whatever
+ * the request is about. Requests that queue behind the same run share the next
+ * one instead of each starting their own. A run that throws covers nobody.
+ */
+class SyncGate<T> {
+    private val mutex = Mutex()
+    private val lock = Any()
+    private var requested = 0L
+    /** How many requests had been made when the last successful run started. */
+    private var covered = 0L
+    private var last: Result<T>? = null
+
+    suspend fun run(block: suspend () -> T): T {
+        val mine = synchronized(lock) { ++requested }
+        return mutex.withLock {
+            val done = last
+            if (covered >= mine && done != null) return@withLock done.getOrThrow()
+            val startedAt = synchronized(lock) { requested }
+            val result = block()
+            covered = startedAt
+            last = Result.success(result)
+            result
+        }
+    }
+}
+```
+
+- [ ] **Step 4: `Appointment.reconcile` — first sight**
+
+In `reconcile`, replace `if (seen == null) return Reconcile.UpdateEvent` with `if (seen == null) return Reconcile.TakeEvent(event)`. In its KDoc table, the first row becomes `| none  |       |       | E = R: in step, else E wins     |`, and replace the paragraph "Where both changed, the row wins: …" with:
+
+```kotlin
+     * Where both changed, the row wins: it is what every device shows, and the
+     * calendar gives no modification time to compare. On first sight the
+     * calendar wins — the user's decision: what a device has never seen, it
+     * takes as it stands in the calendar.
+```
+
+Change the KDoc of `Reconcile.TakeEvent` to `/** Moved or relocated in the calendar, or seen here for the first time and different: the row takes [slot]. */` and of `Reconcile.UpdateEvent` to `/** Changed on another device: the event is updated from the row. */`.
+
+- [ ] **Step 5: `Repository.heldByOther`**
+
+Below `linkedWithoutUid`:
+
+```kotlin
+    /**
+     * Whether an appointment other than [appointmentId] points at an event —
+     * by [uid] or by this device's [eventId]. Such an event is not a stale copy
+     * to delete, and its UID is not one to take.
+     */
+    suspend fun heldByOther(appointmentId: String, uid: String?, eventId: Long?): Boolean = withContext(Dispatchers.IO) {
+        if (uid == null && eventId == null) return@withContext false
+        helper.readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM appointments WHERE id <> ? AND (event_uid = ? OR calendar_event_id = ?)",
+            arrayOf(appointmentId, uid ?: "", eventId?.toString() ?: ""),
+        ).use { c -> c.moveToFirst() && c.getInt(0) > 0 }
+    }
+```
+
+(`event_uid = ''` and `calendar_event_id = ''` match no row: the app never stores an empty UID, and an integer column never equals the empty text.)
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.SyncGateTest" --tests "io.github.amadeusb.callsheet.AppointmentTest" --tests "io.github.amadeusb.callsheet.RepositoryTest"`
+Expected: PASS
+
+- [ ] **Step 7: Syncs through the gate**
+
+In `CallsheetViewModel.kt`, add `import io.github.amadeusb.callsheet.sync.SyncGate` and the field `private val syncGate = SyncGate<SyncResult?>()` next to `syncEngine`.
+
+Turn the body of `syncNow` into `syncAndWait`:
+
+```kotlin
+    /**
+     * Runs a sync when a server is configured. Errors stay in the settings screen:
+     * in the middle of a call, a network hiccup is not worth a message.
+     *
+     * Never dropped: requested while a sync runs, it waits and gets a run of its
+     * own (see SyncGate).
+     */
+    fun syncNow(quiet: Boolean = true) {
+        viewModelScope.launch { syncAndWait(quiet) }
+    }
+
+    /** [syncNow], waiting for the run that covers this request. Null without a server. */
+    private suspend fun syncAndWait(quiet: Boolean = true): SyncResult? = syncGate.run {
+        val url = preferences.serverUrl ?: return@run null
+        val token = preferences.serverToken ?: return@run null
+        …
+    }
+```
+
+where `…` is everything the old `viewModelScope.launch { … }` block of `syncNow` did, unchanged, ending with `result` as the block's value. Drop the old `if (_syncState.value.running) return`. The `if (captureMissingUids() > 0) syncNow()` line stays: `syncNow` launches, so the follow-up queues behind this run instead of waiting inside it.
+
+In `connectServer`, route the engine call through the same gate so a connect never runs beside another sync:
+
+```kotlin
+            val result = syncGate.run {
+                withContext(Dispatchers.IO) {
+                    syncEngine.sync(SyncClient(preferences.serverUrl!!, token), ::reportUploadProgress) { applied.add(it) }
+                }
+            }
+```
+
+- [ ] **Step 8: Read-back after the pull**
+
+In `reconcileAppointments`, directly after `if (!CalendarStore.canRead(getApplication())) return@launch`:
+
+```kotlin
+            // Nothing is taken from the calendar onto a row before this device
+            // knows the server's version of it — an older row stamped newer
+            // would win over a change made elsewhere. No sync, no read-back:
+            // the next opening tries again.
+            if (preferences.serverUrl != null && preferences.serverToken != null) {
+                if (syncAndWait() !is SyncResult.Ok) return@launch
+            }
+```
+
+`val business = repo.business(placeId)` and the appointments are read after that, as now.
+
+In `reconcile`, change `if (rowWinsOnly && outcome != Reconcile.UpdateEvent) return null` to:
+
+```kotlin
+        // After a sync nothing may change a row; recording what an event in step
+        // holds is local and may.
+        if (rowWinsOnly && outcome != Reconcile.UpdateEvent && outcome != Reconcile.InStep) return null
+```
+
+- [ ] **Step 9: The guarded relink and sweep**
+
+In `reconcile`'s relink block, replace
+
+```kotlin
+                if (preferences.calendarEnabled && CalendarStore.canWrite(context)) {
+```
+
+with
+
+```kotlin
+                if (preferences.calendarEnabled && CalendarStore.canWrite(context) &&
+                    !repo.heldByOther(entry.id, event?.uid, located.eventId)
+                ) {
+```
+
+and extend the comment above the block by: `Only when no other appointment points at that copy — then it is not a copy but that appointment's event.`
+
+In `captureMissingUids`, replace `Appointment.uidToTake(null, uid)?.let {` with:
+
+```kotlin
+            Appointment.uidToTake(null, uid)?.takeUnless { repo.heldByOther(entry.id, it, null) }?.let {
+```
+
+- [ ] **Step 10: `docs/data-model.md`**
+
+In `## Calendar`, in the bullet beginning "- The other direction: opening a record reads each appointment's event back,", replace "Moved only in the calendar, the calendar wins; everywhere else the row wins and the event is updated. An event not found that this device never saw means nothing yet." with "Seen here for the first time, or moved only in the calendar, the calendar wins; where the row changed, the row wins and the event is updated. With a server configured, this waits for a sync. An event not found that this device never saw means nothing yet." The sentences are wrapped over lines 277–280 of the file; rewrap the bullet at about 80 columns.
+
+- [ ] **Step 11: Build and test**
+
+Run: `./gradlew assembleDebug testDebugUnitTest`
+Expected: BUILD SUCCESSFUL, all tests pass
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add app/src/main/java/io/github/amadeusb/callsheet/sync/SyncGate.kt app/src/main/java/io/github/amadeusb/callsheet/calling/Appointment.kt app/src/main/java/io/github/amadeusb/callsheet/data/Repository.kt app/src/main/java/io/github/amadeusb/callsheet/CallsheetViewModel.kt app/src/test/java/io/github/amadeusb/callsheet/SyncGateTest.kt app/src/test/java/io/github/amadeusb/callsheet/AppointmentTest.kt app/src/test/java/io/github/amadeusb/callsheet/RepositoryTest.kt docs/data-model.md docs/superpowers/plans/2026-09-14-multiple-appointments.md
+git commit -m "Rücklesen erst nach dem Abgleich, kein Abgleich geht verloren, Kalender gewinnt beim ersten Sehen"
+```
