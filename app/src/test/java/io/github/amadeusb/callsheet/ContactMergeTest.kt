@@ -123,4 +123,45 @@ class ContactMergeTest {
         // Anything unknown from the phone book does not vanish.
         assertEquals(PhoneType.OTHER, ContactMerge.fromAndroidType(Phone.TYPE_PAGER))
     }
+
+    @Test
+    fun `the business's main number is not taken over as the person's`() {
+        val phoneBook = fromPhoneBook(
+            numbers = listOf(
+                PhoneBookNumber("+491701234567", PhoneType.MOBILE),
+                PhoneBookNumber("+49 841 2345678", PhoneType.OTHER),
+            ),
+        )
+        assertNull(ContactMerge.merge(contact(), phoneBook, businessPhone = "+498412345678"))
+    }
+
+    @Test
+    fun `a person who holds the main number in the app keeps it`() {
+        val own = listOf(
+            PhoneNumber("n1", "+491701234567", PhoneType.MOBILE),
+            PhoneNumber("n2", "+498412345678", PhoneType.WORK),
+        )
+        val phoneBook = fromPhoneBook(
+            numbers = listOf(
+                PhoneBookNumber("+491701234567", PhoneType.MOBILE),
+                PhoneBookNumber("+498412345678", PhoneType.WORK),
+            ),
+        )
+        assertNull(ContactMerge.merge(contact(numbers = own), phoneBook, businessPhone = "+498412345678"))
+    }
+
+    @Test
+    fun `the business's email is not taken over by a person without one`() {
+        val phoneBook = fromPhoneBook(email = "info@example.org")
+        assertNull(
+            ContactMerge.merge(contact(email = null), phoneBook, businessEmail = "info@example.org")
+        )
+    }
+
+    @Test
+    fun `an email of the person's own is still taken over`() {
+        val phoneBook = fromPhoneBook(email = "neu@example.org")
+        val draft = ContactMerge.merge(contact(email = null), phoneBook, businessEmail = "info@example.org")!!
+        assertEquals("neu@example.org", draft.email)
+    }
 }

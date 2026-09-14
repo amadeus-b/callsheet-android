@@ -66,15 +66,34 @@ object ContactMerge {
      * role and note in this form, so those stay as they are. An empty name in
      * the phone book is ignored; it would leave the app's entry unusable.
      *
+     * The business's main number and email sit on every entry of the business;
+     * [businessPhone] and [businessEmail] keep them from being taken over as
+     * the person's own.
+     *
      * @return the draft to save, or null when nothing needs changing.
      */
     fun merge(
         existing: Contact,
         fromPhoneBook: PhoneBookContact,
+        businessPhone: String? = null,
+        businessEmail: String? = null,
     ): ContactDraft? {
         val name = fromPhoneBook.name.trim().ifEmpty { existing.name }
-        val email = fromPhoneBook.email?.trim().orEmpty()
-        val numbers = fromPhoneBook.numbers.map { PhoneDraft(number = it.number, kind = it.kind) }
+
+        // Every entry of a business carries its email when the person has none
+        // of their own — that one is not the person's to take over.
+        val readEmail = fromPhoneBook.email?.trim().orEmpty()
+        val businessMail = businessEmail?.trim().orEmpty()
+        val email = if (existing.email.isNullOrBlank() && businessMail.isNotEmpty() &&
+            readEmail.equals(businessMail, ignoreCase = true)
+        ) "" else readEmail
+
+        // Likewise the main number, unless the person holds it in the app too.
+        val main = businessPhone?.trim()?.takeIf { it.isNotEmpty() }
+        val holdsMain = main != null && existing.numbers.any { sameNumber(it.number, main) }
+        val numbers = fromPhoneBook.numbers
+            .filter { main == null || holdsMain || !sameNumber(it.number, main) }
+            .map { PhoneDraft(number = it.number, kind = it.kind) }
 
         val unchanged = name == existing.name &&
             email == existing.email.orEmpty() &&
