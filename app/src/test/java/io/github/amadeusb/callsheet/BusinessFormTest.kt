@@ -196,4 +196,18 @@ class BusinessFormTest {
         ]
         """
     }
+
+    @Test
+    fun `a hand-entered address becomes the business's first address row`() = runTest {
+        val id = repo.create(
+            BusinessDraft(name = "Dachdecker Erfunden", street = "Ziegelgasse 2", postalCode = "85053", city = "Ingolstadt")
+        ).getOrThrow()
+
+        val address = repo.addresses(id).single()
+        assertEquals("Ziegelgasse 2", address.street)
+        assertEquals("85053", address.postalCode)
+        assertEquals("Ingolstadt", address.city)
+        assertEquals(0, address.position)
+        assertEquals("Ingolstadt", repo.business(id)!!.city)
+    }
 }

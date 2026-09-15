@@ -62,7 +62,7 @@ class Repository(context: Context) {
             val now = Clock.now()
             for (s in imported) {
                 val values = importedValues(s)
-                if (known.contains(s.placeId)) {
+                val businessChanged = if (known.contains(s.placeId)) {
                     // Imported master data only. status, note and
                     // updated_at are deliberately absent from [importedValues].
                     val same = db.rawQuery(
@@ -72,12 +72,12 @@ class Repository(context: Context) {
                         values.put("updated_at", now)
                         values.put("dirty", 1)
                         db.update("businesses", values, "place_id = ?", arrayOf(s.placeId))
-                        updated++
                     }
                     // Identical master data: nothing to write. A row that was
                     // already synced must not be marked and sent up again for
                     // no reason — and a stale `updated_at` here would make the
                     // server's own, real change look older than it is.
+                    !same
                 } else {
                     values.put("place_id", s.placeId)
                     values.put("status", Status.NEW.key)
@@ -85,6 +85,15 @@ class Repository(context: Context) {
                     values.put("dirty", 1)
                     db.insert("businesses", null, values)
                     new++
+                    false
+                }
+                val addressChanged = importAddress(db, s, now)
+                if (known.contains(s.placeId) && (businessChanged || addressChanged)) updated++
+                // search_text reads the name and the cities: only a business that
+                // is new, renamed, or whose main address was written needs it.
+                // An unchanged re-import of thousands of rows runs no query for it.
+                if (!known.contains(s.placeId) || businessChanged || addressChanged) {
+                    AddressRows.refreshSearchText(db, s.placeId)
                 }
             }
             db.setTransactionSuccessful()
@@ -103,20 +112,16 @@ class Repository(context: Context) {
         )
     }
 
-    /** Name and city in one lower-cased column — for searching with umlauts. */
-    private fun searchText(name: String, city: String?): String =
-        (name + " " + (city ?: "")).lowercase()
-
+    /**
+     * The business's imported master data. The address goes into
+     * `business_addresses` ([importAddress]); the business's own address columns
+     * are no longer written, and `search_text` follows the addresses
+     * (AddressRows.refreshSearchText).
+     */
     private fun importedValues(s: ImportedBusiness): ContentValues = ContentValues().apply {
         put("name", s.name)
-        put("search_text", searchText(s.name, s.city))
         put("industry", s.industry)
         put("categories", toJson(s.categories))
-        put("street", s.street)
-        put("postal_code", s.postalCode)
-        put("city", s.city)
-        put("latitude", s.latitude)
-        put("longitude", s.longitude)
         put("phone", s.phone)
         put("website", s.website)
         put("email", s.email)
@@ -155,13 +160,60 @@ class Repository(context: Context) {
         return true
     }
 
+    /**
+     * Writes the imported address into the business's main address
+     * `main-<place_id>`. Returns whether anything was written.
+     *
+     * - An address with every field empty writes nothing.
+     * - The row is there: street, postal code, city and coordinates are compared
+     *   and, where they differ, written, stamped and marked. Label and position
+     *   stay — a label typed by hand, or another row made the main address,
+     *   survive a re-import.
+     * - The row is not there: removed by hand (AddressRows.mainRemoved), it stays
+     *   removed; otherwise it is created after the last existing address.
+     *
+     * The business's other addresses are never touched.
+     */
+    private fun importAddress(db: android.database.sqlite.SQLiteDatabase, s: ImportedBusiness, now: String): Boolean {
+        if (s.street == null && s.postalCode == null && s.city == null) return false
+        val id = Addresses.mainId(s.placeId)
+        val stored = db.rawQuery("SELECT * FROM business_addresses WHERE id = ?", arrayOf(id))
+            .use { c -> if (c.moveToFirst()) addressFromCursor(c) else null }
+        val values = ContentValues().apply {
+            put("street", s.street)
+            put("postal_code", s.postalCode)
+            put("city", s.city)
+            put("latitude", s.latitude)
+            put("longitude", s.longitude)
+            put("updated_at", now)
+            put("dirty", 1)
+        }
+        if (stored != null) {
+            val same = stored.street == s.street && stored.postalCode == s.postalCode && stored.city == s.city &&
+                stored.latitude == s.latitude && stored.longitude == s.longitude
+            if (same) return false
+            db.update("business_addresses", values, "id = ?", arrayOf(id))
+            return true
+        }
+        if (AddressRows.mainRemoved(db, s.placeId)) return false
+        val next = db.rawQuery(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM business_addresses WHERE place_id = ?",
+            arrayOf(s.placeId),
+        ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+        values.put("id", id)
+        values.put("place_id", s.placeId)
+        values.put("position", next)
+        db.insert("business_addresses", null, values)
+        return true
+    }
+
     // ----------------------------------------------------------------- Reading
 
     /** The work list for a filter, ordered by industry, city, name. Blocked businesses excluded. */
     suspend fun list(filter: Filter): List<Business> = withContext(Dispatchers.IO) {
         val (where, args) = condition(filter)
-        val sql = "SELECT b.*, $NUMBERS_SUBQUERY FROM businesses b WHERE $where " +
-            "ORDER BY b.industry IS NULL, b.industry COLLATE NOCASE, b.city COLLATE NOCASE, b.name COLLATE NOCASE"
+        val sql = "SELECT b.*, $NUMBERS_SUBQUERY, $MAIN_CITY_SUBQUERY FROM businesses b WHERE $where " +
+            "ORDER BY b.industry IS NULL, b.industry COLLATE NOCASE, main_city COLLATE NOCASE, b.name COLLATE NOCASE"
         helper.readableDatabase.rawQuery(sql, args).use { c -> allBusinesses(c) }
     }
 
@@ -196,7 +248,7 @@ class Repository(context: Context) {
     /** A single business, blocked or not — the detail view has to be able to show it. */
     suspend fun business(placeId: String): Business? = withContext(Dispatchers.IO) {
         helper.readableDatabase
-            .rawQuery("SELECT * FROM businesses WHERE place_id = ?", arrayOf(placeId))
+            .rawQuery("SELECT b.*, $MAIN_CITY_SUBQUERY FROM businesses b WHERE b.place_id = ?", arrayOf(placeId))
             .use { c -> if (c.moveToFirst()) fromCursor(c) else null }
     }
 
@@ -212,11 +264,11 @@ class Repository(context: Context) {
         }
     }
 
-    /** Every city that occurs, for the filter. Blocked businesses excluded. */
+    /** Every city of any address, for the filter and the suggestions. Blocked businesses excluded. */
     suspend fun cities(): List<String> = withContext(Dispatchers.IO) {
-        val sql = "SELECT DISTINCT city FROM businesses " +
-            "WHERE status <> ? AND city IS NOT NULL AND city <> '' " +
-            "ORDER BY city COLLATE NOCASE"
+        val sql = "SELECT DISTINCT a.city FROM business_addresses a JOIN businesses b ON b.place_id = a.place_id " +
+            "WHERE b.status <> ? AND a.city IS NOT NULL AND a.city <> '' " +
+            "ORDER BY a.city COLLATE NOCASE"
         helper.readableDatabase.rawQuery(sql, arrayOf(Status.DO_NOT_CALL.key)).use { c ->
             val list = ArrayList<String>()
             while (c.moveToNext()) list.add(c.getString(0))
@@ -256,7 +308,7 @@ class Repository(context: Context) {
         return appointments.mapNotNull { appointment ->
             val business = businesses.getOrPut(appointment.placeId) {
                 db.rawQuery(
-                    "SELECT b.*, $NUMBERS_SUBQUERY FROM businesses b WHERE b.place_id = ?",
+                    "SELECT b.*, $NUMBERS_SUBQUERY, $MAIN_CITY_SUBQUERY FROM businesses b WHERE b.place_id = ?",
                     arrayOf(appointment.placeId),
                 ).use { c -> if (c.moveToFirst()) fromCursor(c) else null }
             }
@@ -266,7 +318,7 @@ class Repository(context: Context) {
 
     /** The blocked businesses — only so a mistaken block can be taken back. */
     suspend fun blockedBusinesses(): List<Business> = withContext(Dispatchers.IO) {
-        val sql = "SELECT * FROM businesses WHERE status = ? ORDER BY name COLLATE NOCASE"
+        val sql = "SELECT b.*, $MAIN_CITY_SUBQUERY FROM businesses b WHERE b.status = ? ORDER BY b.name COLLATE NOCASE"
         helper.readableDatabase.rawQuery(sql, arrayOf(Status.DO_NOT_CALL.key)).use { c ->
             allBusinesses(c)
         }
@@ -345,6 +397,8 @@ class Repository(context: Context) {
         }
 
         val industry = new.industry.trim().ifEmpty { null }
+        val street = new.street.trim().ifEmpty { null }
+        val postalCode = new.postalCode.trim().ifEmpty { null }
         val city = new.city.trim().ifEmpty { null }
         val now = Clock.now()
         val placeId = MANUAL_PREFIX + java.util.UUID.randomUUID()
@@ -359,12 +413,9 @@ class Repository(context: Context) {
         val values = ContentValues().apply {
             put("place_id", placeId)
             put("name", name)
-            put("search_text", searchText(name, city))
+            put("search_text", Addresses.searchText(name, listOf(city)))
             put("industry", industry)
             put("categories", JSONArray(emptyList<String>()).toString())
-            put("street", new.street.trim().ifEmpty { null })
-            put("postal_code", new.postalCode.trim().ifEmpty { null })
-            put("city", city)
             put("phone", phone)
             put("website", new.website.trim().ifEmpty { null })
             put("email", new.email.trim().ifEmpty { null })
@@ -379,7 +430,29 @@ class Repository(context: Context) {
             put("dirty", 1)
         }
 
-        helper.writableDatabase.insert("businesses", null, values)
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            db.insert("businesses", null, values)
+            if (street != null || postalCode != null || city != null) {
+                db.insert(
+                    "business_addresses", null,
+                    ContentValues().apply {
+                        put("id", java.util.UUID.randomUUID().toString())
+                        put("place_id", placeId)
+                        put("street", street)
+                        put("postal_code", postalCode)
+                        put("city", city)
+                        put("position", 0)
+                        put("updated_at", now)
+                        put("dirty", 1)
+                    },
+                )
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
         notifyChanged()
         Result.success(placeId)
     }
@@ -446,7 +519,7 @@ class Repository(context: Context) {
      * blocked ones out with it.
      */
     suspend fun businessesForPhoneBook(): List<Business> = withContext(Dispatchers.IO) {
-        val sql = "SELECT b.* FROM businesses b " +
+        val sql = "SELECT b.*, $MAIN_CITY_SUBQUERY FROM businesses b " +
             "WHERE b.status <> ? AND b.phone IS NOT NULL AND b.phone <> '' " +
             "ORDER BY b.name COLLATE NOCASE"
         helper.readableDatabase.rawQuery(sql, arrayOf(Status.DO_NOT_CALL.key)).use { c ->
@@ -696,6 +769,20 @@ class Repository(context: Context) {
         notifyChanged()
     }
 
+    // ------------------------------------------------------------- Addresses
+
+    /** A business's addresses, main address first. */
+    suspend fun addresses(placeId: String): List<BusinessAddress> = withContext(Dispatchers.IO) {
+        helper.readableDatabase.rawQuery(
+            "SELECT * FROM business_addresses WHERE place_id = ? ORDER BY position IS NULL, position, id",
+            arrayOf(placeId),
+        ).use { c ->
+            val list = ArrayList<BusinessAddress>(c.count)
+            while (c.moveToNext()) list.add(addressFromCursor(c))
+            list
+        }
+    }
+
     // ------------------------------------------------------------ Appointments
 
     /** A business's appointments, earliest first. */
@@ -934,7 +1021,11 @@ class Repository(context: Context) {
         }
 
         if (filter.cities.isNotEmpty()) {
-            parts.add("${b}city IN (${placeholder(filter.cities.size)})")
+            // Any of the business's addresses, the way the search reads every city.
+            parts.add(
+                "EXISTS (SELECT 1 FROM business_addresses ba WHERE ba.place_id = ${b}place_id " +
+                    "AND ba.city IN (${placeholder(filter.cities.size)}))"
+            )
             args.addAll(filter.cities)
         }
 
@@ -967,7 +1058,8 @@ class Repository(context: Context) {
         categories = fromJson(c.text("categories")),
         street = c.text("street"),
         postalCode = c.text("postal_code"),
-        city = c.text("city"),
+        // The main address's city, see MAIN_CITY_SUBQUERY.
+        city = c.text("main_city"),
         phone = c.text("phone"),
         website = c.text("website"),
         email = c.text("email"),
@@ -984,6 +1076,18 @@ class Repository(context: Context) {
         latitude = c.decimal("latitude"),
         longitude = c.decimal("longitude"),
         additionalNumbers = c.int("additional_numbers") ?: 0,
+    )
+
+    private fun addressFromCursor(c: Cursor): BusinessAddress = BusinessAddress(
+        id = c.text("id") ?: "",
+        placeId = c.text("place_id") ?: "",
+        label = c.text("label"),
+        street = c.text("street"),
+        postalCode = c.text("postal_code"),
+        city = c.text("city"),
+        latitude = c.decimal("latitude"),
+        longitude = c.decimal("longitude"),
+        position = c.int("position"),
     )
 
     private fun allAppointments(c: Cursor): List<AppointmentEntry> {
@@ -1059,5 +1163,13 @@ class Repository(context: Context) {
             "(SELECT COUNT(*) FROM contact_numbers n " +
                 "JOIN contacts a ON a.id = n.contact_id " +
                 "WHERE a.place_id = b.place_id AND n.kind <> 'fax') AS additional_numbers"
+
+        /**
+         * The city of the business's main address — what the list shows and
+         * sorts by. The business's own `city` column is no longer written.
+         */
+        const val MAIN_CITY_SUBQUERY =
+            "(SELECT ba.city FROM business_addresses ba WHERE ba.place_id = b.place_id " +
+                "ORDER BY ba.position IS NULL, ba.position, ba.id LIMIT 1) AS main_city"
     }
 }

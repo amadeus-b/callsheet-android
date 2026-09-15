@@ -4,6 +4,7 @@ import androidx.test.core.app.ApplicationProvider
 import io.github.amadeusb.callsheet.calling.CallFlow
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
+import io.github.amadeusb.callsheet.data.BusinessAddress
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.ContactDraft
 import io.github.amadeusb.callsheet.data.Database
@@ -928,6 +929,130 @@ class RepositoryTest {
         repo.setStatus("t-7", Status.DO_NOT_CALL)
 
         assertTrue(repo.agenda(Clock.millis("2026-09-10T00:00:00+02:00")!!).isEmpty())
+    }
+
+    // --------------------------------------------------------------- Addresses
+
+    @Test
+    fun `the import writes the address as the main address of a new business`() = runTest {
+        import(FIRST_IMPORT)
+
+        val address = repo.addresses("P1").single()
+        assertEquals("main-P1", address.id)
+        assertNull(address.label)
+        assertEquals("Musterweg 1", address.street)
+        assertEquals("85049", address.postalCode)
+        assertEquals("Ingolstadt", address.city)
+        assertEquals(0, address.position)
+        assertEquals(1, count("SELECT dirty FROM business_addresses WHERE id = 'main-P1'"))
+        // The business's own columns are no longer written.
+        assertEquals(0, count("SELECT COUNT(*) FROM businesses WHERE street IS NOT NULL OR city IS NOT NULL"))
+    }
+
+    @Test
+    fun `a re-import updates the main address when it changed, keeping label and position`() = runTest {
+        import(FIRST_IMPORT)
+        execute("UPDATE business_addresses SET label = 'Hauptsitz', position = 3, dirty = 0 WHERE id = 'main-P1'")
+
+        import(SECOND_IMPORT)
+
+        val address = repo.addresses("P1").single()
+        assertEquals("Musterweg 1a", address.street)
+        assertEquals("Hauptsitz", address.label)
+        assertEquals(3, address.position)
+        assertEquals(1, count("SELECT dirty FROM business_addresses WHERE id = 'main-P1'"))
+    }
+
+    @Test
+    fun `a re-import of the same addresses writes nothing`() = runTest {
+        import(FIRST_IMPORT)
+        execute("UPDATE business_addresses SET dirty = 0")
+
+        val e = import(FIRST_IMPORT)
+
+        assertEquals(0, e.updated)
+        assertEquals(0, count("SELECT COUNT(*) FROM business_addresses WHERE dirty = 1"))
+    }
+
+    @Test
+    fun `an address changed by the import alone counts as an update`() = runTest {
+        import("""[{"placeId":"t-1","title":"Adresse Erfunden","phone":"+49 841 111","city":"Ingolstadt"}]""")
+
+        val e = import("""[{"placeId":"t-1","title":"Adresse Erfunden","phone":"+49 841 111","city":"Eichstätt"}]""")
+
+        assertEquals(1, e.updated)
+        assertEquals("Eichstätt", repo.addresses("t-1").single().city)
+    }
+
+    @Test
+    fun `a re-import leaves the other addresses of the business alone`() = runTest {
+        import(FIRST_IMPORT)
+        execute(
+            "INSERT INTO business_addresses (id, place_id, label, city, position, updated_at, dirty) " +
+                "VALUES ('A2', 'P1', 'Lager', 'Eichstaett', 1, '2026-09-01T10:00:00+02:00', 0)"
+        )
+
+        import(SECOND_IMPORT)
+
+        val branch = repo.addresses("P1").single { it.id == "A2" }
+        assertEquals("Lager", branch.label)
+        assertEquals("Eichstaett", branch.city)
+        assertEquals(0, count("SELECT dirty FROM business_addresses WHERE id = 'A2'"))
+    }
+
+    @Test
+    fun `a missing main address is created after the existing ones`() = runTest {
+        import(FIRST_IMPORT)
+        execute("DELETE FROM business_addresses WHERE id = 'main-P1'")
+        execute(
+            "INSERT INTO business_addresses (id, place_id, city, position, updated_at, dirty) " +
+                "VALUES ('A2', 'P1', 'Eichstaett', 0, '2026-09-01T10:00:00+02:00', 0)"
+        )
+
+        import(SECOND_IMPORT)
+
+        val addresses = repo.addresses("P1")
+        assertEquals(listOf("A2", "main-P1"), addresses.map { it.id })
+        assertEquals(1, addresses.last().position)
+    }
+
+    @Test
+    fun `an imported business without an address gets no address row`() = runTest {
+        import("""[{"placeId":"t-9","title":"Ohne Adresse","phone":"+49 841 111"}]""")
+
+        assertTrue(repo.addresses("t-9").isEmpty())
+    }
+
+    @Test
+    fun `the import's search text holds the cities of every address`() = runTest {
+        import(FIRST_IMPORT)
+        execute(
+            "INSERT INTO business_addresses (id, place_id, city, position, updated_at, dirty) " +
+                "VALUES ('A2', 'P1', 'Königsmoos', 1, '2026-09-01T10:00:00+02:00', 0)"
+        )
+
+        import(SECOND_IMPORT)
+
+        assertEquals(
+            setOf("P1", "P9"),
+            repo.list(Filter(status = emptySet(), onlyTargets = false, search = "königsmoos")).map { it.placeId }.toSet(),
+        )
+    }
+
+    @Test
+    fun `the city filter matches any address, the list shows the main address's city`() = runTest {
+        import(FIRST_IMPORT)
+        execute(
+            "INSERT INTO business_addresses (id, place_id, city, position, updated_at, dirty) " +
+                "VALUES ('A2', 'P2', 'Ingolstadt', 1, '2026-09-01T10:00:00+02:00', 0)"
+        )
+
+        val inIngolstadt = repo.list(Filter(cities = setOf("Ingolstadt"), status = emptySet(), onlyTargets = false))
+
+        assertEquals(setOf("P1", "P2", "P4"), inIngolstadt.map { it.placeId }.toSet())
+        assertEquals("Eichstaett", inIngolstadt.single { it.placeId == "P2" }.city)
+        assertEquals("Eichstaett", repo.business("P2")!!.city)
+        assertTrue(repo.cities().containsAll(listOf("Eichstaett", "Ingolstadt")))
     }
 
     private companion object {
