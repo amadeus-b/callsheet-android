@@ -1398,6 +1398,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             Reconcile.NotYetHere -> Unit
+            // Nothing deleted, nothing stored: reconcileAppointments reports it.
+            Reconcile.MissingInvited -> Unit
             Reconcile.DeletedInCalendar -> repo.deleteAppointment(entry.id)
             Reconcile.Unlink -> repo.setCalendarLink(entry.id, null, null, null, null)
         }

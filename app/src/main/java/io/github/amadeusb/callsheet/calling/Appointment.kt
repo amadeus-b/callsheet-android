@@ -64,8 +64,12 @@ sealed interface SavePlan {
 /**
  * An appointment's time and place as the read-back compares them — for the
  * row, for the event, and for what this device last saw in the event.
+ *
+ * [title] only for a visit: it can be changed in the web calendar. A
+ * callback's title is the app's own, built from its note and tick, and is left
+ * out — null on either side is no difference.
  */
-data class Slot(val startMillis: Long, val endMillis: Long?, val location: String?)
+data class Slot(val startMillis: Long, val endMillis: Long?, val location: String?, val title: String? = null)
 
 /** An event found in this device's calendar, and its `_ID` here. */
 data class Located<E>(val eventId: Long, val event: E)
@@ -90,11 +94,23 @@ sealed interface Reconcile {
     /** Changed on another device: the event is updated from the row. */
     data object UpdateEvent : Reconcile
 
-    /** Not found, and never seen on this device: it may not have arrived yet. */
+    /**
+     * Not found, and never seen on this device: it may not have arrived yet.
+     * For a visit also: seen here for the first time and different from the
+     * row — nothing is taken and nothing remembered.
+     */
     data object NotYetHere : Reconcile
 
     /** Seen before, gone now, appointment still ahead: deleted in the calendar. */
     data object DeletedInCalendar : Reconcile
+
+    /**
+     * A visit with an invitation: seen before, gone now, still ahead. Not
+     * deleted — a calendar deselected in DAVx5 or an account set up again
+     * looks the same, and a deletion would send the customer a cancellation.
+     * Nothing is stored; the detail view offers the removal.
+     */
+    data object MissingInvited : Reconcile
 
     /**
      * Seen before, gone now, appointment already past. Calendars clear out old
@@ -467,16 +483,16 @@ object Appointment {
             done.sortedByDescending { Clock.millis(it.doneAt) ?: 0L }
     }
 
-    /** The row's slot. Null when its start cannot be read. */
-    fun rowSlot(entry: AppointmentEntry): Slot? {
+    /** The row's slot, with the [title] its event should carry — a visit's only. Null when its start cannot be read. */
+    fun rowSlot(entry: AppointmentEntry, title: String? = null): Slot? {
         val start = Clock.millis(entry.startsAt) ?: return null
-        return Slot(start, Clock.millis(entry.endsAt), entry.location)
+        return Slot(start, Clock.millis(entry.endsAt), entry.location, title)
     }
 
     /** What this device last saw in the event. Null while it never saw it. */
     fun seenSlot(entry: AppointmentEntry): Slot? {
         val start = Clock.millis(entry.seenStartsAt) ?: return null
-        return Slot(start, Clock.millis(entry.seenEndsAt), entry.seenLocation)
+        return Slot(start, Clock.millis(entry.seenEndsAt), entry.seenLocation, entry.seenTitle)
     }
 
     /**
@@ -495,15 +511,34 @@ object Appointment {
      * calendar gives no modification time to compare. On first sight the
      * calendar wins — the user's decision: what a device has never seen, it
      * takes as it stands in the calendar.
+     *
+     * A [visit] differs in two places. On first sight it takes nothing
+     * (NotYetHere) — only an event equal to the row is recorded. And gone while
+     * still ahead with an invitation ([invited]) it is MissingInvited, not
+     * deleted. UpdateEvent for a visit means only that the row is ahead; the
+     * server writes the event, not this device.
      */
-    fun reconcile(row: Slot, seen: Slot?, event: Slot?, nowMillis: Long): Reconcile {
+    fun reconcile(
+        row: Slot,
+        seen: Slot?,
+        event: Slot?,
+        nowMillis: Long,
+        visit: Boolean = false,
+        invited: Boolean = false,
+    ): Reconcile {
         if (event == null) {
             if (seen == null) return Reconcile.NotYetHere
             val last = row.endMillis ?: row.startMillis
-            return if (last > nowMillis) Reconcile.DeletedInCalendar else Reconcile.Unlink
+            return when {
+                last <= nowMillis -> Reconcile.Unlink
+                visit && invited -> Reconcile.MissingInvited
+                else -> Reconcile.DeletedInCalendar
+            }
         }
         if (sameSlot(event, row)) return Reconcile.InStep
-        if (seen == null) return Reconcile.TakeEvent(event)
+        // A visit's first sight takes nothing: this device's calendar may be
+        // behind a change made elsewhere, and the server would send it on.
+        if (seen == null) return if (visit) Reconcile.NotYetHere else Reconcile.TakeEvent(event)
         val onlyTheCalendarMoved = !sameSlot(event, seen) && sameSlot(row, seen)
         return if (onlyTheCalendarMoved) Reconcile.TakeEvent(event) else Reconcile.UpdateEvent
     }
@@ -516,16 +551,21 @@ object Appointment {
      */
     fun seenIsCurrent(entry: AppointmentEntry, eventId: Long, event: Slot): Boolean {
         val seen = seenSlot(entry) ?: return false
+        // A visit linked before its title was recorded: record it now, or a
+        // title changed in the calendar later would look like the first one.
+        if (event.title != null && seen.title == null) return false
         return entry.calendarEventId == eventId && sameSlot(seen, event)
     }
 
     /**
-     * Within a minute, locations after trimming. A missing end on either side is
-     * no difference: an event always has one, a row may not.
+     * Within a minute, locations and titles after trimming. A missing end on
+     * either side is no difference: an event always has one, a row may not. A
+     * missing title neither — see [Slot].
      */
     private fun sameSlot(a: Slot, b: Slot): Boolean {
         val sameEnd = a.endMillis == null || b.endMillis == null || near(a.endMillis, b.endMillis)
-        return near(a.startMillis, b.startMillis) && sameEnd &&
+        val sameTitle = a.title == null || b.title == null || a.title.trim() == b.title.trim()
+        return near(a.startMillis, b.startMillis) && sameEnd && sameTitle &&
             a.location?.trim().orEmpty() == b.location?.trim().orEmpty()
     }
 

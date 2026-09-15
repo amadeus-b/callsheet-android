@@ -529,6 +529,73 @@ class AppointmentTest {
     }
 
     @Test
+    fun `a visit takes nothing from an event it sees for the first time`() {
+        // This device's DAVx5 may still hold the state from before a change made
+        // elsewhere; taken, it would send the invitee the old time.
+        assertEquals(
+            Reconcile.NotYetHere,
+            Appointment.reconcile(row = later, seen = null, event = planned, nowMillis = dayBefore, visit = true),
+        )
+        assertEquals(
+            Reconcile.NotYetHere,
+            Appointment.reconcile(
+                row = planned.copy(title = "Neu"), seen = null, event = planned.copy(title = "Alt"), nowMillis = dayBefore, visit = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a visit remembers an event it sees for the first time only when it matches`() {
+        assertEquals(
+            Reconcile.InStep,
+            Appointment.reconcile(row = planned, seen = null, event = planned, nowMillis = dayBefore, visit = true),
+        )
+    }
+
+    @Test
+    fun `a visit seen before takes a change made in the calendar`() {
+        assertEquals(
+            Reconcile.TakeEvent(later),
+            Appointment.reconcile(row = planned, seen = planned, event = later, nowMillis = dayBefore, visit = true),
+        )
+    }
+
+    @Test
+    fun `an invited visit gone from the calendar is reported, never deleted`() {
+        // A deselected calendar or a new DAVx5 account looks the same, and a
+        // deletion would send the customer a cancellation.
+        assertEquals(
+            Reconcile.MissingInvited,
+            Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayBefore, visit = true, invited = true),
+        )
+        assertEquals(
+            Reconcile.Unlink,
+            Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayAfter, visit = true, invited = true),
+        )
+        assertEquals(
+            Reconcile.NotYetHere,
+            Appointment.reconcile(row = planned, seen = null, event = null, nowMillis = dayBefore, visit = true, invited = true),
+        )
+    }
+
+    @Test
+    fun `a visit without an invitation gone from the calendar is deleted as before`() {
+        assertEquals(
+            Reconcile.DeletedInCalendar,
+            Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayBefore, visit = true, invited = false),
+        )
+    }
+
+    @Test
+    fun `the visit rules leave a callback alone`() {
+        assertEquals(Reconcile.TakeEvent(planned), Appointment.reconcile(row = later, seen = null, event = planned, nowMillis = dayBefore))
+        assertEquals(
+            Reconcile.DeletedInCalendar,
+            Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayBefore, invited = true),
+        )
+    }
+
+    @Test
     fun `the row slot and the seen slot are read from the entry`() {
         val linked = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00")
             .copy(location = "Zehentstraße 39", seenStartsAt = "2026-09-10T16:00:00+02:00", seenEndsAt = "2026-09-10T17:00:00+02:00", seenLocation = "Zehentstraße 39")
@@ -553,6 +620,48 @@ class AppointmentTest {
         assertFalse(Appointment.seenIsCurrent(recorded, 815L, planned))
         assertFalse(Appointment.seenIsCurrent(recorded, 4711L, later))
         assertFalse(Appointment.seenIsCurrent(recorded.copy(seenStartsAt = null), 4711L, planned))
+    }
+
+    @Test
+    fun `a title changed in the calendar is taken like a moved time`() {
+        val row = planned.copy(title = "Erstgespräch KI bei Elektro Meier – Christoph Bauer")
+        val event = planned.copy(title = "Erstgespräch – bitte Unterlagen mitbringen")
+
+        assertEquals(Reconcile.TakeEvent(event), Appointment.reconcile(row = row, seen = row, event = event, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `a title changed in the app is the row's, as a moved time is`() {
+        val seen = planned.copy(title = "Erstgespräch")
+        val row = planned.copy(title = "Angebot besprechen")
+
+        assertEquals(Reconcile.UpdateEvent, Appointment.reconcile(row = row, seen = seen, event = seen, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `a title on one side only is no difference`() {
+        // A callback's row carries no title; its event's title is the app's own.
+        val event = planned.copy(title = "✓ Rückruf Elektro Meier")
+
+        assertEquals(Reconcile.InStep, Appointment.reconcile(row = planned, seen = planned, event = event, nowMillis = dayBefore))
+    }
+
+    @Test
+    fun `the seen title is read from the entry, and a record without it is not current`() {
+        val recorded = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00").copy(
+            location = "Zehentstraße 39",
+            calendarEventId = 4711L,
+            seenStartsAt = "2026-09-10T14:00:00+02:00",
+            seenEndsAt = "2026-09-10T15:00:00+02:00",
+            seenLocation = "Zehentstraße 39",
+        )
+        val titled = planned.copy(title = "Erstgespräch")
+
+        assertFalse(Appointment.seenIsCurrent(recorded, 4711L, titled))
+        assertTrue(Appointment.seenIsCurrent(recorded.copy(seenTitle = "Erstgespräch"), 4711L, titled))
+        assertTrue(Appointment.seenIsCurrent(recorded, 4711L, planned))
+        assertEquals(titled, Appointment.seenSlot(recorded.copy(seenTitle = "Erstgespräch")))
+        assertEquals(titled, Appointment.rowSlot(recorded, title = "Erstgespräch"))
     }
 
     // --- saving with a shared calendar ----------------------------------------
