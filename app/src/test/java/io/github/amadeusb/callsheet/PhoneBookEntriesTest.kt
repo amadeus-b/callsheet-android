@@ -40,7 +40,7 @@ class PhoneBookEntriesTest {
         email: String? = "info@example.org",
     ) = Business(
         placeId = placeId, name = "Muster Fliesen", industry = industry, categories = emptyList(),
-        street = null, postalCode = null, city = "Musterstadt",
+        city = "Musterstadt",
         phone = phone, website = website, email = email, contactName = contactName,
         rating = rating, ratingCount = ratingCount, closed = false, isTarget = true,
         origin = origin, collectedAt = null, status = Status.NEW, note = null,

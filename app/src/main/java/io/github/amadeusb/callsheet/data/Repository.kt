@@ -1147,8 +1147,6 @@ class Repository(context: Context) {
         name = c.text("name") ?: "",
         industry = c.text("industry"),
         categories = fromJson(c.text("categories")),
-        street = c.text("street"),
-        postalCode = c.text("postal_code"),
         // The main address's city, see MAIN_CITY_SUBQUERY.
         city = c.text("main_city"),
         phone = c.text("phone"),
@@ -1164,8 +1162,6 @@ class Repository(context: Context) {
         status = Status.fromKey(c.text("status")),
         note = c.text("note"),
         updatedAt = c.text("updated_at") ?: "",
-        latitude = c.decimal("latitude"),
-        longitude = c.decimal("longitude"),
         additionalNumbers = c.int("additional_numbers") ?: 0,
     )
 

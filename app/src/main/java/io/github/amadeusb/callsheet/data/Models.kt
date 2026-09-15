@@ -22,8 +22,7 @@ data class Business(
     val name: String,
     val industry: String?,
     val categories: List<String>,
-    val street: String?,
-    val postalCode: String?,
+    /** The city of the main address, for the lists. The addresses themselves: Repository.addresses. */
     val city: String?,
     val phone: String?,
     val website: String?,
@@ -38,9 +37,6 @@ data class Business(
     val status: Status,
     val note: String?,
     val updatedAt: String,
-    /** From the import. Nothing reads them yet. */
-    val latitude: Double? = null,
-    val longitude: Double? = null,
     /**
      * How many dialable numbers hang off the contacts (fax excluded). Only the
      * list queries fill this in; everywhere else it stays 0.
