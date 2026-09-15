@@ -20,6 +20,9 @@ import io.github.amadeusb.callsheet.calling.SavePlan
 import io.github.amadeusb.callsheet.calling.Slot
 import io.github.amadeusb.callsheet.calling.CallLogReader
 import io.github.amadeusb.callsheet.calling.FollowUp
+import io.github.amadeusb.callsheet.data.AddressDraft
+import io.github.amadeusb.callsheet.data.Addresses
+import io.github.amadeusb.callsheet.data.BusinessAddress
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.CallEntry
@@ -73,6 +76,9 @@ sealed interface Screen {
 
     /** The form for a contact; a null [id] means a new one. */
     data class ContactForm(val placeId: String, val id: String?) : Screen
+
+    /** The addresses of a business, for editing. */
+    data class AddressForm(val placeId: String) : Screen
 }
 
 /** The numbers of a business the user is currently choosing between. */
@@ -142,10 +148,14 @@ data class State(
     val detailCalls: List<CallEntry> = emptyList(),
     val detailContacts: List<Contact> = emptyList(),
     val detailAppointments: List<AppointmentEntry> = emptyList(),
+    /** The business's addresses, main address first. */
+    val detailAddresses: List<BusinessAddress> = emptyList(),
     /** When a dial attempt is up for choosing, the numbers hang here. */
     val numberPicker: NumberPicker? = null,
     val contactDraft: ContactDraft = ContactDraft(),
     val contactError: String? = null,
+    /** The address screen's rows while it is open. */
+    val addressDrafts: List<AddressDraft> = emptyList(),
     /** The log entry of the call just made, still missing its outcome. */
     val pendingCall: String? = null,
     val savesOutcome: Boolean = false,
@@ -476,6 +486,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             is Screen.Settings -> loadBlocked()
             is Screen.BusinessForm -> Unit
             is Screen.ContactForm -> Unit
+            is Screen.AddressForm -> Unit
         }
         return true
     }
@@ -501,6 +512,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             detailCalls = if (switching) emptyList() else _state.value.detailCalls,
             detailContacts = if (switching) emptyList() else _state.value.detailContacts,
             detailAppointments = if (switching) emptyList() else _state.value.detailAppointments,
+            detailAddresses = if (switching) emptyList() else _state.value.detailAddresses,
             statusSuggestion = if (switching) null else _state.value.statusSuggestion,
             followUpSuggestion = if (switching) null else _state.value.followUpSuggestion,
             hint = if (switching) null else _state.value.hint,
@@ -644,6 +656,38 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             // With the last person gone, the company entry comes back.
             repo.business(placeId)?.let { store.persistBusiness(it) }
             if (_state.value.screen is Screen.ContactForm) back()
+            loadDetail(placeId)
+        }
+    }
+
+    // --- Addresses ----------------------------------------------------------
+
+    /** Opens a business's addresses for editing; with none yet, one empty row. */
+    fun showAddresses(placeId: String) {
+        viewModelScope.launch {
+            val drafts = Addresses.drafts(repo.addresses(placeId)).ifEmpty { listOf(AddressDraft()) }
+            val screen = Screen.AddressForm(placeId)
+            val history = historyFor(screen)
+            _state.update { it.copy(screen = screen, history = history, addressDrafts = drafts) }
+        }
+    }
+
+    fun updateAddressDrafts(drafts: List<AddressDraft>) {
+        _state.update { it.copy(addressDrafts = drafts) }
+    }
+
+    /** Saves the addresses and returns to the record. */
+    fun saveAddresses(placeId: String) {
+        if (_state.value.saving) return
+        val drafts = _state.value.addressDrafts
+        viewModelScope.launch {
+            _state.update { it.copy(saving = true) }
+            repo.saveAddresses(placeId, drafts)
+            _state.update { it.copy(saving = false, allCities = repo.cities()) }
+            // Every entry of the business carries addresses, and a removed one
+            // may have taken a person's assignment with it.
+            repo.business(placeId)?.let { store.persistBusiness(it) }
+            back()
             loadDetail(placeId)
         }
     }
@@ -1571,6 +1615,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 detailCalls = repo.calls(placeId),
                 detailContacts = contacts,
                 detailAppointments = repo.appointments(placeId),
+                detailAddresses = repo.addresses(placeId),
             )
             // Whatever was changed in the phone book wins — afterwards the
             // record is level with the address book again.

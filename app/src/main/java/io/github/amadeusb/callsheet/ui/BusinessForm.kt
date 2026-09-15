@@ -288,7 +288,7 @@ fun BusinessFormScreen(
  * possible throughout. An empty list shows nothing.
  */
 @Composable
-private fun Suggestions(
+internal fun Suggestions(
     values: List<String>,
     onPick: (String) -> Unit,
 ) {

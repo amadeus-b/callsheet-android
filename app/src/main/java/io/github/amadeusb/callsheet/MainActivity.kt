@@ -33,6 +33,7 @@ import io.github.amadeusb.callsheet.calling.CallFlow
 import io.github.amadeusb.callsheet.data.Business
 import io.github.amadeusb.callsheet.data.DialTarget
 import io.github.amadeusb.callsheet.data.Clock
+import io.github.amadeusb.callsheet.ui.AddressScreen
 import io.github.amadeusb.callsheet.ui.AppointmentSheet
 import io.github.amadeusb.callsheet.ui.CallsheetTheme
 import io.github.amadeusb.callsheet.ui.ContactScreen
@@ -262,6 +263,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                     business = business,
                     calls = state.detailCalls,
                     contacts = state.detailContacts,
+                    addresses = state.detailAddresses,
                     appointments = state.detailAppointments,
                     noteFocus = state.noteFocus,
                     statusSuggestion = state.statusSuggestion,
@@ -279,6 +281,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                         vm.saveOutcome(business.placeId, status, note)
                     },
                     onContact = { id -> vm.showContact(business.placeId, id) },
+                    onEditAddresses = { vm.showAddresses(business.placeId) },
                     onCallback = { start -> vm.openCallback(business.placeId, start) },
                     onAppointment = { id -> vm.openAppointment(business.placeId, id) },
                     onRemoveAppointment = vm::removeAppointment,
@@ -334,6 +337,15 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             onDelete = {
                 screen.id?.let { vm.deleteContact(screen.placeId, it) }
             },
+            onCancel = { vm.back() },
+        )
+        is Screen.AddressForm -> AddressScreen(
+            businessName = state.detail?.name ?: "diesem Betrieb",
+            drafts = state.addressDrafts,
+            knownCities = state.allCities,
+            saving = state.saving,
+            onChange = vm::updateAddressDrafts,
+            onSave = { vm.saveAddresses(screen.placeId) },
             onCancel = { vm.back() },
         )
 

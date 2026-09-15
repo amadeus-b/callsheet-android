@@ -62,6 +62,8 @@ import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.FollowUp
 import io.github.amadeusb.callsheet.calling.LegitimateInterest
+import io.github.amadeusb.callsheet.data.Addresses
+import io.github.amadeusb.callsheet.data.BusinessAddress
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.CallEntry
@@ -82,6 +84,7 @@ fun BusinessDetailScreen(
     calls: List<CallEntry>,
     contacts: List<Contact>,
     appointments: List<AppointmentEntry>,
+    addresses: List<BusinessAddress>,
     noteFocus: Boolean,
     statusSuggestion: Status?,
     followUpSuggestion: String?,
@@ -96,6 +99,7 @@ fun BusinessDetailScreen(
     onDial: (DialTarget) -> Unit,
     onOutcome: (Status, String) -> Unit,
     onContact: (String?) -> Unit,
+    onEditAddresses: () -> Unit,
     /** Opens the sheet for a new callback at the given start. */
     onCallback: (String) -> Unit,
     onAppointment: (String?) -> Unit,
@@ -205,8 +209,10 @@ fun BusinessDetailScreen(
             item(key = "master-data") {
                 MasterData(
                     business = business,
+                    addresses = addresses,
                     onOpenUrl = onOpenUrl,
                     onDial = onDial,
+                    onEditAddresses = onEditAddresses,
                 )
             }
 
@@ -255,6 +261,7 @@ fun BusinessDetailScreen(
                 ContactCard(
                     contact = contact,
                     business = business,
+                    addresses = addresses,
                     onEdit = { onContact(contact.id) },
                     onDial = onDial,
                     onOpenUrl = onOpenUrl,
@@ -517,6 +524,8 @@ private fun HintCard(hint: String, onDismiss: () -> Unit) {
 @Composable
 private fun MasterData(
     business: Business,
+    addresses: List<BusinessAddress>,
+    onEditAddresses: () -> Unit,
     onOpenUrl: (String) -> Unit,
     onDial: (DialTarget) -> Unit,
 ) {
@@ -552,12 +561,20 @@ private fun MasterData(
             )
         }
 
-        // One formatting rule, not two: this is the same line that goes into the
-        // calendar event, so the two cannot drift apart.
-        Appointment.address(business.street, business.postalCode, business.city)?.let { address ->
-            DataRow("Anschrift", address) {
-                geoUri(business, address)?.let(onOpenUrl)
+        // Every address its own row, main address first. The line is the same
+        // one that goes into a calendar event, so the two cannot drift apart.
+        Addresses.ordered(addresses).forEach { address ->
+            address.oneLine?.let { line ->
+                DataRow(address.label?.trim()?.ifEmpty { null } ?: "Anschrift", line) {
+                    geoUri(business.name, address)?.let(onOpenUrl)
+                }
             }
+        }
+        TextButton(
+            onClick = onEditAddresses,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        ) {
+            Text(if (addresses.isEmpty()) "Adresse hinzufügen" else "Adressen bearbeiten")
         }
 
         business.website?.takeIf { it.isNotBlank() }?.let { site ->
@@ -659,25 +676,24 @@ private fun SaveBar(
 internal fun geoUri(address: String): String = "geo:0,0?q=" + Uri.encode(address)
 
 /**
- * The same, but for a business whose coordinates are known.
+ * The same, for one of a business's addresses.
  *
  * `geo:lat,lng?q=lat,lng(Name)` puts the map on the point itself and labels the
- * pin. The address form leaves the map application to geocode a string, which
- * lands on the street rather than the yard often enough to matter when the yard
- * is behind it.
+ * pin with [name]. The address form leaves the map application to geocode a
+ * string, which lands on the street rather than the yard often enough to
+ * matter when the yard is behind it.
  *
- * Falls back to the address when there are no coordinates — hand-entered
- * businesses have none, and neither has anything imported before the columns
- * existed.
+ * Falls back to the address when the row has no coordinates — hand-entered
+ * addresses have none, nor has one whose street was changed by hand.
  */
-internal fun geoUri(business: Business, address: String?): String? {
-    val lat = business.latitude
-    val lng = business.longitude
+internal fun geoUri(name: String, address: BusinessAddress): String? {
+    val lat = address.latitude
+    val lng = address.longitude
     if (lat != null && lng != null) {
-        val label = Uri.encode("$lat,$lng(${business.name})")
+        val label = Uri.encode("$lat,$lng($name)")
         return "geo:$lat,$lng?q=$label"
     }
-    return address?.takeIf { it.isNotBlank() }?.let { geoUri(it) }
+    return address.oneLine?.let { geoUri(it) }
 }
 
 /**
@@ -1020,8 +1036,9 @@ private fun PhoneRow(
 @Composable
 private fun ContactCard(
     contact: Contact,
-    /** The business this contact belongs to — a contact has no address of its own. */
+    /** The business this contact belongs to. */
     business: Business,
+    addresses: List<BusinessAddress>,
     onEdit: () -> Unit,
     onDial: (DialTarget) -> Unit,
     onOpenUrl: (String) -> Unit,
@@ -1080,14 +1097,14 @@ private fun ContactCard(
                 )
             }
 
-            // A contact has no address of its own — this is the business's, and
-            // the wording has to say so. "Route" alone would read as the
-            // person's own address, which the app does not hold and should not
-            // appear to.
-            val address = Appointment.address(business.street, business.postalCode, business.city)
-            geoUri(business, address)?.let { uri ->
+            // A contact has no address of its own — this is one of the
+            // business's: the one the person is assigned to, else the main
+            // address. The wording has to say so.
+            val place = Addresses.forContact(contact.addressId, addresses)
+            val line = place?.oneLine
+            place?.let { geoUri(business.name, it) }?.let { uri ->
                 Text(
-                    text = "Route zum Betrieb" + (address?.let { " · $it" } ?: ""),
+                    text = "Route zum Betrieb" + (line?.let { " · $it" } ?: ""),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 2,
