@@ -5,6 +5,7 @@ import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.BusinessAddress
+import io.github.amadeusb.callsheet.data.CalendarState
 import io.github.amadeusb.callsheet.data.Clock
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.Status
@@ -103,6 +104,13 @@ sealed interface Reconcile {
 }
 
 /**
+ * One line under a visit in the detail view: where it stands on its way into
+ * the calendar. [offersRemoval]: the detail view puts „Termin entfernen" under
+ * it — see Reconcile.MissingInvited.
+ */
+data class CalendarLine(val text: String, val error: Boolean = false, val offersRemoval: Boolean = false)
+
+/**
  * The arithmetic behind an appointment on site.
  *
  * Deliberately free of Android: what is worth testing here is milliseconds and
@@ -137,6 +145,77 @@ object Appointment {
     fun durations(kind: AppointmentKind): List<Int> = when (kind) {
         AppointmentKind.VISIT -> DURATIONS
         AppointmentKind.CALLBACK -> CALLBACK_DURATIONS
+    }
+
+    /**
+     * How long after saving a visit the app syncs once more. The server works
+     * its queue after the first sync's response; the second brings the UID and
+     * the calendar state down without another tap.
+     */
+    const val RESYNC_AFTER_SAVE_MILLIS: Long = 5_000L
+
+    /** Said under the address when it blocks saving. */
+    const val INVALID_INVITE: String = "Das ist keine gültige E-Mail-Adresse."
+
+    private val EMAIL = Regex("""[^@\s]+@[^@\s]+\.[^@\s]+""")
+
+    /**
+     * A visit's title when none was typed. The server builds the same text for
+     * a null `title` (`defaultTitle` in its `src/visitState.js`); the two must not
+     * differ by a character, or every visit would look changed. The name is
+     * trimmed; a business without one gets the title without „bei …".
+     */
+    fun defaultTitle(businessName: String): String {
+        val name = businessName.trim()
+        return if (name.isEmpty()) "Erstgespräch KI – Christoph Bauer" else "Erstgespräch KI bei $name – Christoph Bauer"
+    }
+
+    /** The title a visit's event carries. */
+    fun visitTitle(title: String?, businessName: String): String =
+        title?.trim()?.ifEmpty { null } ?: defaultTitle(businessName)
+
+    /**
+     * What the sheet's title field is stored as. Empty, or the preset left as it
+     * is, is null — the default, which follows the business's name.
+     */
+    fun titleToStore(typed: String, businessName: String): String? =
+        typed.trim().takeUnless { it.isEmpty() || it == defaultTitle(businessName) }
+
+    /** Why the address blocks saving, or null. Only with the invitation switched on. */
+    fun inviteError(invite: Boolean, email: String): String? =
+        if (!invite || EMAIL.matches(email.trim())) null else INVALID_INVITE
+
+    /** The address stored for the invitation; null means nobody is invited. */
+    fun inviteToStore(invite: Boolean, email: String): String? =
+        if (invite) email.trim().ifEmpty { null } else null
+
+    /** The address the invitation starts at: the contact person's first. */
+    fun inviteSuggestion(contact: Contact?): String = contact?.emails?.firstOrNull()?.email.orEmpty()
+
+    /**
+     * The invitation's address after the sheet reported [incoming], or null to
+     * leave [incoming]'s as it is. Called by the view model next to
+     * placeAfterContactChange.
+     *
+     * It follows to the new contact person's first address — empty where they
+     * have none, so the invitation never goes to the person picked before —
+     * only when all of this holds: a visit, the invitation on, the person
+     * changed, the address not changed in the same update, and the address
+     * still the preselected one, the previous person's first (empty for nobody
+     * or a person without an address). An address typed, or picked by chip
+     * other than the first, is a choice and stays. [emailsFor] gives a person's
+     * addresses in order; null means no person.
+     */
+    fun inviteAfterContactChange(
+        previous: AppointmentDraft,
+        incoming: AppointmentDraft,
+        emailsFor: (contactId: String?) -> List<String>,
+    ): String? {
+        if (incoming.kind != AppointmentKind.VISIT || !previous.invite || !incoming.invite) return null
+        if (incoming.contactId == previous.contactId || incoming.inviteEmail != previous.inviteEmail) return null
+        val preselected = emailsFor(previous.contactId).firstOrNull().orEmpty()
+        if (previous.inviteEmail.trim() != preselected) return null
+        return emailsFor(incoming.contactId).firstOrNull().orEmpty()
     }
 
     private val range: DateTimeFormatter =
@@ -215,6 +294,78 @@ object Appointment {
         if (ownEventId != null) return SavePlan.Update(ownEventId)
         return if (eventUid != null) SavePlan.LocalOnly else SavePlan.Create
     }
+
+    /**
+     * What saving a visit should do. The event is the server's: it is created,
+     * moved and removed through the Infomaniak API. So there is nothing to
+     * create, update or adopt here — an event made elsewhere has no id the
+     * server knows. A taken slot is still asked about.
+     */
+    fun planVisit(startMillis: Long, endMillis: Long, busy: List<BusyInterval>, force: Boolean): SavePlan {
+        if (!force) {
+            val clash = overlapping(startMillis, endMillis, busy)
+            if (clash.isNotEmpty()) return SavePlan.Conflict(clash)
+        }
+        return SavePlan.LocalOnly
+    }
+
+    /**
+     * Whether opening the business reads this appointment's event back.
+     *
+     * A callback: as soon as it has an event, by UID or this device's link.
+     *
+     * A visit: only once the server has put exactly this row into the calendar
+     * — a UID, the state `ok`, and nothing here waiting to go up. Before that
+     * the event is behind the row, or not there at all: a „deleted" or „moved"
+     * read from it would undo the edit, and the server would send the old time
+     * to the invitee. Once read, first sight still takes nothing — see
+     * [reconcile].
+     */
+    fun readsBack(entry: AppointmentEntry): Boolean = when (entry.kind) {
+        AppointmentKind.CALLBACK -> entry.eventUid != null || entry.calendarEventId != null
+        AppointmentKind.VISIT -> entry.eventUid != null && !entry.dirty && entry.calendarState == CalendarState.OK
+    }
+
+    /**
+     * A visit the server has not put into the calendar yet. Opening its
+     * business syncs for it, even with nothing to read back: the state and UID
+     * come down with the sync, and the line under the visit moves on.
+     */
+    fun awaitsServer(entry: AppointmentEntry): Boolean =
+        entry.kind == AppointmentKind.VISIT && entry.calendarState == CalendarState.PENDING
+
+    /**
+     * Where a visit stands on its way into the calendar. A row still waiting to
+     * go up counts as pending: saved offline, it is not in the calendar yet,
+     * whatever the server said last — but only with a sync server set up
+     * ([syncConfigured]); without one nothing would ever take it out of
+     * pending, and nothing is said. [missing]: the read-back did not find the
+     * event of this invited visit (Reconcile.MissingInvited) — said instead of
+     * the state, with the removal offered. Null for a callback, and for a visit
+     * without a state — saved before this version, or on a server without the
+     * feature.
+     */
+    fun calendarLine(entry: AppointmentEntry, syncConfigured: Boolean, missing: Boolean = false): CalendarLine? {
+        if (entry.kind != AppointmentKind.VISIT) return null
+        return when {
+            missing -> CalendarLine("Im Kalender nicht mehr gefunden", error = true, offersRemoval = true)
+            entry.dirty || entry.calendarState == CalendarState.PENDING -> if (!syncConfigured) null else CalendarLine(
+                if (entry.eventUid == null) "Wird im Kalender angelegt …" else "Wird im Kalender aktualisiert …"
+            )
+            entry.calendarState == CalendarState.OK -> CalendarLine(
+                listOfNotNull("Im Kalender", entry.inviteEmail?.let { "Eingeladen: $it" }).joinToString(" · ")
+            )
+            entry.calendarState == CalendarState.ERROR -> CalendarLine(
+                "Nicht im Kalender: ${entry.calendarError ?: "unbekannter Fehler"}",
+                error = true,
+            )
+            else -> null
+        }
+    }
+
+    /** What removing a visit sends: a cancellation to the invitee. Null without one. */
+    fun cancellationNotice(entry: AppointmentEntry): String? =
+        entry.inviteEmail?.takeIf { entry.kind == AppointmentKind.VISIT }?.let { "$it bekommt eine Absage." }
 
     /** Street, postal code and city on one line. Null when nothing is known. */
     fun address(street: String?, postalCode: String?, city: String?): String? =

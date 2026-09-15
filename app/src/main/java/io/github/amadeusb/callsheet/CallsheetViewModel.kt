@@ -137,6 +137,14 @@ data class AppointmentDraft(
      * already holds is shown as a conflict, but not offered for „Verknüpfen".
      */
     val adoptable: Set<Long> = emptySet(),
+    /** A visit's calendar title, preset to Appointment.visitTitle. Unused for a callback. */
+    val title: String = "",
+    /** „Einladung senden". Only for a visit. */
+    val invite: Boolean = false,
+    /** The invitee's address as typed or picked. */
+    val inviteEmail: String = "",
+    /** Why the address blocks saving; null while nothing is wrong. */
+    val inviteError: String? = null,
 )
 
 data class State(

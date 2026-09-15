@@ -2,6 +2,7 @@ package io.github.amadeusb.callsheet
 
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
+import io.github.amadeusb.callsheet.calling.CalendarLine
 import io.github.amadeusb.callsheet.calling.Located
 import io.github.amadeusb.callsheet.calling.Reconcile
 import io.github.amadeusb.callsheet.calling.SavePlan
@@ -9,8 +10,10 @@ import io.github.amadeusb.callsheet.calling.Slot
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.BusinessAddress
+import io.github.amadeusb.callsheet.data.CalendarState
 import io.github.amadeusb.callsheet.data.Clock
 import io.github.amadeusb.callsheet.data.Contact
+import io.github.amadeusb.callsheet.data.ContactEmail
 import io.github.amadeusb.callsheet.data.PhoneNumber
 import io.github.amadeusb.callsheet.data.PhoneType
 import io.github.amadeusb.callsheet.data.Status
@@ -829,5 +832,218 @@ class AppointmentTest {
 
         assertEquals(start, Appointment.eventEnd(start, 0L, null))
         assertEquals(start, Appointment.eventEnd(start, null, "irgendwas"))
+    }
+
+    // --- visits through the server ---------------------------------------------
+
+    // Not `person`: the business-addresses plan has `person(id, addressId)` in this class.
+    private fun personWithEmails(vararg addresses: String) = Contact(
+        id = "K-1", placeId = "P1", name = "Frau Meier", role = null, email = null, note = null,
+        numbers = emptyList(), updatedAt = "2026-09-07T10:00:00+02:00",
+        emails = addresses.mapIndexed { i, address -> ContactEmail("E-$i", address, i) },
+    )
+
+    @Test
+    fun `a visit's default title names the business`() {
+        assertEquals("Erstgespräch KI bei Elektro Meier – Christoph Bauer", Appointment.defaultTitle("Elektro Meier"))
+        assertEquals("Erstgespräch KI bei Elektro Meier – Christoph Bauer", Appointment.defaultTitle(" Elektro Meier "))
+        assertEquals("Erstgespräch KI bei Elektro Meier – Christoph Bauer", Appointment.visitTitle(null, "Elektro Meier"))
+        assertEquals("Angebot besprechen", Appointment.visitTitle("Angebot besprechen", "Elektro Meier"))
+    }
+
+    @Test
+    fun `a business without a name gets the default title without one`() {
+        assertEquals("Erstgespräch KI – Christoph Bauer", Appointment.defaultTitle(""))
+        assertEquals("Erstgespräch KI – Christoph Bauer", Appointment.defaultTitle("   "))
+        assertNull(Appointment.titleToStore("Erstgespräch KI – Christoph Bauer", " "))
+    }
+
+    @Test
+    fun `an empty title, or the preset left as it is, is saved as the default`() {
+        assertNull(Appointment.titleToStore("  ", "Elektro Meier"))
+        assertNull(Appointment.titleToStore("Erstgespräch KI bei Elektro Meier – Christoph Bauer", "Elektro Meier"))
+        assertNull(Appointment.titleToStore(" Erstgespräch KI bei Elektro Meier – Christoph Bauer ", "Elektro Meier"))
+        assertEquals("Angebot besprechen", Appointment.titleToStore(" Angebot besprechen ", "Elektro Meier"))
+    }
+
+    @Test
+    fun `an invitation needs an address that looks like one`() {
+        assertNull(Appointment.inviteError(invite = false, email = ""))
+        assertNull(Appointment.inviteError(invite = true, email = " info@elektro-meier.de "))
+        assertEquals(Appointment.INVALID_INVITE, Appointment.inviteError(invite = true, email = ""))
+        assertEquals(Appointment.INVALID_INVITE, Appointment.inviteError(invite = true, email = "info@elektro-meier"))
+        assertEquals(Appointment.INVALID_INVITE, Appointment.inviteError(invite = true, email = "info elektro@meier.de"))
+    }
+
+    @Test
+    fun `switched off, no address is stored`() {
+        assertNull(Appointment.inviteToStore(invite = false, email = "info@elektro-meier.de"))
+        assertEquals("info@elektro-meier.de", Appointment.inviteToStore(invite = true, email = " info@elektro-meier.de "))
+    }
+
+    @Test
+    fun `the invitation is preset to the contact person's first address`() {
+        assertEquals("a@meier.de", Appointment.inviteSuggestion(personWithEmails("a@meier.de", "b@meier.de")))
+        assertEquals("", Appointment.inviteSuggestion(personWithEmails()))
+        assertEquals("", Appointment.inviteSuggestion(null))
+    }
+
+    private val emails = mapOf(
+        "K-M" to listOf("a@meier.de", "b@meier.de"),
+        "K-H" to listOf("h@huber.de"),
+        "K-0" to emptyList(),
+    )
+    private val emailsFor = { contactId: String? -> emails[contactId].orEmpty() }
+    private val invited = AppointmentDraft(
+        placeId = "P1", startIso = "2026-09-10T14:00:00+02:00", minutes = 60, location = "",
+        contactId = "K-M", invite = true, inviteEmail = "a@meier.de",
+    )
+
+    @Test
+    fun `another contact person brings their first address where the previous one's was preselected`() {
+        assertEquals("h@huber.de", Appointment.inviteAfterContactChange(invited, invited.copy(contactId = "K-H"), emailsFor))
+        // Nobody before, nothing typed: the empty field was the preset.
+        val nobody = invited.copy(contactId = null, inviteEmail = "")
+        assertEquals("h@huber.de", Appointment.inviteAfterContactChange(nobody, nobody.copy(contactId = "K-H"), emailsFor))
+        // A person without an address empties it — the invitation must not go to the previous person.
+        assertEquals("", Appointment.inviteAfterContactChange(invited, invited.copy(contactId = "K-0"), emailsFor))
+        assertEquals("", Appointment.inviteAfterContactChange(invited, invited.copy(contactId = null), emailsFor))
+    }
+
+    @Test
+    fun `a typed or picked address stays when the contact person changes`() {
+        val typed = invited.copy(inviteEmail = "chef@meier.de")
+        assertNull(Appointment.inviteAfterContactChange(typed, typed.copy(contactId = "K-H"), emailsFor))
+        // The person's second address, picked by chip, is a choice too.
+        val second = invited.copy(inviteEmail = "b@meier.de")
+        assertNull(Appointment.inviteAfterContactChange(second, second.copy(contactId = "K-H"), emailsFor))
+    }
+
+    @Test
+    fun `the invitation's address follows nothing while it is off, the person stays, or it is a callback`() {
+        val off = invited.copy(invite = false)
+        assertNull(Appointment.inviteAfterContactChange(off, off.copy(contactId = "K-H"), emailsFor))
+        assertNull(Appointment.inviteAfterContactChange(invited, invited.copy(note = "Angebot"), emailsFor))
+        assertNull(Appointment.inviteAfterContactChange(invited, invited.copy(contactId = "K-H", inviteEmail = "x@y.de"), emailsFor))
+        val callback = invited.copy(kind = AppointmentKind.CALLBACK)
+        assertNull(Appointment.inviteAfterContactChange(callback, callback.copy(contactId = "K-H"), emailsFor))
+    }
+
+    @Test
+    fun `a visit is planned without a calendar write and offers nothing to link`() {
+        assertEquals(SavePlan.LocalOnly, Appointment.planVisit(slotStart, slotEnd, busy = emptyList(), force = false))
+    }
+
+    @Test
+    fun `a visit still asks about a taken slot, and force saves it anyway`() {
+        val taken = listOf(busy(14, 15, "Steuerbüro", eventId = 7L))
+
+        assertTrue(Appointment.planVisit(slotStart, slotEnd, taken, force = false) is SavePlan.Conflict)
+        assertEquals(SavePlan.LocalOnly, Appointment.planVisit(slotStart, slotEnd, taken, force = true))
+    }
+
+    @Test
+    fun `a visit is read back only once the server put it into the calendar and nothing here waits to go up`() {
+        // A pending or unsent visit is ahead of its event: taken from the calendar
+        // on first sight, the old event would undo the edit.
+        val visit = entry("A-1", "2026-09-10T14:00:00+02:00").copy(eventUid = "abc@infomaniak", calendarState = CalendarState.OK)
+
+        assertTrue(Appointment.readsBack(visit))
+        assertFalse(Appointment.readsBack(visit.copy(eventUid = null)))
+        assertFalse(Appointment.readsBack(visit.copy(eventUid = null, calendarEventId = 4711L)))
+        assertFalse(Appointment.readsBack(visit.copy(calendarState = CalendarState.PENDING)))
+        assertFalse(Appointment.readsBack(visit.copy(calendarState = null)))
+        assertFalse(Appointment.readsBack(visit.copy(dirty = true)))
+    }
+
+    @Test
+    fun `a callback is read back as before, by UID or by this device's link`() {
+        val callback = entry("R-1", "2026-09-10T14:00:00+02:00").copy(kind = AppointmentKind.CALLBACK)
+
+        assertFalse(Appointment.readsBack(callback))
+        assertTrue(Appointment.readsBack(callback.copy(eventUid = "R-1")))
+        assertTrue(Appointment.readsBack(callback.copy(calendarEventId = 4711L)))
+    }
+
+    @Test
+    fun `opening a business syncs for a visit the server has not put into the calendar yet`() {
+        val visit = entry("A-1", "2026-09-10T14:00:00+02:00")
+
+        assertTrue(Appointment.awaitsServer(visit.copy(calendarState = CalendarState.PENDING)))
+        assertFalse(Appointment.awaitsServer(visit))
+        assertFalse(Appointment.awaitsServer(visit.copy(calendarState = CalendarState.OK)))
+        assertFalse(Appointment.awaitsServer(visit.copy(kind = AppointmentKind.CALLBACK, calendarState = CalendarState.PENDING)))
+    }
+
+    @Test
+    fun `a visit says where it stands on its way into the calendar`() {
+        val visit = entry("A-1", "2026-09-10T14:00:00+02:00")
+
+        assertNull(Appointment.calendarLine(visit, syncConfigured = true))
+        assertEquals(CalendarLine("Wird im Kalender angelegt …"), Appointment.calendarLine(visit.copy(dirty = true), syncConfigured = true))
+        assertEquals(
+            CalendarLine("Wird im Kalender angelegt …"),
+            Appointment.calendarLine(visit.copy(calendarState = CalendarState.PENDING), syncConfigured = true),
+        )
+        assertEquals(
+            CalendarLine("Wird im Kalender aktualisiert …"),
+            Appointment.calendarLine(visit.copy(eventUid = "abc", calendarState = CalendarState.OK, dirty = true), syncConfigured = true),
+        )
+        assertEquals(
+            CalendarLine("Im Kalender"),
+            Appointment.calendarLine(visit.copy(eventUid = "abc", calendarState = CalendarState.OK), syncConfigured = true),
+        )
+        assertEquals(
+            CalendarLine("Im Kalender · Eingeladen: test@example.org"),
+            Appointment.calendarLine(
+                visit.copy(eventUid = "abc", calendarState = CalendarState.OK, inviteEmail = "test@example.org"), syncConfigured = true,
+            ),
+        )
+        assertEquals(
+            CalendarLine("Nicht im Kalender: Im Kalender gelöscht", error = true),
+            Appointment.calendarLine(
+                visit.copy(calendarState = CalendarState.ERROR, calendarError = "Im Kalender gelöscht"), syncConfigured = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `without a sync server a visit never says it is on its way`() {
+        // Nothing would ever take it out of pending.
+        val visit = entry("A-1", "2026-09-10T14:00:00+02:00")
+
+        assertNull(Appointment.calendarLine(visit.copy(dirty = true), syncConfigured = false))
+        assertNull(Appointment.calendarLine(visit.copy(calendarState = CalendarState.PENDING), syncConfigured = false))
+        assertEquals(
+            CalendarLine("Im Kalender"),
+            Appointment.calendarLine(visit.copy(eventUid = "abc", calendarState = CalendarState.OK), syncConfigured = false),
+        )
+    }
+
+    @Test
+    fun `an invited visit missing from the calendar offers its removal instead of a state`() {
+        val visit = entry("A-1", "2026-09-10T14:00:00+02:00")
+            .copy(eventUid = "abc", calendarState = CalendarState.OK, inviteEmail = "test@example.org")
+
+        assertEquals(
+            CalendarLine("Im Kalender nicht mehr gefunden", error = true, offersRemoval = true),
+            Appointment.calendarLine(visit, syncConfigured = true, missing = true),
+        )
+    }
+
+    @Test
+    fun `a callback has no calendar line of this kind`() {
+        val callback = entry("R-1", "2026-09-10T14:00:00+02:00").copy(kind = AppointmentKind.CALLBACK, dirty = true)
+
+        assertNull(Appointment.calendarLine(callback, syncConfigured = true))
+    }
+
+    @Test
+    fun `removing an invited visit says who gets a cancellation`() {
+        val visit = entry("A-1", "2026-09-10T14:00:00+02:00")
+
+        assertEquals("test@example.org bekommt eine Absage.", Appointment.cancellationNotice(visit.copy(inviteEmail = "test@example.org")))
+        assertNull(Appointment.cancellationNotice(visit))
+        assertNull(Appointment.cancellationNotice(visit.copy(kind = AppointmentKind.CALLBACK, inviteEmail = "test@example.org")))
     }
 }
