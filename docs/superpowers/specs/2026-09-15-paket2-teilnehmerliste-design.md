@@ -51,6 +51,9 @@ Hence, as discussed with the user:
   within seconds) are sent as one: the later answer decides for both.
 - Removing a visit notifies everybody on the list (a cancellation), as today;
   the removal dialog names them.
+- Moved in the web calendar and not yet taken over by the app, the visit's time
+  differs from what Infomaniak holds: a change to the list alone, saved without
+  mail, still notifies everybody.
 
 ## Data model
 
@@ -131,7 +134,10 @@ Server `012-attendees.sql`, app database version 9 → 10.
   attendees as a set: trimmed, ignoring case, order irrelevant
   (`sameAttendees`).
 - The create and update bodies list every attendee plus the organizer; with an
-  empty list, no attendees at all.
+  empty list, no attendees at all. An update keeps each attendee's answer
+  (`state`) from the event it has just read — the API replaces the whole event,
+  and a reset would erase acceptances; only a new address starts as
+  `NEEDS-ACTION`.
 
 ### When to notify
 
@@ -152,6 +158,11 @@ sends nothing when it already matches.
 - `CALENDAR_COLUMNS` in `receive.js`: `attendees` instead of `invite_email`.
   `attendees_notify` alone queues nothing.
 - `fillGaps`: `attendees_notify` only together with `attendees` (see above).
+- **Renaming a business** (package 1) changes the default title of its visits
+  without touching them. The server queues every visit of that business that has
+  no title of its own and already a calendar event, so the attendees get the new
+  title — and a later change to the list alone, saved without mail, does not find
+  a stale title and notify everybody.
 
 ## App
 
@@ -165,7 +176,8 @@ sends nothing when it already matches.
   ignoring case and whitespace.
 - `add(list, typed)` — a typed or picked address: trimmed; blank changes
   nothing; not an address → „Das ist keine gültige E-Mail-Adresse."; already
-  there → unchanged.
+  there → unchanged; the organizer's own address → „Die eigene Adresse ist
+  immer dabei."
 - `names(list)` — „a", „a, b", „a, b, c", „a, b und 2 weitere".
 
 `calling/Appointment.kt`:
@@ -281,5 +293,7 @@ With `test@example.org` and a second address of the tester's:
 ## Rollout
 
 Server (migrations 011 and 012) before the app. Every phone is updated the same
-day: a phone on 1.5.0 still shows the switch, its changes to the invitation are
-ignored by the server, and a visit it creates invites nobody.
+day, and between the server deploy and the app update nobody changes
+invitations or attendees on an old phone: a phone on 1.5.0 still shows the
+switch, its changes to the invitation are ignored by the server, and a visit it
+creates invites nobody.
