@@ -183,38 +183,13 @@ fun BusinessFormScreen(
                 onPick = { onChange(draft.copy(industry = it)) },
             )
 
-            Field(
-                value = draft.city,
-                onValue = { onChange(draft.copy(city = it)) },
-                label = "Ort",
-                keyboard = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Words,
-                    imeAction = ImeAction.Next,
-                ),
-            )
-            Suggestions(
-                values = knownCities,
-                onPick = { onChange(draft.copy(city = it)) },
-            )
+            // ---- Addresses --------------------------------------------------
+            Section("Adressen")
 
-            Field(
-                value = draft.street,
-                onValue = { onChange(draft.copy(street = it)) },
-                label = "Straße und Hausnummer",
-                keyboard = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Words,
-                    imeAction = ImeAction.Next,
-                ),
-            )
-
-            Field(
-                value = draft.postalCode,
-                onValue = { onChange(draft.copy(postalCode = it)) },
-                label = "PLZ",
-                keyboard = KeyboardOptions(
-                    keyboardType = KeyboardType.Number,
-                    imeAction = ImeAction.Next,
-                ),
+            AddressList(
+                drafts = draft.addresses,
+                knownCities = knownCities,
+                onChange = { onChange(draft.copy(addresses = it)) },
             )
 
             // ---- Contact ----------------------------------------------------

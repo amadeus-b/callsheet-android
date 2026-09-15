@@ -397,9 +397,7 @@ class Repository(context: Context) {
         }
 
         val industry = new.industry.trim().ifEmpty { null }
-        val street = new.street.trim().ifEmpty { null }
-        val postalCode = new.postalCode.trim().ifEmpty { null }
-        val city = new.city.trim().ifEmpty { null }
+        val addressRows = new.addresses.filterNot { it.isBlank }
         val now = Clock.now()
         val placeId = MANUAL_PREFIX + java.util.UUID.randomUUID()
 
@@ -413,7 +411,7 @@ class Repository(context: Context) {
         val values = ContentValues().apply {
             put("place_id", placeId)
             put("name", name)
-            put("search_text", Addresses.searchText(name, listOf(city)))
+            put("search_text", Addresses.searchText(name, addressRows.map { it.city }))
             put("industry", industry)
             put("categories", JSONArray(emptyList<String>()).toString())
             put("phone", phone)
@@ -434,16 +432,17 @@ class Repository(context: Context) {
         db.beginTransaction()
         try {
             db.insert("businesses", null, values)
-            if (street != null || postalCode != null || city != null) {
+            addressRows.forEachIndexed { index, row ->
                 db.insert(
                     "business_addresses", null,
                     ContentValues().apply {
                         put("id", java.util.UUID.randomUUID().toString())
                         put("place_id", placeId)
-                        put("street", street)
-                        put("postal_code", postalCode)
-                        put("city", city)
-                        put("position", 0)
+                        put("label", row.label.trim().ifEmpty { null })
+                        put("street", row.street.trim().ifEmpty { null })
+                        put("postal_code", row.postalCode.trim().ifEmpty { null })
+                        put("city", row.city.trim().ifEmpty { null })
+                        put("position", index)
                         put("updated_at", now)
                         put("dirty", 1)
                     },

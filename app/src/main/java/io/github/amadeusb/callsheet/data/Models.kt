@@ -326,9 +326,8 @@ data class BusinessDraft(
     val name: String = "",
     val phone: String = "",
     val industry: String = "",
-    val street: String = "",
-    val postalCode: String = "",
-    val city: String = "",
+    /** The first row is the main address. A new business starts with one empty row. */
+    val addresses: List<AddressDraft> = listOf(AddressDraft()),
     val website: String = "",
     val email: String = "",
     val contactName: String = "",

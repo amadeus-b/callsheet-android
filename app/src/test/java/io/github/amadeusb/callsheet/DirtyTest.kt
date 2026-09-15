@@ -38,7 +38,7 @@ class DirtyTest {
 
     private suspend fun einBetrieb(): String =
         repo.create(io.github.amadeusb.callsheet.data.BusinessDraft(
-            name = "Elektro Meier", industry = "Elektro", city = "Ingolstadt", phone = "08411 12345",
+            name = "Elektro Meier", industry = "Elektro", addresses = listOf(io.github.amadeusb.callsheet.data.AddressDraft(city = "Ingolstadt")), phone = "08411 12345",
         )).getOrThrow()
 
     @Test

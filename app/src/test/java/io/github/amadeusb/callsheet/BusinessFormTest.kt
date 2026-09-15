@@ -4,6 +4,7 @@ import androidx.test.core.app.ApplicationProvider
 import io.github.amadeusb.callsheet.data.Filter
 import io.github.amadeusb.callsheet.data.ORIGIN_MANUAL
 import io.github.amadeusb.callsheet.data.MANUAL_PREFIX
+import io.github.amadeusb.callsheet.data.AddressDraft
 import io.github.amadeusb.callsheet.data.BusinessDraft
 import io.github.amadeusb.callsheet.data.Database
 import io.github.amadeusb.callsheet.data.Repository
@@ -46,7 +47,7 @@ class BusinessFormTest {
                 name = "Dachdecker Erfunden",
                 phone = "0621 9900099",
                 industry = "Dach",
-                city = "Ingolstadt",
+                addresses = listOf(AddressDraft(city = "Ingolstadt")),
                 origin = "Empfehlung von einem Bekannten",
             )
         ).getOrThrow()
@@ -126,7 +127,7 @@ class BusinessFormTest {
 
     @Test
     fun `the search finds hand-entered businesses`() = runTest {
-        repo.create(BusinessDraft(name = "Gebrüder Kläranlagen", city = "Königsmoos")).getOrThrow()
+        repo.create(BusinessDraft(name = "Gebrüder Kläranlagen", addresses = listOf(AddressDraft(city = "Königsmoos")))).getOrThrow()
         val matches = repo.list(Filter(status = emptySet(), onlyTargets = false, search = "kläranlagen"))
         assertEquals(1, matches.size)
     }
@@ -152,7 +153,7 @@ class BusinessFormTest {
 
     @Test
     fun `the industry shows up among the filter values`() = runTest {
-        repo.create(BusinessDraft(name = "Neues Gewerk", industry = "Schornsteinfeger", city = "Kösching"))
+        repo.create(BusinessDraft(name = "Neues Gewerk", industry = "Schornsteinfeger", addresses = listOf(AddressDraft(city = "Kösching"))))
             .getOrThrow()
         assertTrue(repo.industries().contains("Schornsteinfeger"))
         assertTrue(repo.cities().contains("Kösching"))
@@ -198,16 +199,26 @@ class BusinessFormTest {
     }
 
     @Test
-    fun `a hand-entered address becomes the business's first address row`() = runTest {
+    fun `a hand-entered business keeps every address in the order entered, blank rows left out`() = runTest {
         val id = repo.create(
-            BusinessDraft(name = "Dachdecker Erfunden", street = "Ziegelgasse 2", postalCode = "85053", city = "Ingolstadt")
+            BusinessDraft(
+                name = "Dachdecker Erfunden",
+                addresses = listOf(
+                    AddressDraft(street = "Ziegelgasse 2", postalCode = "85053", city = "Ingolstadt"),
+                    AddressDraft(label = "Lager"),
+                    AddressDraft(label = "Filiale", city = "Hafenstadt"),
+                ),
+            )
         ).getOrThrow()
 
-        val address = repo.addresses(id).single()
-        assertEquals("Ziegelgasse 2", address.street)
-        assertEquals("85053", address.postalCode)
-        assertEquals("Ingolstadt", address.city)
-        assertEquals(0, address.position)
+        val addresses = repo.addresses(id)
+        assertEquals(listOf("Ingolstadt", "Hafenstadt"), addresses.map { it.city })
+        assertEquals(listOf(0, 1), addresses.map { it.position })
+        assertEquals("Filiale", addresses[1].label)
         assertEquals("Ingolstadt", repo.business(id)!!.city)
+        assertEquals(
+            listOf(id),
+            repo.list(Filter(status = emptySet(), onlyTargets = false, search = "hafenstadt")).map { it.placeId },
+        )
     }
 }
