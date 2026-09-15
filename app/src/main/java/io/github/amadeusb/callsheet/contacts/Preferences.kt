@@ -88,6 +88,22 @@ class Preferences(context: Context) {
         get() = store.getBoolean(REFETCHED_FOR_CALLBACKS, false)
         set(value) = store.edit().putBoolean(REFETCHED_FOR_CALLBACKS, value).apply()
 
+    /**
+     * Whether this device has fetched the server's stock from the start since
+     * it learnt about several addresses per business (schema 7).
+     *
+     * While it still ran 1.5.x, the server delivered `business_addresses` rows
+     * to it — the ones migration 009 carried over, and any another device added
+     * — and the old app skipped them while its watermark moved past. Its own
+     * migration only brings the main address it had; a branch added elsewhere,
+     * or a later change, would never come down. Contacts it stored without
+     * `address_id` get the column filled at the standstill (SyncStore.fillGaps).
+     * A flag for the reason [refetchedForAppointments] gives.
+     */
+    var refetchedForAddresses: Boolean
+        get() = store.getBoolean(REFETCHED_FOR_ADDRESSES, false)
+        set(value) = store.edit().putBoolean(REFETCHED_FOR_ADDRESSES, value).apply()
+
     /** Whether appointments get mirrored into the device calendar at all. */
     var calendarEnabled: Boolean
         get() = store.getBoolean(CALENDAR_ENABLED, false)
@@ -127,6 +143,7 @@ class Preferences(context: Context) {
         const val LAST_SYNC_AT = "last_sync_at"
         const val REFETCHED_FOR_APPOINTMENTS = "refetched_for_appointments"
         const val REFETCHED_FOR_CALLBACKS = "refetched_for_callbacks"
+        const val REFETCHED_FOR_ADDRESSES = "refetched_for_addresses"
         const val CALENDAR_ENABLED = "calendar_enabled"
         const val CALENDAR_ID = "calendar_id"
         const val APPOINTMENT_MINUTES = "appointment_minutes"

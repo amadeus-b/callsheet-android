@@ -3,6 +3,8 @@ package io.github.amadeusb.callsheet.sync
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import io.github.amadeusb.callsheet.data.AddressRows
+import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.Database
 import org.json.JSONArray
 import org.json.JSONObject
@@ -179,7 +181,14 @@ class SyncStore(context: Context) {
         }
     }
 
-    /** Applies what the server sent. Never marks anything as dirty. */
+    /**
+     * Applies what the server sent. Never marks anything as dirty.
+     *
+     * A business's `search_text` is derived from its name and the cities of all
+     * its addresses. Whatever this call writes of a business or writes or
+     * removes of an address, the text of that business is brought up to date
+     * at the end, in the same transaction.
+     */
     fun apply(response: JSONObject): AppliedAppointments {
         val db = helper.writableDatabase
         // Fetched once per call rather than once per row — the schema does
@@ -187,21 +196,33 @@ class SyncStore(context: Context) {
         val columnsByTable = Rows.TABLES.associateWith { columns(db, it) }
         val written = ArrayList<String>()
         val removed = ArrayList<RemovedAppointment>()
+        val searchStale = HashSet<String>()
         db.beginTransaction()
         try {
             val deletions = response.optJSONArray("deleted") ?: JSONArray()
             for (i in 0 until deletions.length()) {
-                applyTombstone(db, deletions.getJSONObject(i))?.let { removed.add(it) }
+                applyTombstone(db, deletions.getJSONObject(i), searchStale)?.let { removed.add(it) }
             }
             for (table in Rows.TABLES) {
                 val rows = response.optJSONArray(table) ?: continue
                 for (i in 0 until rows.length()) {
                     val row = rows.getJSONObject(i)
-                    if (applyRow(db, table, row, columnsByTable.getValue(table)) && table == "appointments") {
-                        written.add(row.getString("id"))
+                    if (!applyRow(db, table, row, columnsByTable.getValue(table))) continue
+                    when (table) {
+                        "appointments" -> written.add(row.getString("id"))
+                        "businesses" -> searchStale.add(row.getString("place_id"))
+                        "business_addresses" -> {
+                            if (!row.isNull("place_id")) searchStale.add(row.getString("place_id"))
+                            // Here again: a re-import updates it rather than leaving it out.
+                            val id = row.getString("id")
+                            if (id.startsWith(Addresses.MAIN_PREFIX)) {
+                                AddressRows.forgetMainRemoved(db, id.removePrefix(Addresses.MAIN_PREFIX))
+                            }
+                        }
                     }
                 }
             }
+            for (placeId in searchStale) AddressRows.refreshSearchText(db, placeId)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -327,7 +348,7 @@ class SyncStore(context: Context) {
         return true
     }
 
-    private fun applyTombstone(db: SQLiteDatabase, stone: JSONObject): RemovedAppointment? {
+    private fun applyTombstone(db: SQLiteDatabase, stone: JSONObject, searchStale: MutableSet<String>): RemovedAppointment? {
         val table = stone.getString("table_name")
         val id = stone.getString("row_id")
         val at = stone.getString("deleted_at")
@@ -348,7 +369,15 @@ class SyncStore(context: Context) {
         val key = Rows.key(table)
         val localAt = db.rawQuery("SELECT updated_at FROM $table WHERE $key = ?", arrayOf(id))
             .use { if (it.moveToFirst()) it.getString(0) else null }
-        if (localAt == null || Merge.isNewer(localAt, at)) return null
+        val stoneWins = localAt == null || !Merge.isNewer(localAt, at)
+
+        // A main address removed on another device stays removed for this
+        // device's import too — see Database's removed_main_addresses. Only when
+        // the tombstone wins: a row here that is newer was added back since.
+        if (table == "business_addresses" && id.startsWith(Addresses.MAIN_PREFIX) && stoneWins) {
+            AddressRows.rememberMainRemoved(db, id.removePrefix(Addresses.MAIN_PREFIX))
+        }
+        if (localAt == null || !stoneWins) return null
 
         // The link has to be read before the row goes, or the calendar could
         // not follow the deletion.
@@ -359,6 +388,10 @@ class SyncStore(context: Context) {
             }
         } else {
             null
+        }
+        if (table == "business_addresses") {
+            db.rawQuery("SELECT place_id FROM business_addresses WHERE id = ?", arrayOf(id))
+                .use { if (it.moveToFirst()) searchStale.add(it.getString(0)) }
         }
         db.delete(table, "$key = ?", arrayOf(id))
         // Numbers and emails only follow the contact into deletion when the
@@ -382,6 +415,6 @@ class SyncStore(context: Context) {
          * `id` column (its key is `place_id`), and the app never deletes a
          * business or a call — a tombstone naming either must never reach SQL.
          */
-        val TOMBSTONE_TABLES = setOf("contacts", "contact_numbers", "contact_emails", "appointments")
+        val TOMBSTONE_TABLES = setOf("contacts", "contact_numbers", "contact_emails", "appointments", "business_addresses")
     }
 }

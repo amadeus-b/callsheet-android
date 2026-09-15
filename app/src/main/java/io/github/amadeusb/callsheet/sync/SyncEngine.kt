@@ -99,6 +99,13 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
                 prefs.watermark = 0
                 prefs.refetchedForCallbacks = true
             }
+            // Once more, on the first sync that runs on schema 7 — see
+            // Preferences.refetchedForAddresses. The addresses a 1.5.x app
+            // skipped come down, and contacts get their address_id filled.
+            if (!prefs.refetchedForAddresses) {
+                prefs.watermark = 0
+                prefs.refetchedForAddresses = true
+            }
             var rounds = 0
             val total = store.pendingCount()
             onProgress(total, total)

@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -79,6 +80,21 @@ class SyncStoreTest {
         put("ends_at", JSONObject.NULL); put("location", JSONObject.NULL); put("note", "Angebot")
         put("contact_id", JSONObject.NULL); put("event_uid", id); put("updated_at", zeit)
     }
+
+    private fun adresseJson(id: String, placeId: String, city: String?, zeit: String, position: Int = 0) = JSONObject().apply {
+        put("id", id); put("place_id", placeId); put("label", JSONObject.NULL)
+        put("street", JSONObject.NULL); put("postal_code", JSONObject.NULL)
+        put("city", city ?: JSONObject.NULL)
+        put("latitude", JSONObject.NULL); put("longitude", JSONObject.NULL)
+        put("position", position); put("updated_at", zeit)
+    }
+
+    private fun grabstein(table: String, id: String, zeit: String) = JSONArray(listOf(JSONObject().apply {
+        put("table_name", table); put("row_id", id); put("deleted_at", zeit)
+    }))
+
+    private fun einzeln(sql: String): String? =
+        Database(ctx).readableDatabase.rawQuery(sql, null).use { if (it.moveToFirst() && !it.isNull(0)) it.getString(0) else null }
 
     @Test
     fun `pending returns only marked rows`() {
@@ -654,6 +670,101 @@ class SyncStoreTest {
     private fun status(id: String): String? =
         Database(ctx).readableDatabase.rawQuery("SELECT status FROM businesses WHERE place_id = ?", arrayOf(id))
             .use { if (it.moveToFirst()) it.getString(0) else null }
+
+    @Test
+    fun `incoming business addresses are written unmarked, and the search text holds their cities`() {
+        einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 0)
+
+        store.apply(antwort().put("business_addresses", JSONArray(listOf(
+            adresseJson("main-P1", "P1", "Ingolstadt", "2026-09-07T10:00:00+02:00"),
+            adresseJson("A2", "P1", "Eichstätt", "2026-09-07T10:00:00+02:00", position = 1),
+        ))))
+
+        assertEquals("Eichstätt", einzeln("SELECT city FROM business_addresses WHERE id = 'A2'"))
+        assertEquals(0, zahl("SELECT SUM(dirty) FROM business_addresses"))
+        assertEquals("elektro meier ingolstadt eichstätt", einzeln("SELECT search_text FROM businesses WHERE place_id = 'P1'"))
+        // Derived, not a change: the business stays unmarked.
+        assertEquals(0, zahl("SELECT dirty FROM businesses WHERE place_id = 'P1'"))
+    }
+
+    @Test
+    fun `a remote tombstone removes a business address, and the search text drops its city`() {
+        einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 0)
+        schreibe(
+            "INSERT INTO business_addresses (id, place_id, city, position, updated_at, dirty) " +
+                "VALUES ('A2', 'P1', 'Eichstätt', 1, '2026-09-07T10:00:00+02:00', 0)"
+        )
+        schreibe("UPDATE businesses SET search_text = 'elektro meier eichstätt' WHERE place_id = 'P1'")
+
+        store.apply(antwort().put("deleted", grabstein("business_addresses", "A2", "2026-09-08T10:00:00+02:00")))
+
+        assertNull(einzeln("SELECT id FROM business_addresses WHERE id = 'A2'"))
+        assertEquals("elektro meier", einzeln("SELECT search_text FROM businesses WHERE place_id = 'P1'"))
+    }
+
+    @Test
+    fun `a tombstone for a main address is remembered for the import, and an incoming main address forgets it`() {
+        store.apply(antwort().put("deleted", grabstein("business_addresses", "main-P1", "2026-09-08T10:00:00+02:00")))
+        assertEquals("P1", einzeln("SELECT place_id FROM removed_main_addresses"))
+
+        store.apply(antwort().put("business_addresses", JSONArray(listOf(
+            adresseJson("main-P1", "P1", "Ingolstadt", "2026-09-09T10:00:00+02:00"),
+        ))))
+        assertNull(einzeln("SELECT place_id FROM removed_main_addresses"))
+    }
+
+    @Test
+    fun `a tombstone older than the main address here is not remembered`() {
+        schreibe(
+            "INSERT INTO business_addresses (id, place_id, city, position, updated_at, dirty) " +
+                "VALUES ('main-P1', 'P1', 'Ingolstadt', 0, '2026-09-09T10:00:00+02:00', 0)"
+        )
+
+        store.apply(antwort().put("deleted", grabstein("business_addresses", "main-P1", "2026-09-08T10:00:00+02:00")))
+
+        assertEquals("main-P1", einzeln("SELECT id FROM business_addresses"))
+        assertNull(einzeln("SELECT place_id FROM removed_main_addresses"))
+    }
+
+    @Test
+    fun `an incoming business keeps the search text of all its addresses`() {
+        einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 0)
+        schreibe(
+            "INSERT INTO business_addresses (id, place_id, city, position, updated_at, dirty) " +
+                "VALUES ('A2', 'P1', 'Eichstätt', 1, '2026-09-07T10:00:00+02:00', 0)"
+        )
+
+        store.apply(antwort(betriebJson("P1", "neu", "2026-09-08T10:00:00+02:00").put("search_text", "elektro meier")))
+
+        assertEquals("elektro meier eichstätt", einzeln("SELECT search_text FROM businesses WHERE place_id = 'P1'"))
+    }
+
+    @Test
+    fun `business addresses and a contact's address go up`() {
+        schreibe(
+            "INSERT INTO business_addresses (id, place_id, label, city, position, updated_at, dirty) " +
+                "VALUES ('A2', 'P1', 'Filiale', 'Eichstätt', 1, '2026-09-07T10:00:00+02:00', 1)"
+        )
+        schreibe(
+            "INSERT INTO contacts (id, place_id, name, position, updated_at, address_id, dirty) " +
+                "VALUES ('K1', 'P1', 'Frau Meier', 0, '2026-09-07T10:00:00+02:00', 'A2', 1)"
+        )
+
+        val payload = store.pending(500)
+
+        assertEquals("Filiale", payload.getJSONArray("business_addresses").getJSONObject(0).getString("label"))
+        assertEquals("A2", payload.getJSONArray("contacts").getJSONObject(0).getString("address_id"))
+    }
+
+    @Test
+    fun `an incoming contact's address comes down`() {
+        store.apply(antwort().put("contacts", JSONArray(listOf(JSONObject().apply {
+            put("id", "K1"); put("place_id", "P1"); put("name", "Frau Meier"); put("position", 0)
+            put("updated_at", "2026-09-07T10:00:00+02:00"); put("address_id", "A2")
+        }))))
+
+        assertEquals("A2", einzeln("SELECT address_id FROM contacts WHERE id = 'K1'"))
+    }
 
     private fun zahl(sql: String): Int =
         Database(ctx).readableDatabase.rawQuery(sql, null).use { if (it.moveToFirst()) it.getInt(0) else -1 }
