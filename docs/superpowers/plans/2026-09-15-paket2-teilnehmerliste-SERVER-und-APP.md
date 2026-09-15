@@ -16,6 +16,7 @@
 - **The question comes after the slot conflict.** „Trotzdem anlegen" is remembered in the draft (`forced`), so the save after the answer does not ask about the slot again.
 - **An address still in the text field is added on saving** — or blocks saving with its error — rather than being lost silently.
 - **Two server tasks, not three.** Changing `wantedState` breaks `pushCalendar` and `receive` until they follow, so those three files change in one task; the migration comes first on its own.
+- **Review findings (worked in):** the older tests that compare whole appointment rows get the two new columns in Task 1, so Task 1 ends green; renaming a business queues its created visits with the default title (`queueRenamedVisits`), so the next list-only change saved without mail does not notify everybody for a title that changed unseen; an update keeps each attendee's answer (`state`) from the event it read, only new addresses start as `NEEDS-ACTION`; the organizer's own address is refused as an attendee; an open question clears the slot conflict shown; between server deploy and app update nobody changes invitations on an old phone.
 - **Two app tasks for the switch.** Task 6 adds the new fields and rules next to the old invitation (everything compiles, all tests green); Task 7 moves the sheet and the view model over and deletes the invitation.
 
 ## Global Constraints
@@ -26,7 +27,7 @@
 - **Columns:** `appointments.attendees TEXT` — JSON array of trimmed addresses, order as added, no duplicates ignoring case, NULL for none, always NULL for a callback. `appointments.attendees_notify INTEGER` — 1, 0 or NULL (NULL reads as 1), written by the app only in a save that changes the list. Both nullable, both synchronised, both app-owned.
 - **`invite_email` stays** on both sides, is not emptied, and after Task 7 is neither read nor written by the app; the server stops reading it in Task 2.
 - **Notify rule (server):** nobody on the list now, in the event, or in what was last sent → no notification; title, time or place differ from what Infomaniak holds → notify; otherwise (only the list, or a create) → notify unless `attendees_notify = 0`.
-- **UI texts, exactly:** section „Teilnehmende"; button „Hinzufügen"; chip suffix „ (Betrieb)"; hint „Teilnehmende sehen Titel, Zeit und Ort, nicht die Notiz."; error „Das ist keine gültige E-Mail-Adresse."; dialog titles „Mail an <names> senden?", „Absage an <names> senden?", „Mail an <names> und Absage an <names> senden?"; dialog text „Ohne Mail wird der Termin trotzdem gespeichert."; buttons „Senden", „Ohne Mail speichern"; calendar line „Im Kalender · Teilnehmende: <names>"; removal „<names> bekommt eine Absage." / „<names> bekommen eine Absage."; names „a", „a, b", „a, b, c", „a, b und 2 weitere".
+- **UI texts, exactly:** section „Teilnehmende"; button „Hinzufügen"; chip suffix „ (Betrieb)"; hint „Teilnehmende sehen Titel, Zeit und Ort, nicht die Notiz."; errors „Das ist keine gültige E-Mail-Adresse." and „Die eigene Adresse ist immer dabei."; dialog titles „Mail an <names> senden?", „Absage an <names> senden?", „Mail an <names> und Absage an <names> senden?"; dialog text „Ohne Mail wird der Termin trotzdem gespeichert."; buttons „Senden", „Ohne Mail speichern"; calendar line „Im Kalender · Teilnehmende: <names>"; removal „<names> bekommt eine Absage." / „<names> bekommen eine Absage."; names „a", „a, b", „a, b, c", „a, b und 2 weitere".
 - **The app repo is public on GitHub.** No hostnames, server paths, calendar ids or personal addresses in the app repo. Tests use `test@example.org`, `zweite@example.org` and other `example.org` addresses.
 - **Tests:** app `./gradlew testDebugUnitTest` (all) or `./gradlew testDebugUnitTest --tests "io.github.amadeusb.callsheet.<Class>"`; build check `./gradlew assembleDebug`; both from the app repository root. Server `node --test` (all) or `node --test test/<file>.test.js`, locally only.
 - **No view model test harness exists.** Decisions are pure functions with unit tests; the view model and Compose wiring are checked by `assembleDebug` and the phone test (Task 10).
@@ -102,7 +103,7 @@ Run in the app repo: `./gradlew testDebugUnitTest` — expected BUILD SUCCESSFUL
 
 **Files:**
 - Create: `db/migrations/012-attendees.sql`
-- Test: `test/db.test.js` (append)
+- Test: `test/db.test.js` (append; four existing row comparisons), `test/deliver.test.js` (one existing comparison), `test/receive.test.js` (one existing comparison)
 
 **Interfaces:**
 - Produces: columns `appointments.attendees`, `appointments.attendees_notify`; carried-over `attendees`; `infomaniak_events.pushed` with `attendees` instead of `invite_email`.
@@ -192,10 +193,49 @@ test('appointments.attendees and attendees_notify accept NULL', () => {
 })
 ```
 
+Every existing test that compares a whole appointment row gets the two new columns, or it fails once the migration adds them:
+
+In `test/db.test.js`, replace all **four** occurrences (the tests for migrations 005, 008 — twice — and 010) of
+
+```js
+    invite_email: null,
+    calendar_state: null,
+```
+
+with:
+
+```js
+    invite_email: null,
+    attendees: null,
+    attendees_notify: null,
+    calendar_state: null,
+```
+
+In `test/deliver.test.js`, test `appointments are delivered, without their sequence number`, replace
+
+```js
+    ...APPOINTMENT, title: null, invite_email: null, calendar_state: 'pending', calendar_error: null,
+```
+
+with:
+
+```js
+    ...APPOINTMENT, title: null, invite_email: null, attendees: null, attendees_notify: null,
+    calendar_state: 'pending', calendar_error: null,
+```
+
+In `test/receive.test.js`, test `an appointment is written with every column the app owns and a sequence number`, replace `    invite_email: null,` with:
+
+```js
+    invite_email: null,
+    attendees: null,
+    attendees_notify: null,
+```
+
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test test/db.test.js`
-Expected: FAIL — `no such column: attendees` in all three new tests.
+Run: `node --test test/db.test.js test/deliver.test.js test/receive.test.js`
+Expected: FAIL — `no such column: attendees` in the three new tests; the six changed comparisons fail because the rows lack `attendees` and `attendees_notify`.
 
 - [ ] **Step 3: Write the migration**
 
@@ -236,7 +276,7 @@ WHERE json_valid(pushed) AND json_type(pushed, '$.attendees') IS NULL;
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test test/db.test.js`
+Run: `node --test test/db.test.js test/deliver.test.js test/receive.test.js`
 Expected: PASS.
 
 Run: `node --test`
@@ -245,7 +285,7 @@ Expected: `# fail 0` — no code reads the new columns yet, and no fresh test da
 - [ ] **Step 5: Commit**
 
 ```bash
-git add db/migrations/012-attendees.sql test/db.test.js
+git add db/migrations/012-attendees.sql test/db.test.js test/deliver.test.js test/receive.test.js
 git commit -m "Migration 012: Teilnehmende statt einer Einladungsadresse, pushed umgeschrieben"
 ```
 
@@ -258,12 +298,12 @@ git commit -m "Migration 012: Teilnehmende statt einer Einladungsadresse, pushed
 **Files:**
 - Modify: `src/visitState.js`
 - Modify: `src/pushCalendar.js` (import; `create`; `update`; `work`)
-- Modify: `src/receive.js` (`fillGaps`; `CALENDAR_COLUMNS` and its doc comment)
+- Modify: `src/receive.js` (`fillGaps`; `CALENDAR_COLUMNS` and its doc comment; `receiveBusiness` and a new `queueRenamedVisits` above it)
 - Test: `test/visitState.test.js`, `test/pushCalendar.test.js`, `test/receive.test.js`
 
 **Interfaces:**
 - Consumes: the columns from Task 1.
-- Produces in `src/visitState.js`: `attendeeList(value): string[]`, `sameCore(a, b): boolean`, `sameAttendees(a, b): boolean`, `sameState(a, b)` (core and attendees), `shouldNotify(wanted, held, pushed, flag): boolean`, `createBody(state, calendarId, notify = false)`, `updateBody(state, calendarId, eventId, notify)`; `wantedState` and `eventState` return `{ title, starts_at, ends_at, location, attendees }`.
+- Produces in `src/visitState.js`: `attendeeList(value): string[]`, `sameCore(a, b): boolean`, `sameAttendees(a, b): boolean`, `sameState(a, b)` (core and attendees), `shouldNotify(wanted, held, pushed, flag): boolean`, `createBody(state, calendarId, notify = false, held = [])`, `updateBody(state, calendarId, eventId, notify, held = [])` — [held] is the event's `attendees` as read from Infomaniak, whose `state` each address keeps; `wantedState` and `eventState` return `{ title, starts_at, ends_at, location, attendees }`.
 
 - [ ] **Step 1: Write the failing tests — `visitState`**
 
@@ -384,6 +424,24 @@ test('a create body with attendees lists them and the organizer, and notifies on
   assert.equal(body.description, '')
   assert.equal(createBody(state, 1001, false).notifyAttendees, undefined)
   assert.equal(createBody(state, 1001).notifyAttendees, undefined)
+})
+
+test('an update body keeps what each attendee answered, a new address needs action', () => {
+  // The API replaces the whole event: a state not sent back would be an answer erased.
+  const state = wantedState({ ...VISIT, attendees: '["test@example.org","zweite@example.org"]' }, 'Elektro Meier')
+  const held = [
+    { address: 'TEST@example.org', organizer: false, state: 'ACCEPTED' },
+    { address: 'christoph@bauer-ki.de', organizer: true, state: 'ACCEPTED' },
+  ]
+
+  const body = updateBody(state, 1001, 42, true, held)
+
+  assert.deepEqual(body.attendees.map(attendee => [attendee.address, attendee.state]), [
+    ['test@example.org', 'ACCEPTED'],
+    ['zweite@example.org', 'NEEDS-ACTION'],
+    ['christoph@bauer-ki.de', 'ACCEPTED'],
+  ])
+  assert.deepEqual(updateBody(state, 1001, 42, true).attendees.map(attendee => attendee.state), ['NEEDS-ACTION', 'NEEDS-ACTION', 'ACCEPTED'])
 })
 ```
 
@@ -561,19 +619,24 @@ test('update without attendees before or after does not notify', async () => {
 
   assert.equal(client.calls[1][2].notifyAttendees, false)
 })
+
+test('an update keeps the answers attendees gave in the calendar', async () => {
+  const db = freshDb()
+  await created(db, fakeClient(), INVITED)
+  receive(db, { appointments: [later({ attendees: '["test@example.org","zweite@example.org"]', attendees_notify: 1 })] })
+  const event = eventFor({ attendees: ['test@example.org'] })
+  event.attendees[0].state = 'ACCEPTED'
+  const client = fakeClient({ event })
+
+  await pushCalendar(db, client)
+
+  assert.deepEqual(client.calls[1][2].attendees.map(attendee => attendee.state), ['ACCEPTED', 'NEEDS-ACTION', 'ACCEPTED'])
+})
 ```
 
 - [ ] **Step 3: Write the failing tests — `receive`**
 
 In `test/receive.test.js`:
-
-In the test `an appointment is written with every column the app owns and a sequence number`, replace `    invite_email: null,` with:
-
-```js
-    invite_email: null,
-    attendees: null,
-    attendees_notify: null,
-```
 
 In the function `pushed`, replace `location: stored.location, invite_email: stored.invite_email,` with:
 
@@ -634,12 +697,49 @@ test('a standstill never fills attendees_notify without attendees', () => {
   assert.equal(row.attendees, '["test@example.org"]')
   assert.equal(row.attendees_notify, null)
 })
+
+test('renaming a business queues its created visits that carry the default title, and only those', () => {
+  // The default title names the business: renamed, the event would keep the old
+  // title, and the next list-only change saved without mail would find it
+  // different and notify everybody.
+  const db = freshDb()
+  receive(db, { ...empty, businesses: [BUSINESS], appointments: [APPOINTMENT, { ...APPOINTMENT, id: 'T2', title: 'Angebot besprechen' }, CALLBACK] })
+  pushed(db)
+  pushed(db, 'T2', 43)
+
+  receive(db, { ...empty, businesses: [{ ...BUSINESS, name: 'Elektro Meier & Sohn', updated_at: '2026-09-07T11:00:00+02:00' }] })
+
+  assert.equal(job(db).pending, 'update')
+  assert.equal(storedAppointment(db).calendar_state, 'pending')
+  assert.equal(job(db, 'T2').pending, null)
+  assert.equal(job(db, 'R1'), undefined)
+})
+
+test('renaming a business creates no event for a visit the calendar never had', () => {
+  const db = freshDb()
+  receive(db, { ...empty, businesses: [BUSINESS], appointments: [APPOINTMENT] })
+  db.prepare('DELETE FROM infomaniak_events').run()
+
+  receive(db, { ...empty, businesses: [{ ...BUSINESS, name: 'Elektro Meier & Sohn', updated_at: '2026-09-07T11:00:00+02:00' }] })
+
+  assert.equal(job(db), undefined)
+})
+
+test('a newer business with the same name queues nothing', () => {
+  const db = freshDb()
+  receive(db, { ...empty, businesses: [BUSINESS], appointments: [APPOINTMENT] })
+  pushed(db)
+
+  receive(db, { ...empty, businesses: [{ ...BUSINESS, note: 'neu', updated_at: '2026-09-07T11:00:00+02:00' }] })
+
+  assert.equal(job(db).pending, null)
+})
 ```
 
 - [ ] **Step 4: Run the tests to verify they fail**
 
 Run: `node --test test/visitState.test.js test/pushCalendar.test.js test/receive.test.js`
-Expected: FAIL — `visitState.test.js` with `does not provide an export named 'attendeeList'` (the whole file fails to load); in `pushCalendar.test.js` the attendee tests (no attendees in the bodies, `notifyAttendees` false or undefined where true is expected); in `receive.test.js` the `attendees` update test (nothing queued) and `a standstill fills attendees and attendees_notify together, …` (`attendees_notify` stays 0) and `a standstill never fills attendees_notify without attendees` (it is filled with 0).
+Expected: FAIL — `visitState.test.js` with `does not provide an export named 'attendeeList'` (the whole file fails to load); in `pushCalendar.test.js` the attendee tests (no attendees in the bodies, `notifyAttendees` false or undefined where true is expected); in `receive.test.js` the `attendees` update test (nothing queued) and `a standstill fills attendees and attendees_notify together, …` (`attendees_notify` stays 0) and `a standstill never fills attendees_notify without attendees` (it is filled with 0), and `renaming a business queues its created visits …` (nothing queued); in `pushCalendar.test.js` also `an update keeps the answers …`.
 
 - [ ] **Step 5: `visitState.js`**
 
@@ -804,13 +904,43 @@ function attendees(inviteEmail) {
 with:
 
 ```js
-function attendees(list) {
+/**
+ * The attendees for a body. [held] is what Infomaniak holds: an address found
+ * there keeps its answer (`state`), because a PUT replaces the whole event and
+ * would otherwise reset every acceptance. A new address needs action.
+ */
+function attendees(list, held = []) {
   if (list.length === 0) return []
+  const answered = entry => held.find(attendee =>
+    !attendee.organizer && address(attendee.address) === entry.toLowerCase())?.state
   return [
-    ...list.map(entry => ({ address: entry, className: 'Attendee', name: entry, organizer: false, state: 'NEEDS-ACTION' })),
+    ...list.map(entry => ({
+      address: entry, className: 'Attendee', name: entry, organizer: false, state: answered(entry) ?? 'NEEDS-ACTION',
+    })),
     { address: ORGANIZER.address, className: 'Attendee', name: ORGANIZER.name, organizer: true, state: 'ACCEPTED' },
   ]
 }
+```
+
+Replace the signature line and doc comment of `updateBody`
+
+```js
+/** The body of `PUT /event/{id}`. The API replaces, it does not patch: the whole event goes. */
+export function updateBody(state, calendarId, eventId, notify) {
+  return {
+    ...createBody(state, calendarId),
+```
+
+with:
+
+```js
+/**
+ * The body of `PUT /event/{id}`. The API replaces, it does not patch: the whole
+ * event goes — the attendees' answers from [held] included.
+ */
+export function updateBody(state, calendarId, eventId, notify, held = []) {
+  return {
+    ...createBody(state, calendarId, false, held),
 ```
 
 In `createBody`, replace the signature line and the two lines around `attendees`:
@@ -826,8 +956,9 @@ with:
 /**
  * The body of `POST /event`: the fields tested on 2026-09-15, no more.
  * [notify] comes from [shouldNotify]; without it Infomaniak sends no mail.
+ * [held] only for an update, see [attendees].
  */
-export function createBody(state, calendarId, notify = false) {
+export function createBody(state, calendarId, notify = false, held = []) {
 ```
 
 and
@@ -842,7 +973,7 @@ and
 with:
 
 ```js
-    attendees: attendees(state.attendees),
+    attendees: attendees(state.attendees, held),
   }
   if (notify) body.notifyAttendees = true
   return body
@@ -927,6 +1058,19 @@ async function create(db, client, job, appointment, state) {
 Replace
 
 ```js
+  const current = eventState(await client.getEvent(job.event_id))
+```
+
+with:
+
+```js
+  const event = await client.getEvent(job.event_id)
+  const current = eventState(event)
+```
+
+Replace
+
+```js
   if (!sameState(current, state)) {
     const before = JSON.parse(job.pushed ?? 'null')?.invite_email || current.invite_email
     // Removing or replacing the address notifies too: the old invitee has to hear of it.
@@ -941,7 +1085,8 @@ with:
   if (!sameState(current, state)) {
     // Removed attendees count too: they are in the event or in what was last sent.
     const notify = shouldNotify(state, current, JSON.parse(job.pushed ?? 'null'), appointment.attendees_notify)
-    await client.updateEvent(job.event_id, updateBody(state, client.calendarId, job.event_id, notify))
+    // The answers attendees gave stay: see visitState's attendees.
+    await client.updateEvent(job.event_id, updateBody(state, client.calendarId, job.event_id, notify, event?.attendees ?? []))
   }
 ```
 
@@ -1011,6 +1156,45 @@ with:
 const CALENDAR_COLUMNS = new Set(['title', 'starts_at', 'ends_at', 'location', 'attendees', 'kind'])
 ```
 
+In `receiveBusiness`, replace its last lines
+
+```js
+  write(db, 'businesses', blocked ? { ...row, status: 'do_not_call' } : row, nextSequence(db))
+}
+```
+
+with:
+
+```js
+  write(db, 'businesses', blocked ? { ...row, status: 'do_not_call' } : row, nextSequence(db))
+  if (existing && Object.hasOwn(row, 'name') && row.name !== existing.name) queueRenamedVisits(db, row.place_id)
+}
+```
+
+and add directly above `function receiveBusiness(db, row) {`:
+
+```js
+/**
+ * A visit without a title of its own shows the business's name in its default
+ * title (visitState's defaultTitle). Renaming the business changes that title
+ * without touching the visit, so its event would keep the old one — and the
+ * next change to the attendees alone, saved without mail, would find the title
+ * different and notify everybody. A rename therefore queues those visits like
+ * any change of title, and the attendees hear of it.
+ *
+ * Only visits the calendar already has (a queue row): one stored before
+ * migration 010 must not be created because its business was renamed.
+ * queueVisit finds nothing to send where the trimmed name did not change.
+ */
+function queueRenamedVisits(db, placeId) {
+  const visits = db.prepare(
+    `SELECT a.id FROM appointments a JOIN infomaniak_events e ON e.appointment_id = a.id
+     WHERE a.place_id = ? AND (a.kind IS NULL OR a.kind = 'visit') AND trim(COALESCE(a.title, '')) = ''`
+  ).all(placeId)
+  for (const { id } of visits) queueVisit(db, id)
+}
+```
+
 - [ ] **Step 8: Run the tests to verify they pass**
 
 Run: `node --test test/visitState.test.js test/pushCalendar.test.js test/receive.test.js`
@@ -1019,8 +1203,8 @@ Expected: PASS.
 Run: `node --test`
 Expected: `# fail 0`.
 
-Run: `grep -rn "invite_email" src`
-Expected: no output.
+Run: `grep -rn "\.invite_email\|invite_email:" src`
+Expected: no output. (`invite_email` still appears in comments that say it is read no more.)
 
 - [ ] **Step 9: Commit**
 
@@ -1127,6 +1311,13 @@ angelegt), wird benachrichtigt, außer `attendees_notify` ist 0. Steht niemand
 auf der Liste — jetzt, bei Infomaniak oder im zuletzt Gesendeten —, wird nicht
 benachrichtigt. Zwei Speichervorgänge, die vor dem nächsten Lauf ankommen,
 gehen als ein Aufruf raus; es gilt die zuletzt gespeicherte Entscheidung.
+Wurde der Besuch im Web-Kalender verschoben und hat die App das noch nicht
+übernommen, weicht die Zeit vom Stand bei Infomaniak ab: Eine reine
+Listenänderung mit „Ohne Mail speichern" schickt dann trotzdem Mail an alle.
+Wird ein Betrieb umbenannt, stellt der Server seine angelegten Besuche mit
+Standardtitel ein; die Teilnehmenden bekommen die Aktualisierung. Bei jeder
+Aktualisierung behält jede Adresse ihre Antwort aus dem Kalender (`state`), nur
+neue Adressen stehen auf `NEEDS-ACTION`.
 
 Was bei Teilnehmenden ankommt (am Telefon geprüft 2026-09-15 mit einer
 Adresse): Ändern mit Benachrichtigung schickt „Veranstaltung aktualisiert".
@@ -1169,6 +1360,8 @@ data class AttendeeAdd(val addresses: List<String>, val error: String?)
 
 object Attendees {
     const val INVALID: String                     // „Das ist keine gültige E-Mail-Adresse."
+    const val ORGANIZER: String                   // the calendar account's address
+    const val OWN_ADDRESS: String                 // „Die eigene Adresse ist immer dabei."
     fun clean(addresses: List<String>): List<String>
     fun parse(text: String?): List<String>
     fun format(addresses: List<String>): String?  // null for none
@@ -1235,6 +1428,9 @@ class AttendeesTest {
         assertEquals(AttendeeAdd(list, Attendees.INVALID), Attendees.add(list, "zweite@example"))
         assertEquals(AttendeeAdd(list, Attendees.INVALID), Attendees.add(list, "zweite example@org.de"))
         assertEquals("Das ist keine gültige E-Mail-Adresse.", Attendees.INVALID)
+        // The calendar account organises every visit; it is never an attendee.
+        assertEquals(AttendeeAdd(list, Attendees.OWN_ADDRESS), Attendees.add(list, " Christoph@Bauer-KI.de "))
+        assertEquals("Die eigene Adresse ist immer dabei.", Attendees.OWN_ADDRESS)
     }
 
     @Test
@@ -1297,6 +1493,15 @@ object Attendees {
     /** Said under the field when a typed address is refused. */
     const val INVALID: String = "Das ist keine gültige E-Mail-Adresse."
 
+    /**
+     * The calendar account every visit is organised by — the address the
+     * server's visitState calls ORGANIZER, and the name in the default title.
+     */
+    const val ORGANIZER: String = "christoph@bauer-ki.de"
+
+    /** Said when [ORGANIZER] is offered as an attendee: it organises every visit anyway. */
+    const val OWN_ADDRESS: String = "Die eigene Adresse ist immer dabei."
+
     private val EMAIL = Regex("""[^@\s]+@[^@\s]+\.[^@\s]+""")
 
     /** Trimmed, blanks dropped, the first spelling of each address kept. */
@@ -1343,12 +1548,13 @@ object Attendees {
 
     /**
      * [typed] added to [addresses]. Blank, or already there, changes nothing
-     * and is no error; something that is not an address is refused with
-     * [INVALID].
+     * and is no error; the organizer's own address is refused with
+     * [OWN_ADDRESS], something that is not an address with [INVALID].
      */
     fun add(addresses: List<String>, typed: String): AttendeeAdd {
         val address = typed.trim()
         if (address.isEmpty() || contains(addresses, address)) return AttendeeAdd(addresses, null)
+        if (address.equals(ORGANIZER, ignoreCase = true)) return AttendeeAdd(addresses, OWN_ADDRESS)
         if (!EMAIL.matches(address)) return AttendeeAdd(addresses, INVALID)
         return AttendeeAdd(addresses + address, null)
     }
@@ -2238,7 +2444,10 @@ with:
         // comes back through answerAttendeeQuestion, which saves again.
         val question = Appointment.attendeeQuestion(existing, entry, business.name)
         if (question != null && current.sendToAttendees == null) {
-            _state.update { it.copy(appointmentDraft = current.copy(attendeeQuestion = question, forced = force)) }
+            // The slot, if it collided, was accepted: its notice goes while the dialog is open.
+            _state.update {
+                it.copy(appointmentDraft = current.copy(attendeeQuestion = question, forced = force, conflict = emptyList()))
+            }
             return
         }
         // The length a visit starts at follows the last visit.
@@ -2577,6 +2786,7 @@ git commit -m "Termin-Formular: Liste „Teilnehmende“ mit Rückfrage beim Spe
 - Modify: `docs/data-model.md` (`appointments` block; the „Schema 8" paragraph; section „Synchronisation")
 - Modify: `docs/usage.md` (section „Appointments on site")
 - Modify: `CHANGELOG.md` (section `## 1.6.0`)
+- Modify: `README.md` (section „What it does")
 
 - [ ] **Step 1: Data model**
 
@@ -2673,6 +2883,32 @@ Replace „„Im Kalender · Eingeladen: <Adresse>"" with „„Im Kalender · T
 
 In the paragraph package 1 wrote about a visit missing from the calendar, replace the words „without an invitation it removes the visit at once and says so, with an invitation it asks first, as the invitee gets a cancellation" (spread over several lines) with „without attendees it removes the visit at once and says so, with attendees it asks first, as they get a cancellation".
 
+Replace
+
+```markdown
+**Entfernen** asks first, for a past appointment too: it removes a piece of the
+record. With an invitation it names who gets the cancellation.
+```
+
+with:
+
+```markdown
+**Entfernen** asks first, for a past appointment too: it removes a piece of the
+record. With attendees it names who gets the cancellation.
+```
+
+In `README.md`, replace
+
+```markdown
+  the calendar through the sync server, with an invitation if wanted; callbacks
+```
+
+with:
+
+```markdown
+  the calendar through the sync server, with the attendees invited; callbacks
+```
+
 - [ ] **Step 3: Changelog**
 
 In `CHANGELOG.md`, section `## 1.6.0`, in package 1's bullet about a missing visit replace the words „at once without an invitation, after asking with one" (spread over two lines) with „at once without attendees, after asking with them". Then add before the bullet that begins „**Update the sync server first, then every phone, and only then import":
@@ -2691,11 +2927,14 @@ In `CHANGELOG.md`, section `## 1.6.0`, in package 1's bullet about a missing vis
 
 - [ ] **Step 4: Check and commit**
 
-Run: `grep -n "Einladung senden\|Eingeladen:\|without an invitation\|with an invitation" docs/*.md CHANGELOG.md`
+Run: `grep -n "Einladung senden\|Eingeladen:\|without an invitation\|with an invitation" docs/*.md README.md`
 Expected: no output.
 
+Run: `sed -n '/^## 1.6.0/,/^## 1.5.0/p' CHANGELOG.md | grep -n "Einladung senden\|without an invitation\|with an invitation"`
+Expected: no output. The `## 1.5.0` section stays as it was released.
+
 ```bash
-git add docs/data-model.md docs/usage.md CHANGELOG.md
+git add docs/data-model.md docs/usage.md CHANGELOG.md README.md
 git commit -m "Doku und CHANGELOG: Teilnehmende statt Einladungsschalter"
 ```
 
@@ -2703,7 +2942,7 @@ git commit -m "Doku und CHANGELOG: Teilnehmende statt Einladungsschalter"
 
 ## Rollout
 
-Server before app, 1.6.0 with packages 1 and 2 together. If package 1's Tasks 9 and 10 have not run yet, run them together with Tasks 9 and 10 here: one deploy, one phone test, one release.
+Server before app, 1.6.0 with packages 1 and 2 together. **Between the server deploy and the app update, nobody changes invitations or attendees on a phone still on 1.5.0** — the server ignores them there, and a visit created on such a phone invites nobody. Every phone is updated the same day. If package 1's Tasks 9 and 10 have not run yet, run them together with Tasks 9 and 10 here: one deploy, one phone test, one release.
 
 ### Task 9: Server — deploy
 
@@ -2778,7 +3017,7 @@ Expected: `HTTP/2 200`, then `401`.
 
 - [ ] **Step 1: Everything green, server ready**
 
-Run: `./gradlew assembleDebug testDebugUnitTest` — BUILD SUCCESSFUL; `git status --porcelain` in both repos shows nothing. Ask „caller-app-34" (or the user) whether Task 9 is done; do not install before it is.
+Run: `./gradlew assembleDebug testDebugUnitTest` — BUILD SUCCESSFUL; `git status --porcelain` in both repos shows nothing. Ask „caller-app-34" (or the user) whether Task 9 is done; do not install before it is. Remind the user: until every phone runs the new app, no invitations or attendees are changed on an old one.
 
 - [ ] **Step 2: Install**
 
@@ -2800,6 +3039,9 @@ With `test@example.org` replaced by an address the tester can read, and a second
 9. Type „test@example" into the field, save: „Das ist keine gültige E-Mail-Adresse." under the field, nothing saved.
 10. **Entfernen** on a visit with two attendees: the dialog says „… bekommen eine Absage."; both get „Veranstaltung gelöscht".
 11. Package 1's check with attendees: a visit missing from the calendar with attendees asks before „Termin entfernen", one without does not.
+12. The second address accepts the invitation in its mail program. Then move the visit in the app: in the web calendar the second address is still „accepted".
+13. Rename the business (package 1, **Stammdaten bearbeiten**) of a visit with the default title: the attendees get the update with the new title.
+14. Type the calendar account's own address as an attendee: „Die eigene Adresse ist immer dabei."
 
 Anything that does not match: stop, find the cause (superpowers:systematic-debugging), fix it test-first in a task of its own, and repeat this step. Send the observations for items 6 and 7 to „caller-app-34" for the server README.
 

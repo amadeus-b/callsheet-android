@@ -48,11 +48,15 @@ differs from the file.
   editing mode shows neither the address list nor „Herkunft und Notiz".
 - **Validation as when creating:** the name is required; the number is empty or
   complete. No duplicate check (section 1).
-- **Saving** writes only when a value actually changed. Then:
+- **Saving** writes only what the user changed in the form: compared with the
+  values as the form opened, not with what is stored now. A column another
+  device changed while the form was open stays as that device left it and is
+  not taken for a hand edit. With a change:
   - the changed columns, `updated_at` new, `dirty = 1`;
   - `search_text` recomputed — name and the cities of all addresses
     (`Addresses.searchText`, through `AddressRows.refreshSearchText`);
-  - `is_target` recomputed with `TargetRule.isTarget(industry, phone, closed)`;
+  - `is_target` recomputed with `TargetRule.isTarget(industry, phone, closed)`,
+    only when phone or industry changed;
   - the business's phone book entries rewritten, through
     `ContactStore.persistBusiness` — the path a saved contact or saved addresses
     take today.
@@ -245,7 +249,7 @@ decisions above; its wiring is covered by `assembleDebug` and the phone test.
 - `server/README.md` — `businesses.edited_fields`.
 - `server/docs/superpowers/specs/` — a pointer to this spec.
 - `app/docs/data-model.md` — the column; the import leaves edited columns alone;
-  the refetch on schema 9.
+  the refetch on schema 9; in „Calendar", the read-back deletes only callbacks.
 - `app/docs/usage.md` — editing master data; the same number at several
   businesses; a visit gone from the calendar.
 - `app/CHANGELOG.md` — a section for the release.

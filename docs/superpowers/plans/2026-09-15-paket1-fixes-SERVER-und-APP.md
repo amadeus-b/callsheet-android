@@ -15,6 +15,8 @@
 - **Merge of `edited_fields`: the newer row wins, no union.** The list describes its own row's values; a union would protect values nobody edited (spec, „Synchronisation of `edited_fields`"). No merge code: the existing row rule and `fillGaps` on both sides do it.
 - **A refetch after the update** (`Preferences.refetchedForEditedFields`), as for schemas 4, 6 and 7 — a 1.5.0 phone stores businesses without the column while its watermark moves past them.
 - **Only changed columns are written** when master data is saved. Unchanged columns keep their stored text, even where it carries whitespace the form would trim: rewriting them would make the next import see a difference that is not one.
+- **Saving compares with the values as the form opened** (review finding). `showMasterData` keeps `MasterData.of(business)` in `State.masterDataBefore`; `updateMasterData(placeId, before, draft)` writes only `changedFields(before, after)`. A column another device changed while the form was open stays as that device left it and does not land in `edited_fields`.
+- **`is_target` is written only when phone or industry changed.**
 - **The editing mode reuses the business form's state** (`State.draft`, `formError`, `saving`) under a new screen `Screen.MasterDataForm(placeId)`.
 - **„Termin entfernen" without a dialog says what it did** in the detail view's hint („Termin entfernt." / „Termin entfernt. Status zurück auf „Angerufen“."), because the dialog that would have said it is skipped.
 - **The detail row „Ansprechpartner (importiert)" reads „Ansprechpartner"** once `contact_name` is in `edited_fields` (coordinator decision; `MasterData.contactNameLabel`, `Business.editedFields`).
@@ -456,6 +458,20 @@ and after the test `an upgrade from version seven adds the invitation and calend
             // Nothing new to tell the server.
             assertEquals(0, c.getInt(2))
         }
+    }
+
+    @Test
+    fun `a fresh database and one upgraded from version eight have the same business columns`() {
+        createVersionEight()
+        val upgraded = Database(context).readableDatabase.let { db -> columnsOf("businesses", db).also { db.close() } }
+        Database.resetSharedInstanceForTesting()
+        context.deleteDatabase("callsheet.db")
+
+        val fresh = columnsOf("businesses", Database(context).readableDatabase)
+
+        // PRAGMA on a missing table returns no columns on both sides.
+        assertTrue("edited_fields" in fresh)
+        assertEquals(fresh, upgraded)
     }
 ```
 
@@ -951,7 +967,7 @@ git commit -m "Regeln für Stammdaten: geänderte Felder, die Liste dazu, der En
 
 **Interfaces:**
 - Consumes: `MasterData`, `MasterValues` (Task 4); column `edited_fields` (Task 3).
-- Produces: `Business.editedFields: Set<String>` (default `emptySet()`, filled by every repository read of a business). `suspend fun updateMasterData(placeId: String, draft: BusinessDraft): Result<Unit>` in `Repository`. Failure messages exactly „Ohne Namen lässt sich der Betrieb nicht speichern.", „Die Telefonnummer ist unvollständig. Lass sie leer oder trag sie vollständig ein.", „Den Betrieb gibt es auf diesem Gerät nicht mehr.".
+- Produces: `Business.editedFields: Set<String>` (default `emptySet()`, filled by every repository read of a business). `suspend fun updateMasterData(placeId: String, before: MasterValues, draft: BusinessDraft): Result<Unit>` in `Repository` — [before] is the business's `MasterData.of` as the form opened. Failure messages exactly „Ohne Namen lässt sich der Betrieb nicht speichern.", „Die Telefonnummer ist unvollständig. Lass sie leer oder trag sie vollständig ein.", „Den Betrieb gibt es auf diesem Gerät nicht mehr.".
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -967,8 +983,11 @@ Insert this section before `private fun count(sql: String): Int =`:
 ```kotlin
     // ------------------------------------------------------------ Master data
 
-    private suspend fun edit(placeId: String, change: (BusinessDraft) -> BusinessDraft) =
-        repo.updateMasterData(placeId, change(MasterData.draft(repo.business(placeId)!!)))
+    /** Opens the form on [placeId] as it is stored now and saves [change] of it. */
+    private suspend fun edit(placeId: String, change: (BusinessDraft) -> BusinessDraft): Result<Unit> {
+        val business = repo.business(placeId)!!
+        return repo.updateMasterData(placeId, MasterData.of(business), change(MasterData.draft(business)))
+    }
 
     private fun editedFields(placeId: String): String? =
         Database.instance(ApplicationProvider.getApplicationContext<android.content.Context>()).readableDatabase
@@ -1000,6 +1019,32 @@ Insert this section before `private fun count(sql: String): Int =`:
         edit("P1") { it.copy(website = "beispiel.example") }.getOrThrow()
 
         assertEquals("[\"email\",\"website\"]", editedFields("P1"))
+    }
+
+    @Test
+    fun `a change made elsewhere while the form was open stays and is not recorded as a hand edit`() = runTest {
+        import(FIRST_IMPORT)
+        val opened = repo.business("P1")!!
+        // Another device changes the email, the sync brings it in, the form is still open.
+        execute("UPDATE businesses SET email = 'anderes-geraet@example.org' WHERE place_id = 'P1'")
+
+        repo.updateMasterData("P1", MasterData.of(opened), MasterData.draft(opened).copy(phone = "0621 9900099")).getOrThrow()
+
+        val b = repo.business("P1")!!
+        assertEquals("anderes-geraet@example.org", b.email)
+        assertEquals("+496219900099", b.phone)
+        assertEquals("[\"phone\"]", editedFields("P1"))
+    }
+
+    @Test
+    fun `a change to name or email leaves is_target alone`() = runTest {
+        import(FIRST_IMPORT)
+        // Not what the rule would say for this business: only a changed phone or industry may rewrite it.
+        execute("UPDATE businesses SET is_target = 0 WHERE place_id = 'P1'")
+
+        edit("P1") { it.copy(email = "test@example.org") }.getOrThrow()
+
+        assertFalse(repo.business("P1")!!.isTarget)
     }
 
     @Test
@@ -1125,14 +1170,17 @@ In `…/data/Repository.kt`, after the function `create` (after its closing `}` 
      * Validated as [create] validates: a name, and a number that is empty or
      * complete. Another business holding the number is fine.
      *
-     * Only columns whose value changed are written (MasterData.changedFields),
-     * each added to `edited_fields` — the import leaves them alone from then
-     * on. Unchanged columns keep their stored text: rewritten trimmed, they
-     * would look changed to the next import. With a change, `updated_at` and
-     * the mark move, and `is_target` and `search_text` follow. Without one,
-     * nothing is written.
+     * Only columns the user changed in the form are written: compared with
+     * [before], the values as the form opened (MasterData.changedFields), not
+     * with what is stored now — a column another device changed meanwhile
+     * stays as that device left it and is not taken for a hand edit. Each
+     * written column is added to `edited_fields`; the import leaves it alone
+     * from then on. Unchanged columns keep their stored text: rewritten
+     * trimmed, they would look changed to the next import. With a change,
+     * `updated_at` and the mark move and `search_text` follows; `is_target`
+     * only when phone or industry changed. Without one, nothing is written.
      */
-    suspend fun updateMasterData(placeId: String, draft: BusinessDraft): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun updateMasterData(placeId: String, before: MasterValues, draft: BusinessDraft): Result<Unit> = withContext(Dispatchers.IO) {
         val after = MasterData.fromDraft(draft)
         if (after.name.isEmpty()) {
             return@withContext Result.failure(IllegalArgumentException("Ohne Namen lässt sich der Betrieb nicht speichern."))
@@ -1150,12 +1198,17 @@ In `…/data/Repository.kt`, after the function `create` (after its closing `}` 
             val (stored, edited) = db.rawQuery("SELECT * FROM businesses WHERE place_id = ?", arrayOf(placeId))
                 .use { c -> if (c.moveToFirst()) fromCursor(c) to MasterData.parse(c.text("edited_fields")) else null }
                 ?: return@withContext Result.failure(IllegalStateException("Den Betrieb gibt es auf diesem Gerät nicht mehr."))
-            val changed = MasterData.changedFields(MasterData.of(stored), after)
+            val changed = MasterData.changedFields(before, after)
             if (changed.isNotEmpty()) {
                 val newValues = after.byColumn()
                 val values = ContentValues().apply {
                     for (column in changed) put(column, newValues[column])
-                    put("is_target", if (TargetRule.isTarget(after.industry, after.phone, stored.closed)) 1 else 0)
+                    if ("phone" in changed || "industry" in changed) {
+                        // The other of the two as stored now: it may have changed elsewhere.
+                        val phone = if ("phone" in changed) after.phone else stored.phone
+                        val industry = if ("industry" in changed) after.industry else stored.industry
+                        put("is_target", if (TargetRule.isTarget(industry, phone, stored.closed)) 1 else 0)
+                    }
                     put("edited_fields", MasterData.format(edited + changed))
                     put("updated_at", Clock.now())
                     put("dirty", 1)
@@ -1298,7 +1351,14 @@ In `back()`, in the `when (previous)`, after `is Screen.BusinessForm -> Unit`:
             is Screen.MasterDataForm -> Unit
 ```
 
-Add the import `import io.github.amadeusb.callsheet.data.MasterData` to the file's imports.
+In `State`, after `val formError: String? = null,`:
+
+```kotlin
+    /** The master data as the editing form opened: what saving compares with (Repository.updateMasterData). */
+    val masterDataBefore: MasterValues? = null,
+```
+
+Add the imports `import io.github.amadeusb.callsheet.data.MasterData` and `import io.github.amadeusb.callsheet.data.MasterValues` to the file's imports.
 
 After the function `saveDraft()`, add:
 
@@ -1309,7 +1369,13 @@ After the function `saveDraft()`, add:
         val screen = Screen.MasterDataForm(placeId)
         val history = historyFor(screen)
         _state.update {
-            it.copy(screen = screen, history = history, draft = MasterData.draft(business), formError = null)
+            it.copy(
+                screen = screen,
+                history = history,
+                draft = MasterData.draft(business),
+                formError = null,
+                masterDataBefore = MasterData.of(business),
+            )
         }
     }
 
@@ -1321,15 +1387,20 @@ After the function `saveDraft()`, add:
     fun saveMasterData(placeId: String) {
         if (_state.value.saving) return
         val draft = _state.value.draft
+        val before = _state.value.masterDataBefore ?: return
         viewModelScope.launch {
             _state.update { it.copy(saving = true, formError = null) }
-            repo.updateMasterData(placeId, draft).fold(
+            repo.updateMasterData(placeId, before, draft).fold(
                 onSuccess = {
-                    val industries = repo.industries()
-                    _state.update { it.copy(saving = false, draft = BusinessDraft(), allIndustries = industries) }
-                    repo.business(placeId)?.let { store.persistBusiness(it) }
+                    // Off the form first, and only then no longer saving: a second
+                    // tap on „Stammdaten speichern" must not find the form still there.
                     // back() reloads the detail view.
                     back()
+                    val industries = repo.industries()
+                    _state.update {
+                        it.copy(saving = false, draft = BusinessDraft(), masterDataBefore = null, allIndustries = industries)
+                    }
+                    repo.business(placeId)?.let { store.persistBusiness(it) }
                 },
                 onFailure = { error ->
                     _state.update {
@@ -2031,6 +2102,25 @@ with:
 sync on schema 6 does so once more: a 1.4.0 app stored the callbacks it pulled
 without `kind` and `done_at`. Schemas 7 and 9 do it once each, for the addresses
 and for `edited_fields` a 1.5.x app could not store.
+```
+
+In section „Calendar", replace
+
+```markdown
+  saw means nothing yet. One seen before and gone is a deletion while the
+  appointment is ahead — the appointment goes, and the status falls back to
+  `called` if it was still `appointment` and no other appointment is ahead — and
+  only a lost link once it is past.
+```
+
+with:
+
+```markdown
+  saw means nothing yet. One seen before and gone, while the appointment is
+  ahead, is a deletion for a callback only — the callback goes, and the status
+  stays. A visit is never removed that way: a calendar deselected in DAVx5 looks
+  the same. The detail view says „Im Kalender nicht mehr gefunden" and offers
+  „Termin entfernen". Once an appointment is past, only the link goes.
 ```
 
 In section „Import", replace
