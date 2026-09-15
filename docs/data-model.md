@@ -116,13 +116,18 @@ location                TEXT              -- one line, as it goes into the calen
 note                    TEXT              -- "Besichtigung", "Angebot" …
 contact_id              TEXT              -- one of the business's contacts, or null
 updated_at              TEXT NOT NULL
-event_uid               TEXT              -- iCalendar UID of the linked event, or null
+event_uid               TEXT              -- iCalendar UID of the event; a visit's set by the server, a callback's by the app
 calendar_event_id       INTEGER           -- local: the event's _ID on this device
 calendar_seen_starts_at TEXT              -- local: what this device last saw in the event
 calendar_seen_ends_at   TEXT              -- local
 calendar_seen_location  TEXT              -- local
+calendar_seen_title     TEXT              -- local; a visit's only (schema 8)
 kind                    TEXT              -- 'visit' | 'callback'; NULL reads as 'visit'
 done_at                 TEXT              -- when a callback was completed; NULL while open, always for a visit
+title                   TEXT              -- a visit's calendar title; NULL = „Erstgespräch KI bei <Firma> – Christoph Bauer" (schema 8)
+invite_email            TEXT              -- a visit's invitee; NULL = no invitation (schema 8)
+calendar_state          TEXT              -- server-owned: 'pending' | 'ok' | 'error'; NULL for callbacks (schema 8)
+calendar_error          TEXT              -- server-owned: the text behind 'error' (schema 8)
 dirty                   INTEGER NOT NULL DEFAULT 0
 ```
 
@@ -147,6 +152,15 @@ device would otherwise write its own into the shared calendar.
 stands, and a 1.4.0 device creates appointments without it. A callback is
 completed by a call to its business (`done_at`); saving never clears
 `done_at`, the same way it never clears `event_uid`.
+
+Schema 8: a visit reaches the calendar through the server, which creates,
+moves and removes its event through the Infomaniak API and sends the
+invitation to `invite_email`. The app never writes a visit's event. The
+server owns `calendar_state`, `calendar_error` and a visit's `event_uid`: the
+app never sends the first two, and takes all three from the server even where
+it keeps its own, newer row — the server writes them without moving
+`updated_at`. A callback's `event_uid` stays the app's. A visit is read back
+from the calendar only with a UID, the state `ok` and nothing waiting to go up.
 
 ### `business_addresses`
 

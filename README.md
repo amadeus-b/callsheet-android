@@ -22,8 +22,9 @@ The user interface is German; the code and documentation are English.
 - **Call duration** read automatically from the Android call log
 - **Status and note** in one go after hanging up
 - **Appointments on site and callbacks**, as many per business as the work
-  needs, each with a time, a length, a note and a contact person, mirrored into
-  the device's calendar; a call completes the callbacks due
+  needs, each with a time, a length, a note and a contact person. Visits reach
+  the calendar through the sync server, with an invitation if wanted; callbacks
+  are mirrored into the device's calendar; a call completes the callbacks due
 - **"Termine"**: overdue callbacks, then today, then every coming day
 - **Contacts** per business, merged with the device's phone book
 - **Hand-entered businesses**, for the referral that arrives over the phone
@@ -61,9 +62,11 @@ On first start the app asks for access to the **call log**. That is how it reads
 the duration after you hang up. Refuse it and everything still works — the status
 is then set by hand.
 
-Calendar access is asked for only when you switch appointments on in the
-settings. Refuse it, or leave it off, and appointments still work — they simply
-stay in the app, and the picker says it cannot show you which hours are taken.
+Calendar access is asked for only when you switch the calendar on in the
+settings. It writes callbacks into the device calendar and reads appointments
+back; visits reach the calendar through the sync server either way. Refuse it,
+or leave it off, and appointments still work — the picker then says it cannot
+show you which hours are taken.
 
 How the data gets in and what the daily flow looks like is covered in the
 [usage guide](docs/usage.md).

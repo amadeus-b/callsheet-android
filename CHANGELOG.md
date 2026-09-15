@@ -34,6 +34,21 @@ as the release notes on GitHub.
 - **Update the sync server first, then every phone.** The first sync after the
   update fetches everything once. A phone still on an older version keeps the
   address it had and does not see addresses added elsewhere.
+- **Visits go into the calendar through the sync server**, no longer through
+  the phone's calendar. Each visit has a **Titel**, preset to „Erstgespräch KI
+  bei <Betrieb> – Christoph Bauer".
+- **Einladung senden**: a real calendar invitation from christoph@bauer-ki.de,
+  with an update when the visit moves and a cancellation when it is removed.
+  The invitee sees title, time and place, never the note.
+- Under each visit the detail view says whether it is in the calendar yet, who
+  is invited, or what went wrong.
+- An invited visit whose entry is gone from the calendar is not removed by
+  itself: the detail view says „Im Kalender nicht mehr gefunden" and offers
+  **Termin entfernen**.
+- **Update the sync server first, with its Infomaniak token, then every phone.**
+  Visits already in the calendar are test entries: delete them in the app and
+  in the calendar before updating — required, or the server puts a second entry
+  beside each of them.
 
 ## 1.4.0
 

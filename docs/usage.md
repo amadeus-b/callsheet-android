@@ -107,41 +107,56 @@ to move it, drag the handle at its bottom edge to change its length; both snap
 to quarter hours. The chips underneath set 30, 60, 90 or 120 minutes in one tap,
 and whichever length you save is what the next appointment starts at.
 
+**Titel** is what the calendar entry is called, preset to „Erstgespräch KI bei
+<Betrieb> – Christoph Bauer". Left empty, the preset is used.
+
 The location is prefilled with the address of the chosen contact person — the
 one they are assigned to, else the business's main address — and moves along
 when you pick another person, until you type a place or tap one of the address
 chips below the field. It is what the calendar entry carries, so it is what the
 navigation reads.
 
-**Notiz** says what the appointment is for — „Besichtigung", „Angebot" — and
-goes into the calendar entry's title. **Ansprechpartner** picks who to ask for
-on site; their name and number go into the entry.
+**Notiz** says what the appointment is for — „Besichtigung", „Angebot". It stays
+in the app. **Ansprechpartner** picks who to ask for on site.
+
+**Einladung senden** invites somebody: pick one of the contact person's
+addresses or type one; picking another person brings their first address along
+unless you chose one yourself. The invitation comes from christoph@bauer-ki.de;
+moving the visit sends an update, removing it a cancellation. The invitee sees
+title, time and place — never the note. Changing only the note sends nothing.
 
 **When the slot is already taken** the app says what is there and asks, instead
 of writing a second entry on top:
 
-- **Verknüpfen** — this is that appointment. The existing entry is left exactly
-  as it is, and the business is linked to it; its time and place win. An entry
-  another appointment already holds is not offered.
+- **Verknüpfen** — for a callback only: this is that appointment. The existing
+  entry is left exactly as it is, and the callback is linked to it; its time
+  wins. An entry another appointment already holds is not offered.
 - **Trotzdem anlegen** — two things at once, deliberately.
 - **Andere Zeit** — back to the strip.
 
-Saving writes the appointment, sets the status to „Termin" if it is still
-ahead, and — if the calendar is switched on in the settings — puts an entry in
-the chosen calendar. Without a calendar, or without the permission, the
-appointment still lives in the app; the strip then says so rather than
-pretending the day is free.
+Saving writes the appointment and sets the status to „Termin" if it is still
+ahead — offline too. The sync server then puts it into the Infomaniak calendar,
+whatever the calendar switch in the settings says; DAVx5 brings the entry onto
+the phones. Under the appointment the detail view says where it stands:
+„Wird im Kalender angelegt …", „Im Kalender · Eingeladen: <Adresse>", or what
+went wrong, in red. Without a sync server a visit does not reach the calendar.
+Without calendar permission the strip says so rather than pretending the day is
+free.
 
-**Moving it in the calendar is enough.** Shift the entry on a laptop or in the
-car, and the app takes the new time over the next time the record is opened,
-without asking. A change made in the app on another phone moves the entry here
-after the next sync. Delete the entry in the calendar and the appointment is
-removed — said out loud, because the status falls back to „Angerufen" once no
-other appointment is ahead. A past entry that a calendar clears out on its own
-leaves the appointment in place.
+**Moving it in the calendar is enough.** Shift the entry in the web calendar or
+on a laptop, and the app takes the new time, place and title over the next time
+the record is opened, without asking — once the server has put the latest
+version into the calendar, and once this phone has seen the entry before: an
+entry seen for the first time is only taken note of when it matches. Delete the
+entry in the calendar and the appointment is removed — said out loud, because
+the status falls back to „Angerufen" once no other appointment is ahead. Not so
+with an invitation: the detail view says „Im Kalender nicht mehr gefunden" and
+offers **Termin entfernen**, which asks first, as the invitee would get a
+cancellation. If the entry turns up again, the note goes. A past entry that a
+calendar clears out on its own leaves the appointment in place.
 
 **Entfernen** asks first, for a past appointment too: it removes a piece of the
-record.
+record. With an invitation it names who gets the cancellation.
 
 Tapping an address, in the appointment or in the master data, hands it to a map
 application.
