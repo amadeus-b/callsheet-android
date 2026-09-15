@@ -107,9 +107,11 @@ to move it, drag the handle at its bottom edge to change its length; both snap
 to quarter hours. The chips underneath set 30, 60, 90 or 120 minutes in one tap,
 and whichever length you save is what the next appointment starts at.
 
-The location is prefilled from the business's address and can be overwritten —
-useful when the meeting is at a site rather than the office. It is what the
-calendar entry carries, so it is what the navigation reads.
+The location is prefilled with the address of the chosen contact person — the
+one they are assigned to, else the business's main address — and moves along
+when you pick another person, until you type a place or tap one of the address
+chips below the field. It is what the calendar entry carries, so it is what the
+navigation reads.
 
 **Notiz** says what the appointment is for — „Besichtigung", „Angebot" — and
 goes into the calendar entry's title. **Ansprechpartner** picks who to ask for
@@ -141,7 +143,7 @@ leaves the appointment in place.
 **Entfernen** asks first, for a past appointment too: it removes a piece of the
 record.
 
-Tapping the address, in the appointment or in the master data, hands it to a map
+Tapping an address, in the appointment or in the master data, hands it to a map
 application.
 
 ## Entering a single business by hand
@@ -168,14 +170,28 @@ holds it. That prevents calling somebody twice.
 Hand-entered businesses get an id carrying the `manual:` prefix. A later import
 can therefore never hit one of them and never overwrite it.
 
+## Addresses
+
+A business can have several addresses — head office, branch, yard. **Adressen
+bearbeiten** in the detail view opens them; the first is the main address, and
+**Als Hauptadresse** moves another one to the top. A label is optional, with
+„Hauptsitz", „Filiale", „Lager" and „Baustelle" one tap away. The import keeps
+the imported address up to date and leaves the others alone; an imported address
+removed by hand stays removed.
+
+Once a business has two addresses, a contact person can be assigned to one under
+**Standort**. Their phone book entry then carries only that address, their route
+leads there, and a visit with them starts there.
+
 ## Contacts
 
 Every business can carry contacts with a role, an email address and several
 numbers. The business goes into the device's phone book, into the address book
 account chosen in the settings — so a call back has a name attached. There is one
 entry per contact person, including the one from the imprint, each with the
-company name, the main number („Hauptadresse“), address, website, a map link and
-a note. A business without any contact person gets a single entry under its
+company name, the main number („Hauptadresse“), the addresses — only their own
+for a person assigned to one, each under its label —, website, a map link and a
+note. A business without any contact person gets a single entry under its
 company name.
 
 If a contact saved in the app is edited in the phone book, the app takes over

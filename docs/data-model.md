@@ -65,7 +65,7 @@ place_id        TEXT PRIMARY KEY
 name            TEXT NOT NULL
 industry        TEXT            -- may be null
 categories      TEXT            -- JSON array as text
-street, postal_code, city  TEXT
+street, postal_code, city  TEXT  -- no longer used since schema 7, not emptied; see `business_addresses`
 phone           TEXT            -- normalised, E.164 (+49…)
 website, email  TEXT
 contact_name    TEXT
@@ -75,8 +75,8 @@ closed          INTEGER         -- 0/1
 is_target       INTEGER         -- 0/1, computed on import
 origin          TEXT            -- JSON array as text
 collected_at    TEXT            -- ISO-8601
-latitude        REAL            -- from `location.lat`, nothing reads it yet
-longitude       REAL            -- from `location.lng`
+latitude        REAL            -- no longer used since schema 7
+longitude       REAL            -- no longer used since schema 7
 ```
 
 Working fields, **never overwritten by an import**:
@@ -96,8 +96,10 @@ dirty           INTEGER NOT NULL DEFAULT 0   -- 1 while a change is waiting to s
 `is_target` = 1 when the industry does **not** end in `(kein Ziel)` **and** a
 phone number is present **and** the business is not closed.
 
-There is also a `search_text` column: SQLite only lower-cases ASCII on its own;
-without it, searching for „müller" would not find „Müller".
+There is also a `search_text` column: the name and the cities of all the
+business's addresses, lower-cased. SQLite only lower-cases ASCII on its own;
+without it, searching for „müller" would not find „Müller". It is recomputed
+wherever an address is saved, imported, or arrives from the server.
 
 ### `appointments`
 
@@ -146,6 +148,39 @@ stands, and a 1.4.0 device creates appointments without it. A callback is
 completed by a call to its business (`done_at`); saving never clears
 `done_at`, the same way it never clears `event_uid`.
 
+### `business_addresses`
+
+Every address of a business — head office, branch, yard. Synchronised like
+`contact_emails`: a row per address, deleted through tombstones.
+
+```
+id           TEXT PRIMARY KEY  -- UUID; carried over and imported: 'main-<place_id>'
+place_id     TEXT NOT NULL
+label        TEXT              -- „Hauptsitz", „Filiale" …, optional
+street       TEXT
+postal_code  TEXT
+city         TEXT
+latitude     REAL              -- from the import; cleared when the address is changed by hand
+longitude    REAL
+position     INTEGER           -- 0 is the main address; NULL reads as last
+updated_at   TEXT NOT NULL
+dirty        INTEGER NOT NULL DEFAULT 0
+```
+
+Schema 7 carried each business's address over into `main-<place_id>` — the same
+id and condition the server's migration 009 uses, with the business's
+`updated_at`, marked dirty. The business's own address columns stay as they
+were and are no longer written or read.
+
+The import keeps `main-<place_id>` up to date (street, postal code, city,
+coordinates) and leaves its label, its position and every other address alone.
+A `main-` address removed by hand is recorded in the local-only table
+`removed_main_addresses (place_id)` — here or by a tombstone from the server —
+and the import does not bring it back. `deletions` cannot answer that: it is
+the outgoing queue.
+
+The list's city is the main address's; the city filter matches any address.
+
 ### `status` — allowed values
 
 | Value | Meaning |
@@ -190,6 +225,7 @@ name             TEXT NOT NULL
 role             TEXT
 email            TEXT
 note             TEXT
+address_id       TEXT               -- one of the business's addresses, or null
 position         INTEGER NOT NULL
 updated_at       TEXT NOT NULL
 dirty            INTEGER NOT NULL DEFAULT 0
@@ -205,13 +241,17 @@ updated_at  TEXT
 dirty       INTEGER NOT NULL DEFAULT 0
 ```
 
+`address_id` names the address a person sits at. A row that is not there reads
+as no assignment and is not cleared on reading — it may still arrive. Removing
+an address on this device clears the assignment of its contacts.
+
 The imported `businesses.contact_name` field stays alongside them: it is master
 data from the research and the import keeps maintaining it.
 
 ### `deletions`
 
 A tombstone table, so a deletion made on one side does not come back with the
-next sync. Contacts, their numbers and appointments are the only rows the app ever deletes.
+next sync. Contacts, their numbers and emails, appointments and business addresses are the only rows the app ever deletes.
 
 ```
 table_name  TEXT NOT NULL

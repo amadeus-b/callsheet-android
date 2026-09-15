@@ -22,6 +22,18 @@ as the release notes on GitHub.
   callbacks on both sides without a calendar entry; they get one when saved
   again. A phone still on 1.4.0 shows callbacks as appointments on site, and a
   follow-up set there is lost.
+- **Several addresses per business.** Head office, branch, yard: **Adressen
+  bearbeiten** in the detail view, each with an optional label; the first is the
+  main address. The form for a new business takes several too.
+- **A contact person can sit at one of them** (**Standort**). Their phone book
+  entry carries only that address, the route on their card leads there, and a
+  visit with them starts there. The appointment sheet offers every address as a
+  chip.
+- The city filter and the search find a business by any of its addresses.
+- A re-import keeps the imported address up to date and leaves the others alone.
+- **Update the sync server first, then every phone.** The first sync after the
+  update fetches everything once. A phone still on an older version keeps the
+  address it had and does not see addresses added elsewhere.
 
 ## 1.4.0
 
