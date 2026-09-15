@@ -18,17 +18,25 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.AppointmentDraft
@@ -49,6 +58,7 @@ import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
 import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.AppointmentKind
+import io.github.amadeusb.callsheet.data.Attendees
 import io.github.amadeusb.callsheet.data.BusinessAddress
 import io.github.amadeusb.callsheet.data.Clock
 import io.github.amadeusb.callsheet.data.Contact
@@ -94,12 +104,15 @@ fun AppointmentSheet(
     draft: AppointmentDraft,
     contacts: List<Contact>,
     addresses: List<BusinessAddress>,
-    /** The business's own address, offered for the invitation after the contact person's. */
+    /** The business's own address, offered for the attendees after the contact person's. */
     businessEmail: String?,
     onDraft: (AppointmentDraft) -> Unit,
     onSave: () -> Unit,
     onLink: (Long) -> Unit,
     onForce: () -> Unit,
+    onAddAttendee: (String) -> Unit,
+    onAnswerAttendees: (Boolean) -> Unit,
+    onCancelAttendees: () -> Unit,
     onPickDate: () -> Unit,
     onPickStart: () -> Unit,
     onPickEnd: () -> Unit,
@@ -108,6 +121,17 @@ fun AppointmentSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         val callback = draft.kind == AppointmentKind.CALLBACK
+        // Asked on saving when nothing but the list changed. Beside the dialog,
+        // or Back, cancels: the sheet stays, nothing is saved.
+        draft.attendeeQuestion?.let { question ->
+            AlertDialog(
+                onDismissRequest = onCancelAttendees,
+                title = { Text(Appointment.attendeeQuestionTitle(question)) },
+                text = { Text("Ohne Mail wird der Termin trotzdem gespeichert.") },
+                confirmButton = { TextButton(onClick = { onAnswerAttendees(true) }) { Text("Senden") } },
+                dismissButton = { TextButton(onClick = { onAnswerAttendees(false) }) { Text("Ohne Mail speichern") } },
+            )
+        }
         // The sheet takes the height it can get. The timeline is the reason
         // this screen exists, and a strip showing two hours is worth less than
         // no strip at all — it looks like the day is empty.
@@ -250,11 +274,12 @@ fun AppointmentSheet(
                 }
 
                 if (!callback) {
-                    InviteSection(
+                    AttendeeSection(
                         draft = draft,
                         contact = contacts.firstOrNull { it.id == draft.contactId },
                         businessEmail = businessEmail,
                         onDraft = onDraft,
+                        onAdd = onAddAttendee,
                     )
                 }
 
@@ -299,83 +324,83 @@ private fun SectionLabel(text: String) {
 }
 
 /**
- * „Einladung senden": the invitee's address, one of the contact person's, the
- * business's own or typed. The server sends the invitation from the calendar account; what the
- * invitee gets to see is said right here, so the note stays a private one. A
- * new contact person brings their address in the view model (withInvite).
+ * „Teilnehmende": the addresses the visit invites, each with a remove icon;
+ * the contact person's addresses and the business's own offered as chips; and
+ * a field for any other. Nothing is preselected, and a new contact person only
+ * changes the chips. What the attendees get to see is said right here, so the
+ * note stays a private one. Whether saving sends mail is asked on saving.
  */
 @Composable
-private fun InviteSection(
+private fun AttendeeSection(
     draft: AppointmentDraft,
     contact: Contact?,
     businessEmail: String?,
     onDraft: (AppointmentDraft) -> Unit,
+    onAdd: (String) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "Einladung senden",
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.weight(1f),
-        )
-        Switch(
-            checked = draft.invite,
-            onCheckedChange = { on ->
-                onDraft(
-                    draft.copy(
-                        invite = on,
-                        inviteEmail = if (on && draft.inviteEmail.isBlank()) {
-                            Appointment.inviteSuggestion(contact, businessEmail)
-                        } else {
-                            draft.inviteEmail
-                        },
-                    )
+    SectionLabel("Teilnehmende")
+    if (draft.attendees.isNotEmpty()) {
+        Row(
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            draft.attendees.forEach { address ->
+                InputChip(
+                    selected = true,
+                    onClick = { onDraft(draft.copy(attendees = draft.attendees - address)) },
+                    label = { Text(address) },
+                    trailingIcon = { Icon(Icons.Filled.Close, contentDescription = "$address entfernen") },
                 )
-            },
-        )
-    }
-    if (draft.invite) {
-        val addresses = Appointment.inviteAddresses(contact, businessEmail)
-        val personal = contact?.emails.orEmpty().map { it.email }
-        if (addresses.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                addresses.forEach { address ->
-                    FilterChip(
-                        selected = draft.inviteEmail.trim() == address,
-                        onClick = { onDraft(draft.copy(inviteEmail = address)) },
-                        // Only the address is stored; the label says whose it is.
-                        label = { Text(if (address in personal) address else "$address (Betrieb)") },
-                    )
-                }
             }
         }
-        OutlinedTextField(
-            value = draft.inviteEmail,
-            onValueChange = { onDraft(draft.copy(inviteEmail = it)) },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            singleLine = true,
-            isError = draft.inviteError != null,
-            placeholder = { Text("name@betrieb.de") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-        )
-        draft.inviteError?.let { error ->
-            Text(
-                text = error,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
+    }
+    val personal = contact?.emails.orEmpty().map { it.email }
+    val offered = Appointment.attendeeAddresses(contact, businessEmail).filterNot { Attendees.contains(draft.attendees, it) }
+    if (offered.isNotEmpty()) {
+        Row(
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            offered.forEach { address ->
+                AssistChip(
+                    onClick = { onAdd(address) },
+                    leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    // Only the address is stored; the label says whose it is.
+                    label = { Text(if (address in personal) address else "$address (Betrieb)") },
+                )
+            }
         }
     }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedTextField(
+            value = draft.attendeeInput,
+            onValueChange = { onDraft(draft.copy(attendeeInput = it)) },
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            isError = draft.attendeeError != null,
+            placeholder = { Text("name@betrieb.de") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { onAdd(draft.attendeeInput) }),
+        )
+        TextButton(onClick = { onAdd(draft.attendeeInput) }) { Text("Hinzufügen") }
+    }
+    draft.attendeeError?.let { error ->
+        Text(
+            text = error,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+    }
     Text(
-        text = "Der Eingeladene sieht Titel, Zeit und Ort, nicht die Notiz.",
+        text = "Teilnehmende sehen Titel, Zeit und Ort, nicht die Notiz.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),

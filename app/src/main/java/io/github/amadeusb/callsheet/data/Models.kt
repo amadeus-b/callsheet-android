@@ -189,8 +189,6 @@ data class AppointmentEntry(
     val doneAt: String? = null,
     /** A visit's calendar title as typed. Null means Appointment.defaultTitle. Always null for a callback. */
     val title: String? = null,
-    /** Who a visit invites. Null means no invitation. Always null for a callback. */
-    val inviteEmail: String? = null,
     /** Who a visit invites, in the order added (see Attendees). Empty for nobody; always empty for a callback. */
     val attendees: List<String> = emptyList(),
     /**

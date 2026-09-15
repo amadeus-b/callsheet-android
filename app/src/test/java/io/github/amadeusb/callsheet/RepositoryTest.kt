@@ -877,29 +877,14 @@ class RepositoryTest {
     }
 
     @Test
-    fun `a visit keeps its title and invitation, a callback stores neither`() = runTest {
-        repo.saveAppointment(
-            visit("A-1", "t-1", "2026-09-16T09:00:00+02:00").copy(title = "Erstgespräch", inviteEmail = "info@example.org")
-        )
-        repo.saveAppointment(
-            callback("R-1", "t-1", "2026-09-15T09:00:00+02:00").copy(title = "Erstgespräch", inviteEmail = "info@example.org")
-        )
+    fun `a visit keeps its title, a callback stores none`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00").copy(title = "Erstgespräch"))
+        repo.saveAppointment(callback("R-1", "t-1", "2026-09-15T09:00:00+02:00").copy(title = "Erstgespräch"))
 
         val visit = repo.appointment("A-1")!!
         assertEquals("Erstgespräch", visit.title)
-        assertEquals("info@example.org", visit.inviteEmail)
         assertTrue(visit.dirty)
         assertNull(repo.appointment("R-1")!!.title)
-        assertNull(repo.appointment("R-1")!!.inviteEmail)
-    }
-
-    @Test
-    fun `switching the invitation off clears the address`() = runTest {
-        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00").copy(inviteEmail = "info@example.org"))
-
-        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00"))
-
-        assertNull(repo.appointment("A-1")!!.inviteEmail)
     }
 
     @Test

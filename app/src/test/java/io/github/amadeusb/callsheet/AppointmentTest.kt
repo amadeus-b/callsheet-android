@@ -971,96 +971,15 @@ class AppointmentTest {
     }
 
     @Test
-    fun `an invitation needs an address that looks like one`() {
-        assertNull(Appointment.inviteError(invite = false, email = ""))
-        assertNull(Appointment.inviteError(invite = true, email = " info@elektro-meier.de "))
-        assertEquals(Appointment.INVALID_INVITE, Appointment.inviteError(invite = true, email = ""))
-        assertEquals(Appointment.INVALID_INVITE, Appointment.inviteError(invite = true, email = "info@elektro-meier"))
-        assertEquals(Appointment.INVALID_INVITE, Appointment.inviteError(invite = true, email = "info elektro@meier.de"))
-    }
-
-    @Test
-    fun `switched off, no address is stored`() {
-        assertNull(Appointment.inviteToStore(invite = false, email = "info@elektro-meier.de"))
-        assertEquals("info@elektro-meier.de", Appointment.inviteToStore(invite = true, email = " info@elektro-meier.de "))
-    }
-
-    @Test
-    fun `the invitation is preset to the contact person's first address`() {
-        assertEquals("a@meier.de", Appointment.inviteSuggestion(personWithEmails("a@meier.de", "b@meier.de"), null))
-        assertEquals("a@meier.de", Appointment.inviteSuggestion(personWithEmails("a@meier.de"), "info@meier.de"))
-        assertEquals("", Appointment.inviteSuggestion(personWithEmails(), null))
-        assertEquals("", Appointment.inviteSuggestion(null, null))
-    }
-
-    @Test
-    fun `without a contact person's address the invitation is preset to the business's`() {
-        // Imported businesses rarely have a contact person.
-        assertEquals("info@meier.de", Appointment.inviteSuggestion(null, " info@meier.de "))
-        assertEquals("info@meier.de", Appointment.inviteSuggestion(personWithEmails(), "info@meier.de"))
-    }
-
-    @Test
     fun `the business's address is offered after the contact person's, once and only when there is one`() {
         assertEquals(
             listOf("a@meier.de", "b@meier.de", "info@meier.de"),
-            Appointment.inviteAddresses(personWithEmails("a@meier.de", "b@meier.de"), " info@meier.de "),
+            Appointment.attendeeAddresses(personWithEmails("a@meier.de", "b@meier.de"), " info@meier.de "),
         )
-        assertEquals(listOf("Info@Meier.de"), Appointment.inviteAddresses(personWithEmails("Info@Meier.de"), " info@meier.de"))
-        assertEquals(listOf("a@meier.de"), Appointment.inviteAddresses(personWithEmails("a@meier.de"), "   "))
-        assertEquals(emptyList<String>(), Appointment.inviteAddresses(null, ""))
-        assertEquals(emptyList<String>(), Appointment.inviteAddresses(null, null))
-    }
-
-    @Test
-    fun `switching the contact person to nobody brings the business's address, a typed one stays`() {
-        val people = mapOf("K-M" to personWithEmails("a@meier.de"))
-        val withBusiness = { contactId: String? -> Appointment.inviteAddresses(people[contactId], "info@meier.de") }
-
-        assertEquals("info@meier.de", Appointment.inviteAfterContactChange(invited, invited.copy(contactId = null), withBusiness))
-        val typed = invited.copy(inviteEmail = "chef@meier.de")
-        assertNull(Appointment.inviteAfterContactChange(typed, typed.copy(contactId = null), withBusiness))
-    }
-
-    private val emails = mapOf(
-        "K-M" to listOf("a@meier.de", "b@meier.de"),
-        "K-H" to listOf("h@huber.de"),
-        "K-0" to emptyList(),
-    )
-    private val emailsFor = { contactId: String? -> emails[contactId].orEmpty() }
-    private val invited = AppointmentDraft(
-        placeId = "P1", startIso = "2026-09-10T14:00:00+02:00", minutes = 60, location = "",
-        contactId = "K-M", invite = true, inviteEmail = "a@meier.de",
-    )
-
-    @Test
-    fun `another contact person brings their first address where the previous one's was preselected`() {
-        assertEquals("h@huber.de", Appointment.inviteAfterContactChange(invited, invited.copy(contactId = "K-H"), emailsFor))
-        // Nobody before, nothing typed: the empty field was the preset.
-        val nobody = invited.copy(contactId = null, inviteEmail = "")
-        assertEquals("h@huber.de", Appointment.inviteAfterContactChange(nobody, nobody.copy(contactId = "K-H"), emailsFor))
-        // A person without an address empties it — the invitation must not go to the previous person.
-        assertEquals("", Appointment.inviteAfterContactChange(invited, invited.copy(contactId = "K-0"), emailsFor))
-        assertEquals("", Appointment.inviteAfterContactChange(invited, invited.copy(contactId = null), emailsFor))
-    }
-
-    @Test
-    fun `a typed or picked address stays when the contact person changes`() {
-        val typed = invited.copy(inviteEmail = "chef@meier.de")
-        assertNull(Appointment.inviteAfterContactChange(typed, typed.copy(contactId = "K-H"), emailsFor))
-        // The person's second address, picked by chip, is a choice too.
-        val second = invited.copy(inviteEmail = "b@meier.de")
-        assertNull(Appointment.inviteAfterContactChange(second, second.copy(contactId = "K-H"), emailsFor))
-    }
-
-    @Test
-    fun `the invitation's address follows nothing while it is off, the person stays, or it is a callback`() {
-        val off = invited.copy(invite = false)
-        assertNull(Appointment.inviteAfterContactChange(off, off.copy(contactId = "K-H"), emailsFor))
-        assertNull(Appointment.inviteAfterContactChange(invited, invited.copy(note = "Angebot"), emailsFor))
-        assertNull(Appointment.inviteAfterContactChange(invited, invited.copy(contactId = "K-H", inviteEmail = "x@y.de"), emailsFor))
-        val callback = invited.copy(kind = AppointmentKind.CALLBACK)
-        assertNull(Appointment.inviteAfterContactChange(callback, callback.copy(contactId = "K-H"), emailsFor))
+        assertEquals(listOf("Info@Meier.de"), Appointment.attendeeAddresses(personWithEmails("Info@Meier.de"), " info@meier.de"))
+        assertEquals(listOf("a@meier.de"), Appointment.attendeeAddresses(personWithEmails("a@meier.de"), "   "))
+        assertEquals(emptyList<String>(), Appointment.attendeeAddresses(null, ""))
+        assertEquals(emptyList<String>(), Appointment.attendeeAddresses(null, null))
     }
 
     @Test

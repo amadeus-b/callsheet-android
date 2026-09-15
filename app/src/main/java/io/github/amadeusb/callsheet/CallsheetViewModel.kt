@@ -12,6 +12,7 @@ import io.github.amadeusb.callsheet.calendar.EventFields
 import io.github.amadeusb.callsheet.calling.Agenda
 import io.github.amadeusb.callsheet.calling.AgendaSection
 import io.github.amadeusb.callsheet.calling.Appointment
+import io.github.amadeusb.callsheet.calling.AttendeeQuestion
 import io.github.amadeusb.callsheet.calling.BusyInterval
 import io.github.amadeusb.callsheet.calling.CallFlow
 import io.github.amadeusb.callsheet.calling.Located
@@ -25,6 +26,7 @@ import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.BusinessAddress
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
+import io.github.amadeusb.callsheet.data.Attendees
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.ContactDraft
@@ -144,12 +146,18 @@ data class AppointmentDraft(
     val adoptable: Set<Long> = emptySet(),
     /** A visit's calendar title, preset to Appointment.visitTitle. Unused for a callback. */
     val title: String = "",
-    /** „Einladung senden". Only for a visit. */
-    val invite: Boolean = false,
-    /** The invitee's address as typed or picked. */
-    val inviteEmail: String = "",
-    /** Why the address blocks saving; null while nothing is wrong. */
-    val inviteError: String? = null,
+    /** A visit's attendees, in the order added. Nothing is preselected. Only for a visit. */
+    val attendees: List<String> = emptyList(),
+    /** An address typed but not added yet. Saving adds it first. */
+    val attendeeInput: String = "",
+    /** Why an address was refused; null while nothing is wrong. */
+    val attendeeError: String? = null,
+    /** The question on saving, while its dialog is open (Appointment.attendeeQuestion). */
+    val attendeeQuestion: AttendeeQuestion? = null,
+    /** The answer to [attendeeQuestion]: true „Senden", false „Ohne Mail speichern", null not asked yet. */
+    val sendToAttendees: Boolean? = null,
+    /** „Trotzdem anlegen" was chosen before the question came: the save after the answer keeps it. */
+    val forced: Boolean = false,
 )
 
 data class State(
@@ -1072,8 +1080,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                             existing?.eventUid != null && located == null,
                         calendarReadable = readable,
                         title = if (sheetKind == AppointmentKind.VISIT) Appointment.visitTitle(existing?.title, business.name) else "",
-                        invite = existing?.inviteEmail != null,
-                        inviteEmail = existing?.inviteEmail.orEmpty(),
+                        attendees = existing?.attendees.orEmpty(),
                     ),
                     // The lists the preset was taken from: the sheet's chips and
                     // withPlace read these, so all three agree.
@@ -1113,9 +1120,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun updateAppointmentDraft(incoming: AppointmentDraft) {
         val previous = _state.value.appointmentDraft
-        // Place and invitation both follow a new contact person, each only
-        // where it was not chosen by hand.
-        val draft = withInvite(previous, withPlace(previous, incoming))
+        // The place follows a new contact person where it was not chosen by
+        // hand. The attendees never do: only the chips on offer change.
+        val draft = withPlace(previous, incoming)
         val previousDay = Clock.todayStart(Clock.millis(previous?.startIso) ?: 0L)
         val newDay = Clock.todayStart(Clock.millis(draft.startIso) ?: return)
         val dayChanged = previous == null || previousDay != newDay
@@ -1128,7 +1135,11 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             it.copy(
                 appointmentDraft = draft.copy(
                     conflict = emptyList(),
-                    inviteError = null,
+                    attendeeError = null,
+                    // A change after the question makes the answer stale: the next save asks again.
+                    attendeeQuestion = null,
+                    sendToAttendees = null,
+                    forced = false,
                     busy = if (dayChanged) emptyList() else draft.busy,
                 )
             )
@@ -1161,24 +1172,45 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         )
     }
 
-    /**
-     * The invitation's address as the sheet shows it after [incoming]: a new
-     * contact person brings their first address where the previous person's
-     * was still preselected — or the business's address, for nobody or a
-     * person without one. See Appointment.inviteAfterContactChange.
-     */
-    private fun withInvite(previous: AppointmentDraft?, incoming: AppointmentDraft): AppointmentDraft {
-        if (previous == null) return incoming
-        val state = _state.value
-        val businessEmail = state.detail?.takeIf { it.placeId == incoming.placeId }?.email
-        val address = Appointment.inviteAfterContactChange(previous, incoming) { contactId ->
-            Appointment.inviteAddresses(state.detailContacts.firstOrNull { it.id == contactId }, businessEmail)
-        }
-        return address?.let { incoming.copy(inviteEmail = it) } ?: incoming
-    }
-
     fun dismissAppointment() {
         _state.update { it.copy(appointmentDraft = null) }
+    }
+
+    /**
+     * Adds a picked or typed address to the visit's attendees. The field is
+     * cleared once its own text went in; a refused address stays in it with
+     * the reason underneath (Attendees.add).
+     */
+    fun addAttendee(typed: String) {
+        _state.update { state ->
+            val draft = state.appointmentDraft ?: return@update state
+            val result = Attendees.add(draft.attendees, typed)
+            val fromField = typed.trim() == draft.attendeeInput.trim()
+            state.copy(
+                appointmentDraft = draft.copy(
+                    attendees = result.addresses,
+                    attendeeInput = if (fromField && result.error == null) "" else draft.attendeeInput,
+                    attendeeError = result.error,
+                    attendeeQuestion = null,
+                    sendToAttendees = null,
+                )
+            )
+        }
+    }
+
+    /** The answer to the question on saving: „Senden" or „Ohne Mail speichern". Saves with it. */
+    fun answerAttendeeQuestion(send: Boolean) {
+        val draft = _state.value.appointmentDraft ?: return
+        _state.update { it.copy(appointmentDraft = draft.copy(attendeeQuestion = null, sendToAttendees = send)) }
+        saveAppointment(force = draft.forced)
+    }
+
+    /** The question dismissed — beside the dialog, or Back: back to the sheet, nothing saved. */
+    fun cancelAttendeeQuestion() {
+        _state.update { state ->
+            val draft = state.appointmentDraft ?: return@update state
+            state.copy(appointmentDraft = draft.copy(attendeeQuestion = null, sendToAttendees = null, forced = false))
+        }
     }
 
     /** Writes the appointment, its calendar event, and — for one still ahead — the status. */
@@ -1383,11 +1415,12 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
     /**
      * Saves a visit. The calendar is the server's business: it creates, moves
-     * and removes the event through the Infomaniak API and sends the
-     * invitation. Here only the row is written — offline too — then synced at
+     * and removes the event through the Infomaniak API and notifies the
+     * attendees. Here only the row is written — offline too — then synced at
      * once and once more a little later, so the server's UID and calendar
      * state come down without another tap. A taken slot is still asked about;
-     * nothing is linked.
+     * nothing is linked. A change to nothing but the attendees is asked about
+     * too, after the slot (Appointment.attendeeQuestion).
      */
     private suspend fun saveVisit(
         draft: AppointmentDraft,
@@ -1398,13 +1431,16 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         endMillis: Long,
         force: Boolean,
     ) {
-        Appointment.inviteError(draft.invite, draft.inviteEmail)?.let { error ->
-            _state.update { it.copy(appointmentDraft = draft.copy(inviteError = error)) }
+        // An address still in the field goes in first — or blocks saving.
+        val typed = Attendees.add(draft.attendees, draft.attendeeInput)
+        if (typed.error != null) {
+            _state.update { it.copy(appointmentDraft = draft.copy(attendeeError = typed.error)) }
             return
         }
-        val plan = Appointment.planVisit(startMillis, endMillis, draft.busy, force)
+        val current = draft.copy(attendees = typed.addresses, attendeeInput = "")
+        val plan = Appointment.planVisit(startMillis, endMillis, current.busy, force)
         if (plan is SavePlan.Conflict) {
-            _state.update { it.copy(appointmentDraft = draft.copy(conflict = plan.with)) }
+            _state.update { it.copy(appointmentDraft = current.copy(conflict = plan.with)) }
             return
         }
         val entry = AppointmentEntry(
@@ -1418,11 +1454,23 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             eventUid = existing?.eventUid,
             kind = AppointmentKind.VISIT,
             title = Appointment.titleToStore(draft.title, business.name),
-            inviteEmail = Appointment.inviteToStore(draft.invite, draft.inviteEmail),
+            attendees = current.attendees,
         )
+        // Nothing but the list changed: ask before any mail goes out. The answer
+        // comes back through answerAttendeeQuestion, which saves again.
+        val question = Appointment.attendeeQuestion(existing, entry, business.name)
+        if (question != null && current.sendToAttendees == null) {
+            // The slot, if it collided, was accepted: its notice goes while the dialog is open.
+            _state.update {
+                it.copy(appointmentDraft = current.copy(attendeeQuestion = question, forced = force, conflict = emptyList()))
+            }
+            return
+        }
         // The length a visit starts at follows the last visit.
         preferences.appointmentMinutes = draft.minutes
-        repo.saveAppointment(entry)
+        repo.saveAppointment(
+            entry.copy(attendeesNotify = Appointment.attendeesNotifyToStore(existing, entry, question, current.sendToAttendees))
+        )
         Appointment.statusAfterSave(entry.kind, entry.startsAt, entry.endsAt, System.currentTimeMillis())
             ?.let { repo.setStatus(draft.placeId, it) }
         _state.update { it.copy(appointmentDraft = null, hint = null) }

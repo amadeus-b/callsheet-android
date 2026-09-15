@@ -999,12 +999,10 @@ class Repository(context: Context) {
             put("starts_at", entry.startsAt)
             put("ends_at", entry.endsAt)
             put("location", if (entry.kind == AppointmentKind.CALLBACK) null else entry.location)
-            // A callback has neither: its title is built from its note, and
-            // nobody is invited to a phone call. A null title is the default,
-            // a null address no invitation — both written, so switching the
-            // invitation off clears it.
+            // A callback has no title of its own: it is built from its note. A
+            // null title is the default. `invite_email` is written no more:
+            // attendees took its place in schema 10.
             put("title", if (entry.kind == AppointmentKind.CALLBACK) null else entry.title)
-            put("invite_email", if (entry.kind == AppointmentKind.CALLBACK) null else entry.inviteEmail)
             // Nobody is invited to a phone call. An empty list is stored as none.
             put("attendees", if (entry.kind == AppointmentKind.CALLBACK) null else Attendees.format(entry.attendees))
             // Only in a save that changed the list; otherwise the decision stored
@@ -1297,7 +1295,6 @@ class Repository(context: Context) {
         kind = AppointmentKind.fromKey(c.text("kind")),
         doneAt = c.text("done_at"),
         title = c.text("title"),
-        inviteEmail = c.text("invite_email"),
         attendees = Attendees.parse(c.text("attendees")),
         attendeesNotify = c.int("attendees_notify")?.let { it == 1 },
         calendarState = CalendarState.fromKey(c.text("calendar_state")),

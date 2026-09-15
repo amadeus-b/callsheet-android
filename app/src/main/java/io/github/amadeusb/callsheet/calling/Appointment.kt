@@ -178,11 +178,6 @@ object Appointment {
      */
     const val RESYNC_AFTER_SAVE_MILLIS: Long = 5_000L
 
-    /** Said under the address when it blocks saving. */
-    const val INVALID_INVITE: String = "Das ist keine gültige E-Mail-Adresse."
-
-    private val EMAIL = Regex("""[^@\s]+@[^@\s]+\.[^@\s]+""")
-
     /**
      * A visit's title when none was typed. The server builds the same text for
      * a null `title` (`defaultTitle` in its `src/visitState.js`); the two must not
@@ -205,55 +200,17 @@ object Appointment {
     fun titleToStore(typed: String, businessName: String): String? =
         typed.trim().takeUnless { it.isEmpty() || it == defaultTitle(businessName) }
 
-    /** Why the address blocks saving, or null. Only with the invitation switched on. */
-    fun inviteError(invite: Boolean, email: String): String? =
-        if (!invite || EMAIL.matches(email.trim())) null else INVALID_INVITE
-
-    /** The address stored for the invitation; null means nobody is invited. */
-    fun inviteToStore(invite: Boolean, email: String): String? =
-        if (invite) email.trim().ifEmpty { null } else null
-
     /**
-     * The addresses a visit's invitation offers: the contact person's in their
-     * order, then the business's own — imported businesses rarely have a
+     * The addresses offered for a visit's attendees: the contact person's in
+     * their order, then the business's own — imported businesses rarely have a
      * contact person. The business's is trimmed, and left out when blank or
      * already among the person's (ignoring case).
      */
-    fun inviteAddresses(contact: Contact?, businessEmail: String?): List<String> {
+    fun attendeeAddresses(contact: Contact?, businessEmail: String?): List<String> {
         val personal = contact?.emails.orEmpty().map { it.email }
         val business = businessEmail?.trim().orEmpty()
         val known = business.isEmpty() || personal.any { it.trim().equals(business, ignoreCase = true) }
         return if (known) personal else personal + business
-    }
-
-    /** The address the invitation starts at: the contact person's first, else the business's, else none. */
-    fun inviteSuggestion(contact: Contact?, businessEmail: String?): String =
-        inviteAddresses(contact, businessEmail).firstOrNull().orEmpty()
-
-    /**
-     * The invitation's address after the sheet reported [incoming], or null to
-     * leave [incoming]'s as it is. Called by the view model next to
-     * placeAfterContactChange.
-     *
-     * It follows to the new contact person's first address — empty where they
-     * have none, so the invitation never goes to the person picked before —
-     * only when all of this holds: a visit, the invitation on, the person
-     * changed, the address not changed in the same update, and the address
-     * still the preselected one, the previous person's first (empty for nobody
-     * or a person without an address). An address typed, or picked by chip
-     * other than the first, is a choice and stays. [emailsFor] gives a person's
-     * addresses in order; null means no person.
-     */
-    fun inviteAfterContactChange(
-        previous: AppointmentDraft,
-        incoming: AppointmentDraft,
-        emailsFor: (contactId: String?) -> List<String>,
-    ): String? {
-        if (incoming.kind != AppointmentKind.VISIT || !previous.invite || !incoming.invite) return null
-        if (incoming.contactId == previous.contactId || incoming.inviteEmail != previous.inviteEmail) return null
-        val preselected = emailsFor(previous.contactId).firstOrNull().orEmpty()
-        if (previous.inviteEmail.trim() != preselected) return null
-        return emailsFor(incoming.contactId).firstOrNull().orEmpty()
     }
 
     private val range: DateTimeFormatter =
