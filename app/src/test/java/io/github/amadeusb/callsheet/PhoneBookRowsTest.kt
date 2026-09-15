@@ -38,7 +38,7 @@ class PhoneBookRowsTest {
     private fun fields(
         name: PersonName? = PersonName("Max", "Mustermann"),
         numbers: List<PhoneBookNumber> = listOf(PhoneBookNumber("+491701234567", PhoneType.MOBILE)),
-        address: PostalAddress? = PostalAddress("Musterweg 1", "85000", "Musterstadt", "Deutschland"),
+        addresses: List<PostalAddress> = listOf(PostalAddress("Musterweg 1", "85000", "Musterstadt", "Deutschland")),
         websites: List<PhoneBookWebsite> = listOf(
             PhoneBookWebsite("https://example.org/", WebsiteKind.WORK),
             PhoneBookWebsite("https://www.google.com/maps/search/?api=1&query=x", WebsiteKind.OTHER),
@@ -51,7 +51,7 @@ class PhoneBookRowsTest {
         email = "info@example.org",
         note = "Branche: Bau",
         numbers = numbers,
-        address = address,
+        addresses = addresses,
         websites = websites,
     )
 
@@ -113,7 +113,7 @@ class PhoneBookRowsTest {
 
     @Test
     fun `no address means no postal row`() {
-        val rows = PhoneBook.dataRows(fields(address = null, websites = emptyList()))
+        val rows = PhoneBook.dataRows(fields(addresses = emptyList(), websites = emptyList()))
         assertTrue(rows.of(StructuredPostal.CONTENT_ITEM_TYPE).isEmpty())
         assertTrue(rows.of(Website.CONTENT_ITEM_TYPE).isEmpty())
     }
@@ -124,5 +124,25 @@ class PhoneBookRowsTest {
         assertEquals(PersonName("Anna Maria", "Beispiel"), PersonName.of("  Anna   Maria Beispiel "))
         assertEquals(PersonName(null, "Aleks"), PersonName.of("Aleks"))
         assertNull(PersonName.of("   "))
+    }
+
+    @Test
+    fun `every address is a postal row, a labelled one under its label`() {
+        val rows = PhoneBook.dataRows(
+            fields(
+                addresses = listOf(
+                    PostalAddress("Musterweg 1", "85000", "Musterstadt", "Deutschland"),
+                    PostalAddress("Hafenstraße 5", "85001", "Hafenstadt", "Deutschland", label = "Filiale"),
+                ),
+            )
+        )
+
+        val postal = rows.of(StructuredPostal.CONTENT_ITEM_TYPE)
+        assertEquals(2, postal.size)
+        assertEquals(StructuredPostal.TYPE_WORK, postal[0].getAsInteger(StructuredPostal.TYPE))
+        assertNull(postal[0].getAsString(StructuredPostal.LABEL))
+        assertEquals("Hafenstraße 5", postal[1].getAsString(StructuredPostal.STREET))
+        assertEquals(StructuredPostal.TYPE_CUSTOM, postal[1].getAsInteger(StructuredPostal.TYPE))
+        assertEquals("Filiale", postal[1].getAsString(StructuredPostal.LABEL))
     }
 }

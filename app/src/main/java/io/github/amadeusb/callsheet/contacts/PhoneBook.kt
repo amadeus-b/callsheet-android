@@ -54,6 +54,8 @@ data class PostalAddress(
     val postalCode: String?,
     val city: String?,
     val country: String,
+    /** „Filiale" … Written as a custom type; null keeps the work type. */
+    val label: String? = null,
 )
 
 enum class WebsiteKind { WORK, OTHER }
@@ -75,7 +77,8 @@ data class ContactFields(
     val email: String?,
     val note: String?,
     val numbers: List<PhoneBookNumber>,
-    val address: PostalAddress? = null,
+    /** Main address first. Empty for none. */
+    val addresses: List<PostalAddress> = emptyList(),
     val websites: List<PhoneBookWebsite> = emptyList(),
 )
 
@@ -242,13 +245,18 @@ object PhoneBook {
                 put(Organization.TYPE, Organization.TYPE_WORK)
             }
         }
-        fields.address?.let { address ->
+        fields.addresses.forEach { address ->
             row(StructuredPostal.CONTENT_ITEM_TYPE) {
                 put(StructuredPostal.STREET, address.street)
                 put(StructuredPostal.POSTCODE, address.postalCode)
                 put(StructuredPostal.CITY, address.city)
                 put(StructuredPostal.COUNTRY, address.country)
-                put(StructuredPostal.TYPE, StructuredPostal.TYPE_WORK)
+                if (address.label != null) {
+                    put(StructuredPostal.TYPE, StructuredPostal.TYPE_CUSTOM)
+                    put(StructuredPostal.LABEL, address.label)
+                } else {
+                    put(StructuredPostal.TYPE, StructuredPostal.TYPE_WORK)
+                }
             }
         }
         fields.websites.forEach { site ->

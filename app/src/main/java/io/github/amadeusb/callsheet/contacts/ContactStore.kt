@@ -53,7 +53,9 @@ class ContactStore(
         return lock.withLock {
             val others = repo.contacts(business.placeId).filter { it.id != savedInApp }
             readBackUnlocked(account, business, others)
-            val entries = PhoneBookEntries.forBusiness(business, repo.contacts(business.placeId))
+            val entries = PhoneBookEntries.forBusiness(
+                business, repo.contacts(business.placeId), repo.addresses(business.placeId),
+            )
             var written = 0
             for (entry in entries) {
                 // A failed write keeps the last version: recording none would make

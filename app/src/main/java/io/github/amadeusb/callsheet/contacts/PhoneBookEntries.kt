@@ -1,6 +1,8 @@
 package io.github.amadeusb.callsheet.contacts
 
+import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.Business
+import io.github.amadeusb.callsheet.data.BusinessAddress
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.MANUAL_PREFIX
 import java.net.URLEncoder
@@ -19,8 +21,14 @@ object PhoneBookEntries {
     private const val COUNTRY = "Deutschland"
     private const val MAP_SEARCH = "https://www.google.com/maps/search/?api=1&query="
 
-    fun forBusiness(business: Business, contacts: List<Contact>): List<ContactFields> {
+    /**
+     * [addresses] are the business's. A person assigned to one of them carries
+     * only that one; a person without an assignment, or assigned to a row that
+     * is not here, and the company's own entry carry all, main address first.
+     */
+    fun forBusiness(business: Business, contacts: List<Contact>, addresses: List<BusinessAddress>): List<ContactFields> {
         val mainNumber = business.phone.clean()
+        val all = Addresses.ordered(addresses)
         // Saved by hand under the same name, the imported person is already
         // there — as the one the user has worked on.
         val imported = business.contactName.clean()
@@ -36,9 +44,12 @@ object PhoneBookEntries {
                 email = null,
                 ownNote = null,
                 ownNumbers = emptyList(),
+                addresses = all,
+                place = all.firstOrNull(),
             )
         }
         contacts.forEach { contact ->
+            val assigned = Addresses.assigned(contact.addressId, addresses)
             entries += entry(
                 business = business,
                 sourceId = contact.id,
@@ -47,6 +58,8 @@ object PhoneBookEntries {
                 email = contact.email,
                 ownNote = contact.note,
                 ownNumbers = contact.numbers.toPhoneBookNumbers(),
+                addresses = assigned?.let { listOf(it) } ?: all,
+                place = assigned ?: all.firstOrNull(),
             )
         }
         return entries
@@ -60,6 +73,9 @@ object PhoneBookEntries {
         email: String?,
         ownNote: String?,
         ownNumbers: List<PhoneBookNumber>,
+        addresses: List<BusinessAddress>,
+        /** Where the map link of a hand-entered business leads. */
+        place: BusinessAddress?,
     ) = ContactFields(
         sourceId = sourceId,
         name = name,
@@ -68,8 +84,8 @@ object PhoneBookEntries {
         email = email.clean() ?: business.email.clean(),
         note = note(business, ownNote),
         numbers = numbers(ownNumbers, business.phone.clean()),
-        address = address(business),
-        websites = websites(business),
+        addresses = addresses.mapNotNull { postal(it) },
+        websites = websites(business, place),
     )
 
     /** The person's own numbers, then the main number unless they already hold it. */
@@ -90,31 +106,29 @@ object PhoneBookEntries {
         return listOfNotNull(ownNote.clean(), facts.clean()).joinToString("\n").clean()
     }
 
-    private fun address(business: Business): PostalAddress? {
-        val street = business.street.clean()
-        val postalCode = business.postalCode.clean()
-        val city = business.city.clean()
+    private fun postal(address: BusinessAddress): PostalAddress? {
+        val street = address.street.clean()
+        val postalCode = address.postalCode.clean()
+        val city = address.city.clean()
         if (street == null && postalCode == null && city == null) return null
-        return PostalAddress(street, postalCode, city, COUNTRY)
+        return PostalAddress(street, postalCode, city, COUNTRY, label = address.label.clean())
     }
 
-    private fun websites(business: Business): List<PhoneBookWebsite> = listOfNotNull(
+    private fun websites(business: Business, place: BusinessAddress?): List<PhoneBookWebsite> = listOfNotNull(
         business.website.clean()?.let { PhoneBookWebsite(it, WebsiteKind.WORK) },
-        mapLink(business)?.let { PhoneBookWebsite(it, WebsiteKind.OTHER) },
+        mapLink(business, place)?.let { PhoneBookWebsite(it, WebsiteKind.OTHER) },
     )
 
     /**
      * An imported business is found by its place id. A hand-entered one has
-     * none, so the map searches for its address — and without one there is no
-     * link.
+     * none, so the map searches for [place] — the person's address, else the
+     * main address — and without one there is no link.
      */
-    private fun mapLink(business: Business): String? {
+    private fun mapLink(business: Business, place: BusinessAddress?): String? {
         if (!business.placeId.startsWith(MANUAL_PREFIX)) {
             return MAP_SEARCH + encode(business.name) + "&query_place_id=" + encode(business.placeId)
         }
-        val town = listOfNotNull(business.postalCode.clean(), business.city.clean()).joinToString(" ")
-        val address = listOfNotNull(business.street.clean(), town.clean()).joinToString(", ")
-        return address.clean()?.let { MAP_SEARCH + encode(it) }
+        return place?.oneLine?.let { MAP_SEARCH + encode(it) }
     }
 
     // The Charset overload needs API 33; minSdk is 30.
