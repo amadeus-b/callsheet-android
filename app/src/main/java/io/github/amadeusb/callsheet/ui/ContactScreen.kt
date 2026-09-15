@@ -53,6 +53,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import io.github.amadeusb.callsheet.data.Addresses
+import io.github.amadeusb.callsheet.data.BusinessAddress
 import io.github.amadeusb.callsheet.data.ContactDraft
 import io.github.amadeusb.callsheet.data.EmailDraft
 import io.github.amadeusb.callsheet.data.PhoneDraft
@@ -70,6 +72,7 @@ import io.github.amadeusb.callsheet.data.PhoneType
 fun ContactScreen(
     draft: ContactDraft,
     businessName: String,
+    addresses: List<BusinessAddress>,
     error: String?,
     saving: Boolean,
     onChange: (ContactDraft) -> Unit,
@@ -182,6 +185,35 @@ fun ContactScreen(
                 ),
             )
             roleSuggestions { onChange(draft.copy(role = it)) }
+
+            // Only with a choice to make: with one address, everybody is there.
+            if (addresses.size >= 2) {
+                Section("Standort")
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        // A row that is gone reads as none.
+                        selected = Addresses.assigned(draft.addressId, addresses) == null,
+                        onClick = { onChange(draft.copy(addressId = null)) },
+                        label = { Text("Keiner") },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    )
+                    Addresses.ordered(addresses).forEach { address ->
+                        FilterChip(
+                            selected = draft.addressId == address.id,
+                            onClick = { onChange(draft.copy(addressId = address.id)) },
+                            label = { Text(Addresses.name(address)) },
+                            modifier = Modifier.heightIn(min = 44.dp),
+                        )
+                    }
+                }
+            }
 
             Section("E-Mail-Adressen")
             Text(

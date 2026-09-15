@@ -607,6 +607,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 emails = existing.emails
                     .map { EmailDraft(id = it.id, email = it.email) }
                     .ifEmpty { listOf(EmailDraft()) },
+                addressId = existing.addressId,
             )
         }
         val screen = Screen.ContactForm(placeId, id)

@@ -330,6 +330,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
         is Screen.ContactForm -> ContactScreen(
             draft = state.contactDraft,
             businessName = state.detail?.name ?: "diesem Betrieb",
+            addresses = state.detailAddresses,
             error = state.contactError,
             saving = state.saving,
             onChange = vm::updateContactDraft,
