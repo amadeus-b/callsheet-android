@@ -116,13 +116,16 @@ class BusinessFormTest {
     }
 
     @Test
-    fun `the same number cannot be created twice`() = runTest {
+    fun `the same number can stand at a second business`() = runTest {
         repo.create(BusinessDraft(name = "Erster Eintrag", phone = "+49 621 9900096")).getOrThrow()
-        // Different notation, same number.
-        val e = repo.create(BusinessDraft(name = "Zweiter Eintrag", phone = "0621 9900096"))
-        assertTrue(e.isFailure)
-        assertTrue(e.exceptionOrNull()!!.message!!.contains("Erster Eintrag"))
-        assertEquals(1, repo.count(Filter(status = emptySet(), onlyTargets = false)))
+        // Different notation, same number: one number often serves several businesses.
+        val second = repo.create(BusinessDraft(name = "Zweiter Eintrag", phone = "0621 9900096"))
+
+        assertTrue(second.isSuccess)
+        assertEquals("+496219900096", repo.business(second.getOrThrow())!!.phone)
+        assertEquals(2, repo.count(Filter(status = emptySet(), onlyTargets = false)))
+        // Both go into the phone book, one entry each.
+        assertEquals(2, repo.businessesForPhoneBook().count { it.phone == "+496219900096" })
     }
 
     @Test

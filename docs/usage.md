@@ -179,9 +179,9 @@ The **Herkunft** field matters: for every business it has to stay traceable
 where the contact came from. For imported businesses the research run provides
 that; for a hand-entered one only this note does.
 
-Two things the app catches: an incomplete phone number is rejected, and the same
-number cannot be created twice — the message then names the business that already
-holds it. That prevents calling somebody twice.
+An incomplete phone number is rejected. A number another business already holds
+is accepted — one number often serves several businesses; the phone book then
+holds it once per business.
 
 Hand-entered businesses get an id carrying the `manual:` prefix. A later import
 can therefore never hit one of them and never overwrite it.

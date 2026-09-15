@@ -368,6 +368,10 @@ class Repository(context: Context) {
      * overwrite the entry as a duplicate. Re-importing leaves hand-entered
      * businesses alone — it only touches what is in the file.
      *
+     * A number another business already holds is accepted: one number often
+     * serves several businesses — a family firm with two trades, a shared
+     * office. Only an incomplete number is refused.
+     *
      * Returns the new `place_id`, or a message the UI can show.
      */
     suspend fun create(new: BusinessDraft): Result<String> = withContext(Dispatchers.IO) {
@@ -381,19 +385,6 @@ class Repository(context: Context) {
             return@withContext Result.failure(
                 IllegalArgumentException("Die Telefonnummer ist unvollständig. Lass sie leer oder trag sie vollständig ein.")
             )
-        }
-
-        // Calling the same number twice is the mistake this check exists to
-        // prevent — even when the business goes by a different name.
-        if (phone != null) {
-            val existing = helper.readableDatabase.rawQuery(
-                "SELECT name FROM businesses WHERE phone = ? LIMIT 1", arrayOf(phone)
-            ).use { c -> if (c.moveToFirst()) c.getString(0) else null }
-            if (existing != null) {
-                return@withContext Result.failure(
-                    IllegalStateException("Diese Nummer steht schon bei „$existing“. Such den Betrieb in der Liste, statt ihn doppelt anzulegen.")
-                )
-            }
         }
 
         val industry = new.industry.trim().ifEmpty { null }
