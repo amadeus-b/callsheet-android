@@ -104,6 +104,7 @@ fun BusinessDetailScreen(
     onOutcome: (Status, String) -> Unit,
     onContact: (String?) -> Unit,
     onEditAddresses: () -> Unit,
+    onEditMasterData: () -> Unit,
     /** Opens the sheet for a new callback at the given start. */
     onCallback: (String) -> Unit,
     onAppointment: (String?) -> Unit,
@@ -217,6 +218,7 @@ fun BusinessDetailScreen(
                     onOpenUrl = onOpenUrl,
                     onDial = onDial,
                     onEditAddresses = onEditAddresses,
+                    onEditMasterData = onEditMasterData,
                 )
             }
 
@@ -534,6 +536,7 @@ private fun MasterData(
     business: Business,
     addresses: List<BusinessAddress>,
     onEditAddresses: () -> Unit,
+    onEditMasterData: () -> Unit,
     onOpenUrl: (String) -> Unit,
     onDial: (DialTarget) -> Unit,
 ) {
@@ -556,7 +559,8 @@ private fun MasterData(
         )
         Spacer(Modifier.height(8.dp))
 
-        DataRow("Ansprechpartner (importiert)", business.contactName)
+        // „(importiert)" only while the name is the imported one — see MasterData.contactNameLabel.
+        DataRow(io.github.amadeusb.callsheet.data.MasterData.contactNameLabel(business.editedFields), business.contactName)
 
         val mainNumber = business.phone?.takeIf { it.isNotBlank() }
         if (mainNumber == null) {
@@ -603,6 +607,12 @@ private fun MasterData(
         }
         DataRow("Bewertung", rating)
         DataRow("Zuletzt geändert", Clock.readable(business.updatedAt))
+        TextButton(
+            onClick = onEditMasterData,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        ) {
+            Text("Stammdaten bearbeiten")
+        }
     }
 }
 

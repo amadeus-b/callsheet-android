@@ -284,6 +284,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                     },
                     onContact = { id -> vm.showContact(business.placeId, id) },
                     onEditAddresses = { vm.showAddresses(business.placeId) },
+                    onEditMasterData = { vm.showMasterData(business.placeId) },
                     onCallback = { start -> vm.openCallback(business.placeId, start) },
                     onAppointment = { id -> vm.openAppointment(business.placeId, id) },
                     onRemoveAppointment = vm::removeAppointment,
@@ -329,6 +330,18 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             onChange = vm::updateDraft,
             onSave = vm::saveDraft,
             onCancel = { vm.back() },
+        )
+
+        is Screen.MasterDataForm -> BusinessFormScreen(
+            draft = state.draft,
+            knownIndustries = state.allIndustries,
+            knownCities = state.allCities,
+            error = state.formError,
+            saving = state.saving,
+            onChange = vm::updateDraft,
+            onSave = { vm.saveMasterData(screen.placeId) },
+            onCancel = { vm.back() },
+            editing = true,
         )
 
         is Screen.ContactForm -> ContactScreen(

@@ -48,6 +48,11 @@ import io.github.amadeusb.callsheet.data.BusinessDraft
  * Entering a single business by hand — the referral over the phone, the business
  * card from a trade fair. Importing stays the usual route; this is the one-off.
  *
+ * With [editing] the same form edits an existing business's master data: name,
+ * number, industry, contact name, website, email. Addresses have their own
+ * screen, note and status stay in the detail view, and the origin is recorded
+ * once, when a business is created — so those sections are left out.
+ *
  * The screen holds no state: every keystroke reports the complete new draft
  * upwards. Only the presentation itself (scroll position) stays here.
  */
@@ -62,6 +67,7 @@ fun BusinessFormScreen(
     onChange: (BusinessDraft) -> Unit,
     onSave: () -> Unit,
     onCancel: () -> Unit,
+    editing: Boolean = false,
 ) {
     val nameMissing = draft.name.isBlank()
     val scroll = rememberScrollState()
@@ -75,7 +81,7 @@ fun BusinessFormScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Neuer Betrieb") },
+                title = { Text(if (editing) "Stammdaten bearbeiten" else "Neuer Betrieb") },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
@@ -121,7 +127,10 @@ fun BusinessFormScreen(
                         } else {
                             Icon(Icons.Filled.Check, contentDescription = null)
                             Spacer(Modifier.width(12.dp))
-                            Text("Betrieb speichern", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                if (editing) "Stammdaten speichern" else "Betrieb speichern",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
                         }
                     }
                 }
@@ -184,13 +193,16 @@ fun BusinessFormScreen(
             )
 
             // ---- Addresses --------------------------------------------------
-            Section("Adressen")
+            // Not when editing: an existing business's addresses have their own screen.
+            if (!editing) {
+                Section("Adressen")
 
-            AddressList(
-                drafts = draft.addresses,
-                knownCities = knownCities,
-                onChange = { onChange(draft.copy(addresses = it)) },
-            )
+                AddressList(
+                    drafts = draft.addresses,
+                    knownCities = knownCities,
+                    onChange = { onChange(draft.copy(addresses = it)) },
+                )
+            }
 
             // ---- Contact ----------------------------------------------------
             Section("Kontakt")
@@ -227,31 +239,34 @@ fun BusinessFormScreen(
             )
 
             // ---- Origin and note --------------------------------------------
-            Section("Herkunft und Notiz")
+            // Not when editing: the note lives in the detail view, the origin is recorded once.
+            if (!editing) {
+                Section("Herkunft und Notiz")
 
-            Field(
-                value = draft.origin,
-                onValue = { onChange(draft.copy(origin = it)) },
-                label = "Herkunft",
-                placeholder = "z. B. Empfehlung von Firma Weber, Visitenkarte Messe Bau 2026",
-                keyboard = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Sentences,
-                    imeAction = ImeAction.Next,
-                ),
-            )
+                Field(
+                    value = draft.origin,
+                    onValue = { onChange(draft.copy(origin = it)) },
+                    label = "Herkunft",
+                    placeholder = "z. B. Empfehlung von Firma Weber, Visitenkarte Messe Bau 2026",
+                    keyboard = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Next,
+                    ),
+                )
 
-            Field(
-                value = draft.note,
-                onValue = { onChange(draft.copy(note = it)) },
-                label = "Notiz",
-                placeholder = "Was sonst noch wichtig ist",
-                singleLine = false,
-                minHeight = 120,
-                keyboard = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Sentences,
-                    imeAction = ImeAction.Done,
-                ),
-            )
+                Field(
+                    value = draft.note,
+                    onValue = { onChange(draft.copy(note = it)) },
+                    label = "Notiz",
+                    placeholder = "Was sonst noch wichtig ist",
+                    singleLine = false,
+                    minHeight = 120,
+                    keyboard = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Done,
+                    ),
+                )
+            }
 
             Spacer(Modifier.height(24.dp))
         }

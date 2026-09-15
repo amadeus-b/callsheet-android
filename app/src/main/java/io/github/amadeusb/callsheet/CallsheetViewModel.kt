@@ -33,6 +33,8 @@ import io.github.amadeusb.callsheet.data.EmailDraft
 import io.github.amadeusb.callsheet.data.EntryKind
 import io.github.amadeusb.callsheet.data.Filter
 import io.github.amadeusb.callsheet.data.ImportResult
+import io.github.amadeusb.callsheet.data.MasterData
+import io.github.amadeusb.callsheet.data.MasterValues
 import io.github.amadeusb.callsheet.data.BusinessDraft
 import io.github.amadeusb.callsheet.data.PhoneDraft
 import io.github.amadeusb.callsheet.data.Repository
@@ -73,6 +75,9 @@ sealed interface Screen {
     data object Agenda : Screen
     data object Settings : Screen
     data object BusinessForm : Screen
+
+    /** The business form in editing mode, for an existing business's master data. */
+    data class MasterDataForm(val placeId: String) : Screen
 
     /** The form for a contact; a null [id] means a new one. */
     data class ContactForm(val placeId: String, val id: String?) : Screen
@@ -200,6 +205,8 @@ data class State(
     val outsideBusinessHours: Boolean = false,
     val draft: BusinessDraft = BusinessDraft(),
     val formError: String? = null,
+    /** The master data as the editing form opened: what saving compares with (Repository.updateMasterData). */
+    val masterDataBefore: MasterValues? = null,
     val saving: Boolean = false,
     /** The "Mail gesendet" dialog: open, mid-send, or showing the last failure. */
     val mailDialogOpen: Boolean = false,
@@ -509,6 +516,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             is Screen.Agenda -> loadAgenda()
             is Screen.Settings -> loadBlocked()
             is Screen.BusinessForm -> Unit
+            is Screen.MasterDataForm -> Unit
             is Screen.ContactForm -> Unit
             is Screen.AddressForm -> Unit
         }
@@ -605,6 +613,54 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                         saving = false,
                         formError = error.message ?: "Der Betrieb ließ sich nicht anlegen.",
                     )
+                },
+            )
+        }
+    }
+
+    /** Opens the business form in editing mode, filled from the business on show. */
+    fun showMasterData(placeId: String) {
+        val business = _state.value.detail?.takeIf { it.placeId == placeId } ?: return
+        val screen = Screen.MasterDataForm(placeId)
+        val history = historyFor(screen)
+        _state.update {
+            it.copy(
+                screen = screen,
+                history = history,
+                draft = MasterData.draft(business),
+                formError = null,
+                masterDataBefore = MasterData.of(business),
+            )
+        }
+    }
+
+    /**
+     * Saves the master data and returns to the record. The phone book follows,
+     * the way it follows a saved contact: a changed number, name or email
+     * belongs in the entries at once.
+     */
+    fun saveMasterData(placeId: String) {
+        if (_state.value.saving) return
+        val draft = _state.value.draft
+        val before = _state.value.masterDataBefore ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(saving = true, formError = null) }
+            repo.updateMasterData(placeId, before, draft).fold(
+                onSuccess = {
+                    // Off the form first, and only then no longer saving: a second
+                    // tap on „Stammdaten speichern" must not find the form still there.
+                    // back() reloads the detail view.
+                    back()
+                    val industries = repo.industries()
+                    _state.update {
+                        it.copy(saving = false, draft = BusinessDraft(), masterDataBefore = null, allIndustries = industries)
+                    }
+                    repo.business(placeId)?.let { store.persistBusiness(it) }
+                },
+                onFailure = { error ->
+                    _state.update {
+                        it.copy(saving = false, formError = error.message ?: "Die Stammdaten ließen sich nicht speichern.")
+                    }
                 },
             )
         }
