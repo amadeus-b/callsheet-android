@@ -296,6 +296,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                     AppointmentSheet(
                         draft = draft,
                         contacts = state.detailContacts,
+                        addresses = state.detailAddresses,
                         onDraft = vm::updateAppointmentDraft,
                         onSave = { vm.saveAppointment() },
                         onLink = { vm.saveAppointment(linkExisting = it) },

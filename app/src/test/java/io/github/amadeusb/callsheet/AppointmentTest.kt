@@ -198,6 +198,57 @@ class AppointmentTest {
         assertEquals("", Appointment.presetLocation("k1", listOf(person("k1", "A2")), emptyList()))
     }
 
+    // --- the place after the contact person changed ---------------------------
+
+    private val headLine = "Musterweg 1, 85000 Musterstadt"
+    private val branchLine = "Hafenstraße 5, 85001 Hafenstadt"
+
+    /** k1 sits at the main address, k2 at the branch; nobody means the main address. */
+    private val presets: (String?) -> String? = { contactId -> if (contactId == "k2") branchLine else headLine }
+
+    private fun sheet(contactId: String?, location: String, edited: Boolean = false, kind: AppointmentKind = AppointmentKind.VISIT) =
+        AppointmentDraft(
+            placeId = "P1", startIso = "2026-09-17T10:00:00+02:00", minutes = 60,
+            location = location, kind = kind, contactId = contactId, locationEdited = edited,
+        )
+
+    @Test
+    fun `a place not chosen by hand moves along to the new person's address`() {
+        assertEquals(branchLine, Appointment.placeAfterContactChange(sheet("k1", headLine), sheet("k2", headLine), presets))
+        assertEquals(headLine, Appointment.placeAfterContactChange(sheet("k2", branchLine), sheet(null, branchLine), presets))
+    }
+
+    @Test
+    fun `a place chosen by hand stays when the person changes`() {
+        // Typed: differs from the previous person's address.
+        assertEquals("Baustelle Nord", Appointment.placeAfterContactChange(sheet("k1", "Baustelle Nord", edited = true), sheet("k2", "Baustelle Nord", edited = true), presets))
+        // Picked by chip, even the chip of the previous person's own address.
+        assertEquals(headLine, Appointment.placeAfterContactChange(sheet("k1", headLine, edited = true), sheet("k2", headLine, edited = true), presets))
+    }
+
+    @Test
+    fun `a place that is not the previous person's address stays, flag or not`() {
+        assertEquals("Baustelle Nord", Appointment.placeAfterContactChange(sheet("k1", "Baustelle Nord"), sheet("k2", "Baustelle Nord"), presets))
+    }
+
+    @Test
+    fun `without a change of person, or without a preset, the incoming place is kept`() {
+        assertEquals("Musterweg 1a", Appointment.placeAfterContactChange(sheet("k1", headLine), sheet("k1", "Musterweg 1a"), presets))
+        assertEquals("", Appointment.placeAfterContactChange(sheet("k1", ""), sheet("k2", ""), { null }))
+    }
+
+    @Test
+    fun `a callback's place never moves`() {
+        assertEquals(
+            "",
+            Appointment.placeAfterContactChange(
+                sheet("k1", "", kind = AppointmentKind.CALLBACK),
+                sheet("k2", "", kind = AppointmentKind.CALLBACK),
+                presets,
+            ),
+        )
+    }
+
     // --- readableRange ------------------------------------------------------
 
     @Test

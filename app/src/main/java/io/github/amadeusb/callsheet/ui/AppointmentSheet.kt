@@ -44,7 +44,9 @@ import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.AppointmentDraft
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.BusyInterval
+import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.AppointmentKind
+import io.github.amadeusb.callsheet.data.BusinessAddress
 import io.github.amadeusb.callsheet.data.Clock
 import io.github.amadeusb.callsheet.data.Contact
 import java.time.format.DateTimeFormatter
@@ -77,13 +79,16 @@ private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
  * a conflict notice (~120 dp) and the button (~96 dp) stay within an ordinary
  * phone's sheet — "Termin speichern" is never pushed off the bottom, least of
  * all when a conflict is showing. A callback has no place: the location field
- * is left out, and the durations are a phone call's.
+ * is left out, and the durations are a phone call's. A visit's place starts at
+ * the contact person's address and offers every address of the business as a
+ * chip.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppointmentSheet(
     draft: AppointmentDraft,
     contacts: List<Contact>,
+    addresses: List<BusinessAddress>,
     onDraft: (AppointmentDraft) -> Unit,
     onSave: () -> Unit,
     onLink: (Long) -> Unit,
@@ -166,6 +171,25 @@ fun AppointmentSheet(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                         singleLine = false,
                     )
+                    // Every address of the business, one tap each. Free text stays possible.
+                    val places = Addresses.ordered(addresses).mapNotNull { address -> address.oneLine?.let { address to it } }
+                    if (places.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            places.forEach { (address, line) ->
+                                FilterChip(
+                                    selected = draft.location.trim() == line,
+                                    // Chosen by hand even when it is the preset: it stays when the person changes.
+                                    onClick = { onDraft(draft.copy(location = line, locationEdited = true)) },
+                                    label = { Text(Addresses.name(address)) },
+                                )
+                            }
+                        }
+                    }
                 }
 
                 SectionLabel("Notiz")

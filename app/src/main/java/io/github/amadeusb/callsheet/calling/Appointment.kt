@@ -1,5 +1,6 @@
 package io.github.amadeusb.callsheet.calling
 
+import io.github.amadeusb.callsheet.AppointmentDraft
 import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
@@ -227,6 +228,31 @@ object Appointment {
     fun presetLocation(contactId: String?, contacts: List<Contact>, addresses: List<BusinessAddress>): String {
         val person = contacts.firstOrNull { it.id == contactId }
         return Addresses.forContact(person?.addressId, addresses)?.oneLine.orEmpty()
+    }
+
+    /**
+     * The place for [incoming] after the sheet changed from [previous]. It
+     * follows the contact person only while it was not chosen by hand: when the
+     * person changed, the place did not change in the same update, and the
+     * previous place was still the previous person's preset and not marked as
+     * chosen ([AppointmentDraft.locationEdited] — a chip counts as chosen, even
+     * the chip of that very address). Then it is the new person's preset, or,
+     * without one, stays as it was. A callback has no place and never moves.
+     *
+     * [presetFor] gives a person's preset place, null for none; a null id is no
+     * person. The visits plan builds on this signature — keep it.
+     */
+    fun placeAfterContactChange(
+        previous: AppointmentDraft,
+        incoming: AppointmentDraft,
+        presetFor: (contactId: String?) -> String?,
+    ): String {
+        if (incoming.kind == AppointmentKind.CALLBACK) return incoming.location
+        if (incoming.contactId == previous.contactId) return incoming.location
+        if (incoming.location != previous.location) return incoming.location
+        val handEdited = previous.locationEdited || previous.location != presetFor(previous.contactId).orEmpty()
+        if (handEdited) return incoming.location
+        return presetFor(incoming.contactId) ?: incoming.location
     }
 
     /** Within a minute counts as the same moment. */

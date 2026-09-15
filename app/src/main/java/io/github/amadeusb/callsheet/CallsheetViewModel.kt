@@ -97,6 +97,12 @@ data class AppointmentDraft(
     val startIso: String,
     val minutes: Int,
     val location: String,
+    /**
+     * The place was chosen in this sheet — typed, or picked by chip. Until then
+     * a new contact person moves it along to their address
+     * (Appointment.placeAfterContactChange).
+     */
+    val locationEdited: Boolean = false,
     /** Visit or callback. Chosen by where the sheet was opened; an existing appointment keeps its own. */
     val kind: AppointmentKind = AppointmentKind.VISIT,
     /** The appointment being changed; null for a new one. */
@@ -929,8 +935,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     /**
      * Opens the sheet for a visit. Without [appointmentId] a new visit starts as
      * before: in two days, snapped to the quarter hour, the last duration used,
-     * the business's address. With one, everything comes from that appointment
-     * — its kind too, so „Ändern" on a callback opens a callback.
+     * the address of its contact person, else the business's main address. With
+     * one, everything comes from that appointment — its kind too, so „Ändern" on
+     * a callback opens a callback.
      */
     fun openAppointment(placeId: String, appointmentId: String? = null) =
         openSheet(placeId, appointmentId, AppointmentKind.VISIT, startIso = null)
@@ -958,11 +965,14 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 sheetKind == AppointmentKind.CALLBACK -> Appointment.CALLBACK_MINUTES
                 else -> preferences.appointmentMinutes
             }
+            val contacts = repo.contacts(placeId)
+            val addresses = repo.addresses(placeId)
+            val preset = Appointment.presetLocation(existing?.contactId, contacts, addresses)
             val location = when {
                 existing != null -> existing.location.orEmpty()
                 // A phone call has no place.
                 sheetKind == AppointmentKind.CALLBACK -> ""
-                else -> Appointment.address(business.street, business.postalCode, business.city).orEmpty()
+                else -> preset
             }
             val readable = CalendarStore.canRead(context)
             _state.update {
@@ -972,6 +982,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                         startIso = start,
                         minutes = minutes,
                         location = location,
+                        // A stored place other than the person's address was chosen before.
+                        locationEdited = existing != null && location != preset,
                         kind = sheetKind,
                         appointmentId = existing?.id,
                         note = existing?.note.orEmpty(),
@@ -981,7 +993,11 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                         eventElsewhere = preferences.calendarEnabled && lookup?.isSuccess == true &&
                             existing?.eventUid != null && located == null,
                         calendarReadable = readable,
-                    )
+                    ),
+                    // The lists the preset was taken from: the sheet's chips and
+                    // withPlace read these, so all three agree.
+                    detailContacts = if (it.detail?.placeId == placeId) contacts else it.detailContacts,
+                    detailAddresses = if (it.detail?.placeId == placeId) addresses else it.detailAddresses,
                 )
             }
             Clock.millis(start)?.let {
@@ -1012,8 +1028,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun updateAppointmentDraft(draft: AppointmentDraft) {
+    fun updateAppointmentDraft(incoming: AppointmentDraft) {
         val previous = _state.value.appointmentDraft
+        val draft = withPlace(previous, incoming)
         val previousDay = Clock.todayStart(Clock.millis(previous?.startIso) ?: 0L)
         val newDay = Clock.todayStart(Clock.millis(draft.startIso) ?: return)
         val dayChanged = previous == null || previousDay != newDay
@@ -1038,6 +1055,24 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 loadBusy(start, existing?.eventUid, existing?.calendarEventId)
             }
         }
+    }
+
+    /**
+     * [incoming] with its place as the sheet shows it. A place changed in this
+     * update counts as chosen by hand; a new contact person moves a place not
+     * chosen along to their address (Appointment.placeAfterContactChange).
+     * The presets come from the same lists openSheet took its preset from.
+     */
+    private fun withPlace(previous: AppointmentDraft?, incoming: AppointmentDraft): AppointmentDraft {
+        if (previous == null) return incoming
+        val state = _state.value
+        val location = Appointment.placeAfterContactChange(previous, incoming) { contactId ->
+            Appointment.presetLocation(contactId, state.detailContacts, state.detailAddresses).ifEmpty { null }
+        }
+        return incoming.copy(
+            location = location,
+            locationEdited = incoming.locationEdited || incoming.location != previous.location,
+        )
     }
 
     fun dismissAppointment() {
