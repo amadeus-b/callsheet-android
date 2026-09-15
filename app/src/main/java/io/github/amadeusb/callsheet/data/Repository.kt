@@ -1005,6 +1005,12 @@ class Repository(context: Context) {
             // invitation off clears it.
             put("title", if (entry.kind == AppointmentKind.CALLBACK) null else entry.title)
             put("invite_email", if (entry.kind == AppointmentKind.CALLBACK) null else entry.inviteEmail)
+            // Nobody is invited to a phone call. An empty list is stored as none.
+            put("attendees", if (entry.kind == AppointmentKind.CALLBACK) null else Attendees.format(entry.attendees))
+            // Only in a save that changed the list; otherwise the decision stored
+            // for the last change stays. See Appointment.attendeesNotifyToStore.
+            val notify = entry.attendeesNotify
+            if (entry.kind == AppointmentKind.VISIT && notify != null) put("attendees_notify", if (notify) 1 else 0)
             put("note", entry.note)
             put("contact_id", entry.contactId)
             if (entry.eventUid != null) put("event_uid", entry.eventUid)
@@ -1292,6 +1298,8 @@ class Repository(context: Context) {
         doneAt = c.text("done_at"),
         title = c.text("title"),
         inviteEmail = c.text("invite_email"),
+        attendees = Attendees.parse(c.text("attendees")),
+        attendeesNotify = c.int("attendees_notify")?.let { it == 1 },
         calendarState = CalendarState.fromKey(c.text("calendar_state")),
         calendarError = c.text("calendar_error"),
         seenTitle = c.text("calendar_seen_title"),

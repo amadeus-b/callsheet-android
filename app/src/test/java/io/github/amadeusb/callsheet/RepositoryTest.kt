@@ -903,6 +903,35 @@ class RepositoryTest {
     }
 
     @Test
+    fun `a visit stores its attendees and the notify decision, a callback neither`() = runTest {
+        repo.saveAppointment(
+            visit("A-1", "t-1", "2026-09-16T09:00:00+02:00")
+                .copy(attendees = listOf("test@example.org", "zweite@example.org"), attendeesNotify = false)
+        )
+        repo.saveAppointment(
+            callback("R-1", "t-1", "2026-09-15T09:00:00+02:00").copy(attendees = listOf("test@example.org"), attendeesNotify = true)
+        )
+
+        val visit = repo.appointment("A-1")!!
+        assertEquals(listOf("test@example.org", "zweite@example.org"), visit.attendees)
+        assertEquals(false, visit.attendeesNotify)
+        assertTrue(repo.appointment("R-1")!!.attendees.isEmpty())
+        assertNull(repo.appointment("R-1")!!.attendeesNotify)
+    }
+
+    @Test
+    fun `saving without a notify decision keeps the stored one, nobody is stored as none`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00").copy(attendees = listOf("test@example.org"), attendeesNotify = false))
+
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00").copy(attendees = emptyList(), attendeesNotify = null))
+
+        val visit = repo.appointment("A-1")!!
+        assertTrue(visit.attendees.isEmpty())
+        assertEquals(false, visit.attendeesNotify)
+        assertEquals(1, count("SELECT COUNT(*) FROM appointments WHERE id = 'A-1' AND attendees IS NULL"))
+    }
+
+    @Test
     fun `the server's calendar state is read, and saving leaves it alone`() = runTest {
         repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00"))
         execute(

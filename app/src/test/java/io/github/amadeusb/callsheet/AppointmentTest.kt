@@ -1,6 +1,7 @@
 package io.github.amadeusb.callsheet
 
 import io.github.amadeusb.callsheet.calling.Appointment
+import io.github.amadeusb.callsheet.calling.AttendeeQuestion
 import io.github.amadeusb.callsheet.calling.BusyInterval
 import io.github.amadeusb.callsheet.calling.CalendarLine
 import io.github.amadeusb.callsheet.calling.Located
@@ -1127,9 +1128,10 @@ class AppointmentTest {
             Appointment.calendarLine(visit.copy(eventUid = "abc", calendarState = CalendarState.OK), syncConfigured = true),
         )
         assertEquals(
-            CalendarLine("Im Kalender · Eingeladen: test@example.org"),
+            CalendarLine("Im Kalender · Teilnehmende: test@example.org, zweite@example.org"),
             Appointment.calendarLine(
-                visit.copy(eventUid = "abc", calendarState = CalendarState.OK, inviteEmail = "test@example.org"), syncConfigured = true,
+                visit.copy(eventUid = "abc", calendarState = CalendarState.OK, attendees = listOf("test@example.org", "zweite@example.org")),
+                syncConfigured = true,
             ),
         )
         assertEquals(
@@ -1156,7 +1158,7 @@ class AppointmentTest {
     @Test
     fun `an invited visit missing from the calendar offers its removal instead of a state`() {
         val visit = entry("A-1", "2026-09-10T14:00:00+02:00")
-            .copy(eventUid = "abc", calendarState = CalendarState.OK, inviteEmail = "test@example.org")
+            .copy(eventUid = "abc", calendarState = CalendarState.OK, attendees = listOf("test@example.org"))
 
         assertEquals(
             CalendarLine("Im Kalender nicht mehr gefunden", error = true, offersRemoval = true),
@@ -1182,12 +1184,16 @@ class AppointmentTest {
     }
 
     @Test
-    fun `removing an invited visit says who gets a cancellation`() {
+    fun `removing a visit with attendees says who gets a cancellation`() {
         val visit = entry("A-1", "2026-09-10T14:00:00+02:00")
 
-        assertEquals("test@example.org bekommt eine Absage.", Appointment.cancellationNotice(visit.copy(inviteEmail = "test@example.org")))
+        assertEquals("test@example.org bekommt eine Absage.", Appointment.cancellationNotice(visit.copy(attendees = listOf("test@example.org"))))
+        assertEquals(
+            "test@example.org, zweite@example.org bekommen eine Absage.",
+            Appointment.cancellationNotice(visit.copy(attendees = listOf("test@example.org", "zweite@example.org"))),
+        )
         assertNull(Appointment.cancellationNotice(visit))
-        assertNull(Appointment.cancellationNotice(visit.copy(kind = AppointmentKind.CALLBACK, inviteEmail = "test@example.org")))
+        assertNull(Appointment.cancellationNotice(visit.copy(kind = AppointmentKind.CALLBACK, attendees = listOf("test@example.org"))))
     }
 
     @Test
@@ -1195,7 +1201,7 @@ class AppointmentTest {
         val visit = entry("A-1", "2026-09-10T14:00:00+02:00")
 
         assertFalse(Appointment.removalAsks(visit, missing = true))
-        assertTrue(Appointment.removalAsks(visit.copy(inviteEmail = "test@example.org"), missing = true))
+        assertTrue(Appointment.removalAsks(visit.copy(attendees = listOf("test@example.org")), missing = true))
         // The ordinary „Entfernen" always asks: it removes a piece of the record.
         assertTrue(Appointment.removalAsks(visit, missing = false))
         assertTrue(Appointment.removalAsks(visit.copy(kind = AppointmentKind.CALLBACK), missing = false))
@@ -1205,5 +1211,81 @@ class AppointmentTest {
     fun `a removal that did not ask says what it did`() {
         assertEquals("Termin entfernt.", Appointment.removedHint(null))
         assertEquals("Termin entfernt. Status zurück auf „Angerufen“.", Appointment.removedHint(Status.CALLED))
+    }
+
+    // --- attendees: the question on saving ------------------------------------
+
+    private val storedVisit = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00")
+        .copy(location = "Zehentstraße 39", attendees = listOf("test@example.org"))
+    private val withSecond = storedVisit.copy(attendees = listOf("test@example.org", "zweite@example.org"))
+
+    @Test
+    fun `a new visit with attendees asks about mail to them, one without asks nothing`() {
+        assertEquals(AttendeeQuestion(listOf("test@example.org"), emptyList()), Appointment.attendeeQuestion(null, storedVisit, "Elektro Meier"))
+        assertNull(Appointment.attendeeQuestion(null, storedVisit.copy(attendees = emptyList()), "Elektro Meier"))
+    }
+
+    @Test
+    fun `a change to the attendees alone asks about the added and the removed`() {
+        val after = storedVisit.copy(attendees = listOf("zweite@example.org"), note = "Angebot", contactId = "K-1")
+
+        assertEquals(
+            AttendeeQuestion(listOf("zweite@example.org"), listOf("test@example.org")),
+            Appointment.attendeeQuestion(storedVisit, after, "Elektro Meier"),
+        )
+    }
+
+    @Test
+    fun `the same attendees in another spelling or order are no change`() {
+        val before = storedVisit.copy(attendees = listOf("a@example.org", "b@example.org"))
+
+        assertNull(Appointment.attendeeQuestion(before, before.copy(attendees = listOf(" B@example.org", "a@example.org")), "Elektro Meier"))
+        assertNull(Appointment.attendeeQuestion(storedVisit, storedVisit.copy(note = "Angebot"), "Elektro Meier"))
+    }
+
+    @Test
+    fun `with title, time or place changed nothing is asked, everybody is notified`() {
+        val name = "Elektro Meier"
+        assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(startsAt = "2026-09-10T16:00:00+02:00"), name))
+        assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(endsAt = "2026-09-10T16:00:00+02:00"), name))
+        assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(location = "Am Pulverl 5"), name))
+        assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(title = "Angebot besprechen"), name))
+        // The preset title written out, and the same instant with another offset, are no change.
+        val onlySecond = AttendeeQuestion(listOf("zweite@example.org"), emptyList())
+        assertEquals(onlySecond, Appointment.attendeeQuestion(storedVisit, withSecond.copy(title = "Erstgespräch KI bei Elektro Meier – Christoph Bauer"), name))
+        assertEquals(onlySecond, Appointment.attendeeQuestion(storedVisit, withSecond.copy(startsAt = "2026-09-10T12:00:00Z"), name))
+    }
+
+    @Test
+    fun `a callback never asks`() {
+        assertNull(Appointment.attendeeQuestion(null, storedVisit.copy(kind = AppointmentKind.CALLBACK), "Elektro Meier"))
+    }
+
+    @Test
+    fun `the question names the added and the removed, shortened past three`() {
+        assertEquals("Mail an a@example.org senden?", Appointment.attendeeQuestionTitle(AttendeeQuestion(listOf("a@example.org"), emptyList())))
+        assertEquals("Absage an c@example.org senden?", Appointment.attendeeQuestionTitle(AttendeeQuestion(emptyList(), listOf("c@example.org"))))
+        assertEquals(
+            "Mail an a@example.org, b@example.org und Absage an c@example.org senden?",
+            Appointment.attendeeQuestionTitle(AttendeeQuestion(listOf("a@example.org", "b@example.org"), listOf("c@example.org"))),
+        )
+        assertEquals(
+            "Mail an a@example.org, b@example.org und 2 weitere senden?",
+            Appointment.attendeeQuestionTitle(
+                AttendeeQuestion(listOf("a@example.org", "b@example.org", "c@example.org", "d@example.org"), emptyList())
+            ),
+        )
+    }
+
+    @Test
+    fun `the notify decision is stored only when the attendees changed`() {
+        val question = AttendeeQuestion(listOf("zweite@example.org"), emptyList())
+
+        assertNull(Appointment.attendeesNotifyToStore(storedVisit, storedVisit.copy(note = "Angebot"), null, null))
+        assertEquals(false, Appointment.attendeesNotifyToStore(storedVisit, withSecond, question, send = false))
+        assertEquals(true, Appointment.attendeesNotifyToStore(storedVisit, withSecond, question, send = true))
+        // Changed together with the time: not asked, everybody hears of it.
+        assertEquals(true, Appointment.attendeesNotifyToStore(storedVisit, withSecond.copy(startsAt = "2026-09-10T16:00:00+02:00"), null, null))
+        assertNull(Appointment.attendeesNotifyToStore(null, storedVisit.copy(kind = AppointmentKind.CALLBACK), null, null))
     }
 }

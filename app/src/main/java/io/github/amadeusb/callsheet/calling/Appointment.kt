@@ -4,6 +4,7 @@ import io.github.amadeusb.callsheet.AppointmentDraft
 import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
+import io.github.amadeusb.callsheet.data.Attendees
 import io.github.amadeusb.callsheet.data.BusinessAddress
 import io.github.amadeusb.callsheet.data.CalendarState
 import io.github.amadeusb.callsheet.data.Clock
@@ -126,6 +127,12 @@ sealed interface Reconcile {
  * it — see Reconcile.MissingVisit.
  */
 data class CalendarLine(val text: String, val error: Boolean = false, val offersRemoval: Boolean = false)
+
+/**
+ * What saving a visit asks before any mail goes out: the addresses added to its
+ * attendees, and the ones removed. See Appointment.attendeeQuestion.
+ */
+data class AttendeeQuestion(val added: List<String>, val removed: List<String>)
 
 /**
  * The arithmetic behind an appointment on site.
@@ -384,7 +391,10 @@ object Appointment {
                 if (entry.eventUid == null) "Wird im Kalender angelegt …" else "Wird im Kalender aktualisiert …"
             )
             entry.calendarState == CalendarState.OK -> CalendarLine(
-                listOfNotNull("Im Kalender", entry.inviteEmail?.let { "Eingeladen: $it" }).joinToString(" · ")
+                listOfNotNull(
+                    "Im Kalender",
+                    entry.attendees.takeIf { it.isNotEmpty() }?.let { "Teilnehmende: ${Attendees.names(it)}" },
+                ).joinToString(" · ")
             )
             entry.calendarState == CalendarState.ERROR -> CalendarLine(
                 "Nicht im Kalender: ${entry.calendarError ?: "unbekannter Fehler"}",
@@ -394,9 +404,12 @@ object Appointment {
         }
     }
 
-    /** What removing a visit sends: a cancellation to the invitee. Null without one. */
-    fun cancellationNotice(entry: AppointmentEntry): String? =
-        entry.inviteEmail?.takeIf { entry.kind == AppointmentKind.VISIT }?.let { "$it bekommt eine Absage." }
+    /** What removing a visit sends: a cancellation to every attendee. Null without any. */
+    fun cancellationNotice(entry: AppointmentEntry): String? {
+        if (entry.kind != AppointmentKind.VISIT || entry.attendees.isEmpty()) return null
+        val verb = if (entry.attendees.size == 1) "bekommt" else "bekommen"
+        return "${Attendees.names(entry.attendees)} $verb eine Absage."
+    }
 
     /**
      * Whether removing [entry] asks first. The ordinary „Entfernen" always does:
@@ -411,6 +424,58 @@ object Appointment {
     /** The hint after a removal that did not ask: that it went, and the status it fell back to, if any. */
     fun removedHint(fallback: Status?): String =
         if (fallback == null) "Termin entfernt." else "Termin entfernt. Status zurück auf „${fallback.label}“."
+
+    /**
+     * What saving [after] asks before any mail goes out, or null to save without
+     * asking. Only for a visit whose attendees changed (added or removed,
+     * ignoring case and order) — and for an existing visit ([before]) only when
+     * title, time and place did not: with those changed, everybody on the list
+     * is notified without a question, the user's rule. A new visit with
+     * attendees always asks.
+     */
+    fun attendeeQuestion(before: AppointmentEntry?, after: AppointmentEntry, businessName: String): AttendeeQuestion? {
+        if (after.kind != AppointmentKind.VISIT) return null
+        val old = before?.attendees.orEmpty()
+        val added = Attendees.added(old, after.attendees)
+        val removed = Attendees.removed(old, after.attendees)
+        if (added.isEmpty() && removed.isEmpty()) return null
+        if (before != null && !sameForAttendees(before, after, businessName)) return null
+        return AttendeeQuestion(added, removed)
+    }
+
+    /**
+     * Title, time and place as the attendees see them: the title with its
+     * default, times as instants, places trimmed — the server's sameCore.
+     */
+    private fun sameForAttendees(a: AppointmentEntry, b: AppointmentEntry, businessName: String): Boolean =
+        visitTitle(a.title, businessName) == visitTitle(b.title, businessName) &&
+            Clock.millis(a.startsAt) == Clock.millis(b.startsAt) &&
+            Clock.millis(a.endsAt) == Clock.millis(b.endsAt) &&
+            a.location?.trim().orEmpty() == b.location?.trim().orEmpty()
+
+    /** „Mail an a, b senden?", „Absage an c senden?", or both in one sentence. */
+    fun attendeeQuestionTitle(question: AttendeeQuestion): String {
+        val mail = question.added.takeIf { it.isNotEmpty() }?.let { "Mail an ${Attendees.names(it)}" }
+        val cancellation = question.removed.takeIf { it.isNotEmpty() }?.let { "Absage an ${Attendees.names(it)}" }
+        return listOfNotNull(mail, cancellation).joinToString(" und ") + " senden?"
+    }
+
+    /**
+     * The `attendees_notify` a save writes: null when the attendees did not
+     * change, so the decision stored for the last change stays; the answer
+     * [send] where [question] was asked; true where it was not — title, time or
+     * place changed too, and everybody is notified. Null for a callback.
+     */
+    fun attendeesNotifyToStore(
+        before: AppointmentEntry?,
+        after: AppointmentEntry,
+        question: AttendeeQuestion?,
+        send: Boolean?,
+    ): Boolean? {
+        if (after.kind != AppointmentKind.VISIT) return null
+        if (Attendees.sameSet(before?.attendees.orEmpty(), after.attendees)) return null
+        return if (question != null) send ?: true else true
+    }
 
     /** Street, postal code and city on one line. Null when nothing is known. */
     fun address(street: String?, postalCode: String?, city: String?): String? =

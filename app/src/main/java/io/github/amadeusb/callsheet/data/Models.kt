@@ -191,6 +191,14 @@ data class AppointmentEntry(
     val title: String? = null,
     /** Who a visit invites. Null means no invitation. Always null for a callback. */
     val inviteEmail: String? = null,
+    /** Who a visit invites, in the order added (see Attendees). Empty for nobody; always empty for a callback. */
+    val attendees: List<String> = emptyList(),
+    /**
+     * Whether the last change to [attendees] notifies them (`attendees_notify`):
+     * set only in a save that changes the list (Appointment.attendeesNotifyToStore).
+     * Null when saving leaves the stored value as it is; read as stored.
+     */
+    val attendeesNotify: Boolean? = null,
     /** The server's. Saving never writes it. */
     val calendarState: CalendarState? = null,
     /** The server's words behind [CalendarState.ERROR]. */
