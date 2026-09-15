@@ -162,6 +162,12 @@ data class State(
     val detailCalls: List<CallEntry> = emptyList(),
     val detailContacts: List<Contact> = emptyList(),
     val detailAppointments: List<AppointmentEntry> = emptyList(),
+    /**
+     * The shown business's invited visits the last read-back did not find in
+     * the calendar (Reconcile.MissingInvited). Not stored: the next opening
+     * decides again, and a found event takes its id out.
+     */
+    val detailMissingInCalendar: Set<String> = emptySet(),
     /** The business's addresses, main address first. */
     val detailAddresses: List<BusinessAddress> = emptyList(),
     /** When a dial attempt is up for choosing, the numbers hang here. */
@@ -329,6 +335,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         if (result is SyncResult.Ok) {
             refreshList()
             loadAgenda()
+            // A visit's calendar state and UID come down with a sync, calendar
+            // permission or not — the detail view shows them.
+            (_state.value.screen as? Screen.Detail)?.let { loadDetail(it.placeId) }
             // The UIDs taken here go up with the next run, started at once.
             if (captureMissingUids() > 0) syncNow()
         }
@@ -401,6 +410,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             if (result is SyncResult.Ok) {
                 refreshList()
                 loadAgenda()
+                (_state.value.screen as? Screen.Detail)?.let { loadDetail(it.placeId) }
             }
         }
     }
@@ -526,6 +536,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             detailCalls = if (switching) emptyList() else _state.value.detailCalls,
             detailContacts = if (switching) emptyList() else _state.value.detailContacts,
             detailAppointments = if (switching) emptyList() else _state.value.detailAppointments,
+            detailMissingInCalendar = if (switching) emptySet() else _state.value.detailMissingInCalendar,
             detailAddresses = if (switching) emptyList() else _state.value.detailAddresses,
             statusSuggestion = if (switching) null else _state.value.statusSuggestion,
             followUpSuggestion = if (switching) null else _state.value.followUpSuggestion,
@@ -897,11 +908,12 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         return eventId to fields.copy(uid = kept)
     }
 
-    /** Records locally which event this device links, and what that event now holds. */
-    private suspend fun rememberSeen(appointmentId: String, eventId: Long, event: EventFields) {
+    /** Records locally which event this device links, and what that event now holds — the title for a visit. */
+    private suspend fun rememberSeen(appointmentId: String, eventId: Long, event: EventFields, withTitle: Boolean = false) {
         repo.setCalendarLink(
             appointmentId, eventId,
             Clock.format(event.startMillis), Clock.format(event.endMillis), event.location,
+            seenTitle = if (withTitle) event.title else null,
         )
     }
 
@@ -965,7 +977,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             val business = repo.business(placeId) ?: return@launch
             val existing = appointmentId?.let { repo.appointment(it) }
             val sheetKind = existing?.kind ?: kind
-            val lookup = existing?.let { lookUpEvent(it) }
+            // A visit's event is the server's: nothing here writes it, so
+            // nothing needs finding before saving.
+            val lookup = existing?.takeIf { it.kind == AppointmentKind.CALLBACK }?.let { lookUpEvent(it) }
             val located = lookup?.getOrNull()
             val start = existing?.startsAt ?: startIso ?: Appointment.snapToQuarter(FollowUp.inTwoDays())
             val minutes = when {
@@ -1001,6 +1015,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                         eventElsewhere = preferences.calendarEnabled && lookup?.isSuccess == true &&
                             existing?.eventUid != null && located == null,
                         calendarReadable = readable,
+                        title = if (sheetKind == AppointmentKind.VISIT) Appointment.visitTitle(existing?.title, business.name) else "",
+                        invite = existing?.inviteEmail != null,
+                        inviteEmail = existing?.inviteEmail.orEmpty(),
                     ),
                     // The lists the preset was taken from: the sheet's chips and
                     // withPlace read these, so all three agree.
@@ -1009,7 +1026,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             }
             Clock.millis(start)?.let {
-                loadBusy(it, existing?.eventUid, located?.eventId ?: existing?.calendarEventId)
+                loadBusy(it, sheetKind, existing?.eventUid, located?.eventId ?: existing?.calendarEventId)
             }
         }
     }
@@ -1022,13 +1039,15 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
      * collide with itself. Everything else stays, the business's other
      * appointments included.
      */
-    private fun loadBusy(millis: Long, ownUid: String?, ownEventId: Long?) {
+    private fun loadBusy(millis: Long, kind: AppointmentKind, ownUid: String?, ownEventId: Long?) {
         viewModelScope.launch {
             val dayStart = Clock.todayStart(millis)
             val busy = Appointment.busyExcept(BusyTimes.forDay(getApplication(), dayStart), ownUid, ownEventId)
             val taken = repo.takenEvents()
-            // None at all for an appointment that already has an event — see Appointment.adoptable.
-            val adoptable = Appointment.adoptable(busy, taken, ownUid, ownEventId)
+            // None at all for an appointment that already has an event — see
+            // Appointment.adoptable — and none for a visit: its event is the
+            // server's, and one made elsewhere has no id the server knows.
+            val adoptable = if (kind == AppointmentKind.VISIT) emptySet() else Appointment.adoptable(busy, taken, ownUid, ownEventId)
             _state.update { state ->
                 val draft = state.appointmentDraft ?: return@update state
                 state.copy(appointmentDraft = draft.copy(busy = busy, adoptable = adoptable, conflict = emptyList()))
@@ -1038,7 +1057,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun updateAppointmentDraft(incoming: AppointmentDraft) {
         val previous = _state.value.appointmentDraft
-        val draft = withPlace(previous, incoming)
+        // Place and invitation both follow a new contact person, each only
+        // where it was not chosen by hand.
+        val draft = withInvite(previous, withPlace(previous, incoming))
         val previousDay = Clock.todayStart(Clock.millis(previous?.startIso) ?: 0L)
         val newDay = Clock.todayStart(Clock.millis(draft.startIso) ?: return)
         val dayChanged = previous == null || previousDay != newDay
@@ -1051,6 +1072,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             it.copy(
                 appointmentDraft = draft.copy(
                     conflict = emptyList(),
+                    inviteError = null,
                     busy = if (dayChanged) emptyList() else draft.busy,
                 )
             )
@@ -1060,7 +1082,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             viewModelScope.launch {
                 val start = Clock.millis(draft.startIso) ?: return@launch
                 val existing = draft.appointmentId?.let { repo.appointment(it) }
-                loadBusy(start, existing?.eventUid, existing?.calendarEventId)
+                loadBusy(start, draft.kind, existing?.eventUid, existing?.calendarEventId)
             }
         }
     }
@@ -1081,6 +1103,20 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             location = location,
             locationEdited = incoming.locationEdited || incoming.location != previous.location,
         )
+    }
+
+    /**
+     * The invitation's address as the sheet shows it after [incoming]: a new
+     * contact person brings their first address where the previous person's
+     * was still preselected. See Appointment.inviteAfterContactChange.
+     */
+    private fun withInvite(previous: AppointmentDraft?, incoming: AppointmentDraft): AppointmentDraft {
+        if (previous == null) return incoming
+        val contacts = _state.value.detailContacts
+        val address = Appointment.inviteAfterContactChange(previous, incoming) { contactId ->
+            contacts.firstOrNull { it.id == contactId }?.emails.orEmpty().map { it.email }
+        }
+        return address?.let { incoming.copy(inviteEmail = it) } ?: incoming
     }
 
     fun dismissAppointment() {
@@ -1104,6 +1140,10 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                     it.copy(appointmentDraft = null, hint = "Der Termin wurde inzwischen gelöscht. Nichts gespeichert.")
                 }
                 loadDetail(draft.placeId)
+                return@launch
+            }
+            if ((existing?.kind ?: draft.kind) == AppointmentKind.VISIT) {
+                saveVisit(draft, existing, business, endIso, startMillis, endMillis, force)
                 return@launch
             }
             val kind = existing?.kind ?: draft.kind
@@ -1284,6 +1324,59 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /**
+     * Saves a visit. The calendar is the server's business: it creates, moves
+     * and removes the event through the Infomaniak API and sends the
+     * invitation. Here only the row is written — offline too — then synced at
+     * once and once more a little later, so the server's UID and calendar
+     * state come down without another tap. A taken slot is still asked about;
+     * nothing is linked.
+     */
+    private suspend fun saveVisit(
+        draft: AppointmentDraft,
+        existing: AppointmentEntry?,
+        business: Business,
+        endIso: String,
+        startMillis: Long,
+        endMillis: Long,
+        force: Boolean,
+    ) {
+        Appointment.inviteError(draft.invite, draft.inviteEmail)?.let { error ->
+            _state.update { it.copy(appointmentDraft = draft.copy(inviteError = error)) }
+            return
+        }
+        val plan = Appointment.planVisit(startMillis, endMillis, draft.busy, force)
+        if (plan is SavePlan.Conflict) {
+            _state.update { it.copy(appointmentDraft = draft.copy(conflict = plan.with)) }
+            return
+        }
+        val entry = AppointmentEntry(
+            id = existing?.id ?: UUID.randomUUID().toString(),
+            placeId = draft.placeId,
+            startsAt = draft.startIso,
+            endsAt = endIso,
+            location = draft.location.trim().ifEmpty { null },
+            note = draft.note.trim().ifEmpty { null },
+            contactId = draft.contactId,
+            eventUid = existing?.eventUid,
+            kind = AppointmentKind.VISIT,
+            title = Appointment.titleToStore(draft.title, business.name),
+            inviteEmail = Appointment.inviteToStore(draft.invite, draft.inviteEmail),
+        )
+        // The length a visit starts at follows the last visit.
+        preferences.appointmentMinutes = draft.minutes
+        repo.saveAppointment(entry)
+        Appointment.statusAfterSave(entry.kind, entry.startsAt, entry.endsAt, System.currentTimeMillis())
+            ?.let { repo.setStatus(draft.placeId, it) }
+        _state.update { it.copy(appointmentDraft = null, hint = null) }
+        loadDetail(draft.placeId)
+        syncNow()
+        viewModelScope.launch {
+            delay(Appointment.RESYNC_AFTER_SAVE_MILLIS)
+            syncNow()
+        }
+    }
+
+    /**
      * Brings one appointment and its event back in line — the table in
      * Appointment.reconcile — and returns what it found, or null when nothing
      * was compared.
@@ -1304,7 +1397,10 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         rowWinsOnly: Boolean,
     ): Reconcile? {
         val context = getApplication<Application>()
-        val row = Appointment.rowSlot(entry) ?: return null
+        val visit = entry.kind == AppointmentKind.VISIT
+        // A visit's title is compared too: it can be changed in the web calendar.
+        val row = Appointment.rowSlot(entry, title = if (visit) Appointment.visitTitle(entry.title, business.name) else null)
+            ?: return null
         // Without read permission nothing can be compared, and nothing may be
         // concluded — the callers check too, this makes it hold for any caller.
         if (!CalendarStore.canRead(context)) return null
@@ -1316,7 +1412,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         // by this device before the row learnt its UID — and goes. Only when no
         // other appointment points at that copy — then it is not a copy but that
         // appointment's event.
-        if (!rowWinsOnly && located != null && entry.eventUid != null && event?.uid != entry.eventUid) {
+        // Never for a visit: its event is the server's, and nothing here deletes a copy of it.
+        if (!visit && !rowWinsOnly && located != null && entry.eventUid != null && event?.uid != entry.eventUid) {
             val rowUid = entry.eventUid
             val found = calendarLookup { CalendarStore.findByUid(context, rowUid) }.getOrElse { return null }
             val target = Appointment.relinkTo(rowUid, event?.uid, located.eventId, found)
@@ -1337,8 +1434,11 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         val outcome = Appointment.reconcile(
             row = row,
             seen = Appointment.seenSlot(entry),
-            event = event?.let { Slot(it.startMillis, it.endMillis, it.location) },
+            event = event?.let { Slot(it.startMillis, it.endMillis, it.location, if (visit) it.title else null) },
             nowMillis = nowMillis,
+            // First sight takes nothing, and an invited visit is never deleted — see Appointment.reconcile.
+            visit = visit,
+            invited = visit && entry.inviteEmail != null,
         )
         // After a sync nothing may change a row; recording what an event in step
         // holds is local and may.
@@ -1347,7 +1447,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         // A row without a UID takes the one its event carries — a carried-over
         // appointment, or an event DAVx5 has uploaded since. A row that has one
         // keeps it (see Appointment.uidToTake). Never one another appointment holds.
-        val uid = if (rowWinsOnly || event == null) {
+        // A visit's UID comes from the server.
+        val uid = if (visit || rowWinsOnly || event == null) {
             null
         } else {
             Appointment.uidToTake(entry.eventUid, event.uid)?.takeUnless { repo.heldByOther(entry.id, it, null) }
@@ -1356,11 +1457,11 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
         when (outcome) {
             Reconcile.InStep -> {
-                val holds = Slot(event!!.startMillis, event.endMillis, event.location)
+                val holds = Slot(event!!.startMillis, event.endMillis, event.location, if (visit) event.title else null)
                 // Only when something is new — a link rewritten on every opening
                 // would notify every observer of the database for nothing.
                 if (!Appointment.seenIsCurrent(entry, located!!.eventId, holds)) {
-                    rememberSeen(entry.id, located.eventId, event)
+                    rememberSeen(entry.id, located.eventId, event, withTitle = visit)
                 }
             }
 
@@ -1372,21 +1473,31 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 val fresh = repo.appointment(entry.id) ?: return null
                 // Changed since the comparison — a pull brought a newer version,
                 // say: the next opening decides again.
-                if (fresh.startsAt != entry.startsAt || fresh.endsAt != entry.endsAt || fresh.location != entry.location) {
+                if (fresh.startsAt != entry.startsAt || fresh.endsAt != entry.endsAt ||
+                    fresh.location != entry.location || fresh.title != entry.title
+                ) {
                     return null
                 }
+                val takenTitle = outcome.slot.title
                 repo.saveAppointment(
                     fresh.copy(
                         startsAt = Clock.format(outcome.slot.startMillis),
                         endsAt = outcome.slot.endMillis?.let { Clock.format(it) },
-                        location = outcome.slot.location,
+                        // Trimmed for a visit, as saving trims it: whitespace from the
+                        // web calendar must not become a change the server sends on.
+                        location = if (visit) outcome.slot.location?.trim()?.ifEmpty { null } else outcome.slot.location,
                         eventUid = fresh.eventUid ?: uid,
+                        // A visit takes the calendar's title as well. The server then
+                        // finds Infomaniak already holding it and sends nothing.
+                        title = if (visit && takenTitle != null) Appointment.titleToStore(takenTitle, business.name) else fresh.title,
                     )
                 )
-                rememberSeen(entry.id, located!!.eventId, event!!)
+                rememberSeen(entry.id, located!!.eventId, event!!, withTitle = visit)
             }
 
             Reconcile.UpdateEvent -> {
+                // The row is ahead of a visit's event: the server writes it, not this device.
+                if (visit) return outcome
                 // Reading is allowed with the calendar switched off in the
                 // settings; writing is not — the same condition followCalendar
                 // checks before it writes anything.
@@ -1413,9 +1524,13 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
      */
     private fun reconcileAppointments(placeId: String) {
         viewModelScope.launch {
-            if (!CalendarStore.canRead(getApplication())) return@launch
-            // Nothing linked, nothing to read back — and no sync for it.
-            if (repo.appointments(placeId).none { it.eventUid != null || it.calendarEventId != null }) return@launch
+            val readable = CalendarStore.canRead(getApplication())
+            val stored = repo.appointments(placeId)
+            // A visit waiting for the server is worth a sync of its own: its state
+            // and UID come down with it. See Appointment.awaitsServer.
+            val awaiting = stored.any { Appointment.awaitsServer(it) }
+            // Nothing to read back and nothing awaited — and no sync for it. See Appointment.readsBack.
+            if (!awaiting && (!readable || stored.none { Appointment.readsBack(it) })) return@launch
             // One read-back per business at a time: opened again while one waits
             // for its sync, the second would only compare the same rows twice.
             if (!readingBack.add(placeId)) return@launch
@@ -1427,18 +1542,24 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 if (preferences.serverUrl != null && preferences.serverToken != null) {
                     if (syncAndWait() !is SyncResult.Ok) return@launch
                 }
+                if (!CalendarStore.canRead(getApplication())) return@launch
                 val business = repo.business(placeId) ?: return@launch
                 val now = System.currentTimeMillis()
                 // Read again after the sync: it may have brought newer rows.
                 val results = repo.appointments(placeId)
-                    .filter { it.eventUid != null || it.calendarEventId != null }
+                    .filter { Appointment.readsBack(it) }
                     .mapNotNull { entry -> reconcile(entry, business, now, rowWinsOnly = false)?.let { entry to it } }
-                if (results.isEmpty()) return@launch
-
                 // The sync may have taken long: the user may have moved on. The
                 // status is data and falls back regardless; hint and reload only
                 // for the business still on screen.
                 val stillShown = { (_state.value.screen as? Screen.Detail)?.placeId == placeId }
+                // Replaced, not added to: an event found again takes its hint away.
+                // Nothing is stored — the next opening decides again.
+                if (stillShown()) {
+                    val missing = results.filter { it.second == Reconcile.MissingInvited }.map { it.first.id }.toSet()
+                    _state.update { it.copy(detailMissingInCalendar = missing) }
+                }
+                if (results.isEmpty()) return@launch
                 val deleted = results.filter { it.second == Reconcile.DeletedInCalendar }.map { it.first }
                 if (deleted.isNotEmpty()) {
                     // Only a deleted visit can take the status back.
@@ -1484,6 +1605,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             val now = System.currentTimeMillis()
             for (batch in applied) {
                 for (removed in batch.removed) {
+                    // A visit's event is deleted by the server, with the cancellation.
+                    if (removed.kind == AppointmentKind.VISIT) continue
                     // A calendar that could not be asked keeps the event; the
                     // appointment is gone regardless, and nothing else is at stake.
                     calendarLookup {
@@ -1497,6 +1620,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 for (id in batch.written.distinct()) {
                     val entry = repo.appointment(id) ?: continue
+                    // No calendar write for a visit after a sync: the server keeps its event.
+                    if (entry.kind == AppointmentKind.VISIT) continue
                     if (entry.eventUid == null && entry.calendarEventId == null) continue
                     val business = repo.business(entry.placeId) ?: continue
                     reconcile(entry, business, now, rowWinsOnly = true)
@@ -1528,7 +1653,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         val context = getApplication<Application>()
         if (!CalendarStore.canRead(context)) return 0
         var taken = 0
-        for (entry in repo.linkedWithoutUid()) {
+        // Only callbacks: a visit's UID is the server's.
+        for (entry in repo.linkedWithoutUid().filter { it.kind == AppointmentKind.CALLBACK }) {
             val eventId = entry.calendarEventId ?: continue
             val uid = calendarLookup { CalendarStore.read(context, eventId) }.getOrNull()?.uid
             Appointment.uidToTake(null, uid)?.takeUnless { repo.heldByOther(entry.id, it, null) }?.let {
@@ -1549,6 +1675,18 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val entry = repo.appointment(appointmentId) ?: return@launch
             val business = repo.business(entry.placeId) ?: return@launch
+            if (entry.kind == AppointmentKind.VISIT) {
+                // The event goes through the server, with a cancellation where
+                // someone was invited. Deleted here, it would reach Infomaniak
+                // through DAVx5 first — without a word to the invitee, and the
+                // server would find nothing left to cancel.
+                repo.deleteAppointment(entry.id)
+                Appointment.statusAfterRemoval(business.status, repo.appointments(entry.placeId), System.currentTimeMillis())
+                    ?.let { repo.setStatus(entry.placeId, it) }
+                loadDetail(entry.placeId)
+                syncNow()
+                return@launch
+            }
             val lookup = lookUpEvent(entry)
             val deleted = lookup?.getOrNull()?.let { CalendarStore.delete(getApplication(), it.eventId) }
             repo.deleteAppointment(entry.id)
