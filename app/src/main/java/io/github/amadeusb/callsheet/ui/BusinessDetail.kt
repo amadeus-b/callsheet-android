@@ -109,6 +109,8 @@ fun BusinessDetailScreen(
     onCallback: (String) -> Unit,
     onAppointment: (String?) -> Unit,
     onRemoveAppointment: (String) -> Unit,
+    /** Removes an appointment without asking — see Appointment.removalAsks. */
+    onRemoveAppointmentUnasked: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
     onDismissHint: () -> Unit,
     onOpenMailDialog: () -> Unit,
@@ -298,6 +300,7 @@ fun BusinessDetailScreen(
                     contacts = contacts,
                     onSet = onAppointment,
                     onRemove = { removeAppointment = it },
+                    onRemoveNow = onRemoveAppointmentUnasked,
                     onOpenUrl = onOpenUrl,
                 )
             }
@@ -731,6 +734,7 @@ private fun AppointmentsBlock(
     contacts: List<Contact>,
     onSet: (String?) -> Unit,
     onRemove: (AppointmentEntry) -> Unit,
+    onRemoveNow: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
 ) {
     val (ahead, past) = Appointment.split(appointments, System.currentTimeMillis())
@@ -753,13 +757,13 @@ private fun AppointmentsBlock(
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        ahead.forEach { AppointmentItem(it, contacts, onSet, onRemove, onOpenUrl, syncConfigured, it.id in missingInCalendar) }
+        ahead.forEach { AppointmentItem(it, contacts, onSet, onRemove, onRemoveNow, onOpenUrl, syncConfigured, it.id in missingInCalendar) }
 
         if (past.isNotEmpty()) {
             TextButton(onClick = { showPast = !showPast }) {
                 Text("Frühere Termine (${past.size})")
             }
-            if (showPast) past.forEach { AppointmentItem(it, contacts, onSet, onRemove, onOpenUrl, syncConfigured, it.id in missingInCalendar) }
+            if (showPast) past.forEach { AppointmentItem(it, contacts, onSet, onRemove, onRemoveNow, onOpenUrl, syncConfigured, it.id in missingInCalendar) }
         }
 
         Spacer(Modifier.height(8.dp))
@@ -777,6 +781,7 @@ private fun AppointmentItem(
     contacts: List<Contact>,
     onSet: (String?) -> Unit,
     onRemove: (AppointmentEntry) -> Unit,
+    onRemoveNow: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
     syncConfigured: Boolean,
     missing: Boolean,
@@ -814,11 +819,14 @@ private fun AppointmentItem(
                 style = MaterialTheme.typography.bodySmall,
                 color = if (line.error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            // Not found with an invitation: removing it is offered, never done
-            // unasked. It goes through the dialog, which names who gets the
-            // cancellation.
+            // Not found: removing it is offered, never done on its own. With an
+            // invitation it goes through the dialog, which names who gets the
+            // cancellation; without one nobody outside hears of it, and it goes
+            // at once.
             if (line.offersRemoval) {
-                TextButton(onClick = { onRemove(entry) }) { Text("Termin entfernen") }
+                TextButton(onClick = {
+                    if (Appointment.removalAsks(entry, missing = true)) onRemove(entry) else onRemoveNow(entry.id)
+                }) { Text("Termin entfernen") }
             }
         }
         Spacer(Modifier.height(8.dp))

@@ -168,9 +168,9 @@ data class State(
     val detailContacts: List<Contact> = emptyList(),
     val detailAppointments: List<AppointmentEntry> = emptyList(),
     /**
-     * The shown business's invited visits the last read-back did not find in
-     * the calendar (Reconcile.MissingInvited). Not stored: the next opening
-     * decides again, and a found event takes its id out.
+     * The shown business's visits the last read-back did not find in the
+     * calendar (Reconcile.MissingVisit). Not stored: the next opening decides
+     * again, and a found event takes its id out.
      */
     val detailMissingInCalendar: Set<String> = emptySet(),
     /** The business's addresses, main address first. */
@@ -1494,9 +1494,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             seen = Appointment.seenSlot(entry),
             event = event?.let { Slot(it.startMillis, it.endMillis, it.location, if (visit) it.title else null) },
             nowMillis = nowMillis,
-            // First sight takes nothing, and an invited visit is never deleted — see Appointment.reconcile.
+            // First sight takes nothing, and a visit is never deleted — see Appointment.reconcile.
             visit = visit,
-            invited = visit && entry.inviteEmail != null,
         )
         // After a sync nothing may change a row; recording what an event in step
         // holds is local and may.
@@ -1568,7 +1567,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
             Reconcile.NotYetHere -> Unit
             // Nothing deleted, nothing stored: reconcileAppointments reports it.
-            Reconcile.MissingInvited -> Unit
+            Reconcile.MissingVisit -> Unit
             Reconcile.DeletedInCalendar -> repo.deleteAppointment(entry.id)
             Reconcile.Unlink -> repo.setCalendarLink(entry.id, null, null, null, null)
         }
@@ -1577,8 +1576,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
     /**
      * Reads every linked appointment of a business back from the calendar, on
-     * opening it. A deletion in the calendar is the one case that speaks up,
-     * because it is the one that may take the status back.
+     * opening it. A callback deleted in the calendar is deleted here and said
+     * out loud; a visit gone from the calendar is only shown as missing.
      */
     private fun reconcileAppointments(placeId: String) {
         viewModelScope.launch {
@@ -1614,31 +1613,14 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 // Replaced, not added to: an event found again takes its hint away.
                 // Nothing is stored — the next opening decides again.
                 if (stillShown()) {
-                    val missing = results.filter { it.second == Reconcile.MissingInvited }.map { it.first.id }.toSet()
+                    val missing = results.filter { it.second == Reconcile.MissingVisit }.map { it.first.id }.toSet()
                     _state.update { it.copy(detailMissingInCalendar = missing) }
                 }
                 if (results.isEmpty()) return@launch
-                val deleted = results.filter { it.second == Reconcile.DeletedInCalendar }.map { it.first }
-                if (deleted.isNotEmpty()) {
-                    // Only a deleted visit can take the status back.
-                    val fallback = if (deleted.any { it.kind == AppointmentKind.VISIT }) {
-                        Appointment.statusAfterRemoval(business.status, repo.appointments(placeId), now)
-                    } else {
-                        null
-                    }
-                    fallback?.let { repo.setStatus(placeId, it) }
-                    val what = if (deleted.all { it.kind == AppointmentKind.CALLBACK }) "Der Rückruf" else "Der Termin"
-                    if (stillShown()) {
-                        _state.update {
-                            it.copy(
-                                hint = if (fallback != null) {
-                                    "$what wurde im Kalender gelöscht. Status zurück auf „Angerufen“."
-                                } else {
-                                    "$what wurde im Kalender gelöscht. Der Status bleibt, wie er ist."
-                                }
-                            )
-                        }
-                    }
+                // Only a callback is deleted by the read-back — a visit gone
+                // missing is MissingVisit — and a callback never changes the status.
+                if (results.any { it.second == Reconcile.DeletedInCalendar } && stillShown()) {
+                    _state.update { it.copy(hint = "Der Rückruf wurde im Kalender gelöscht. Der Status bleibt, wie er ist.") }
                 }
                 if (stillShown()) loadDetail(placeId)
             } finally {
@@ -1725,11 +1707,14 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
     /**
      * Removes an appointment and its calendar event — a past visit or a
-     * completed callback too; the detail view asks first. Where the event is not
-     * on this device, the row goes alone and the device holding the event
-     * deletes it after its next sync. Only a visit can take the status back.
+     * completed callback too. The detail view asks first, except for a visit
+     * missing from the calendar that invites nobody (Appointment.removalAsks);
+     * then [confirmed] is false and a hint says what happened. Where the event
+     * is not on this device, the row goes alone and the device holding the
+     * event deletes it after its next sync. Only a visit can take the status
+     * back.
      */
-    fun removeAppointment(appointmentId: String) {
+    fun removeAppointment(appointmentId: String, confirmed: Boolean = true) {
         viewModelScope.launch {
             val entry = repo.appointment(appointmentId) ?: return@launch
             val business = repo.business(entry.placeId) ?: return@launch
@@ -1739,8 +1724,12 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 // through DAVx5 first — without a word to the invitee, and the
                 // server would find nothing left to cancel.
                 repo.deleteAppointment(entry.id)
-                Appointment.statusAfterRemoval(business.status, repo.appointments(entry.placeId), System.currentTimeMillis())
-                    ?.let { repo.setStatus(entry.placeId, it) }
+                val fallback = Appointment.statusAfterRemoval(
+                    business.status, repo.appointments(entry.placeId), System.currentTimeMillis(),
+                )
+                fallback?.let { repo.setStatus(entry.placeId, it) }
+                // No dialog said it: the hint does.
+                if (!confirmed) _state.update { it.copy(hint = Appointment.removedHint(fallback)) }
                 loadDetail(entry.placeId)
                 syncNow()
                 return@launch

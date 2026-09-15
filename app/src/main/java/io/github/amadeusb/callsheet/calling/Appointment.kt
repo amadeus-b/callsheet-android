@@ -101,16 +101,17 @@ sealed interface Reconcile {
      */
     data object NotYetHere : Reconcile
 
-    /** Seen before, gone now, appointment still ahead: deleted in the calendar. */
+    /** A callback: seen before, gone now, still ahead — deleted in the calendar. */
     data object DeletedInCalendar : Reconcile
 
     /**
-     * A visit with an invitation: seen before, gone now, still ahead. Not
-     * deleted — a calendar deselected in DAVx5 or an account set up again
-     * looks the same, and a deletion would send the customer a cancellation.
-     * Nothing is stored; the detail view offers the removal.
+     * A visit: seen before, gone now, still ahead. Never deleted — a calendar
+     * deselected in DAVx5 or an account set up again looks the same, and a
+     * deletion would remove the visit on every device and at Infomaniak, with a
+     * cancellation where someone was invited. Nothing is stored; the detail
+     * view offers the removal.
      */
-    data object MissingInvited : Reconcile
+    data object MissingVisit : Reconcile
 
     /**
      * Seen before, gone now, appointment already past. Calendars clear out old
@@ -122,7 +123,7 @@ sealed interface Reconcile {
 /**
  * One line under a visit in the detail view: where it stands on its way into
  * the calendar. [offersRemoval]: the detail view puts „Termin entfernen" under
- * it — see Reconcile.MissingInvited.
+ * it — see Reconcile.MissingVisit.
  */
 data class CalendarLine(val text: String, val error: Boolean = false, val offersRemoval: Boolean = false)
 
@@ -370,7 +371,7 @@ object Appointment {
      * whatever the server said last — but only with a sync server set up
      * ([syncConfigured]); without one nothing would ever take it out of
      * pending, and nothing is said. [missing]: the read-back did not find the
-     * event of this invited visit (Reconcile.MissingInvited) — said instead of
+     * event of this visit (Reconcile.MissingVisit) — said instead of
      * the state, with the removal offered. Null for a callback, and for a visit
      * without a state — saved before this version, or on a server without the
      * feature.
@@ -396,6 +397,20 @@ object Appointment {
     /** What removing a visit sends: a cancellation to the invitee. Null without one. */
     fun cancellationNotice(entry: AppointmentEntry): String? =
         entry.inviteEmail?.takeIf { entry.kind == AppointmentKind.VISIT }?.let { "$it bekommt eine Absage." }
+
+    /**
+     * Whether removing [entry] asks first. The ordinary „Entfernen" always does:
+     * it removes a piece of the record. „Termin entfernen" under a visit the
+     * calendar no longer holds ([missing]) asks only when someone gets a
+     * cancellation ([cancellationNotice]); without one nobody outside hears of
+     * it.
+     */
+    fun removalAsks(entry: AppointmentEntry, missing: Boolean): Boolean =
+        !missing || cancellationNotice(entry) != null
+
+    /** The hint after a removal that did not ask: that it went, and the status it fell back to, if any. */
+    fun removedHint(fallback: Status?): String =
+        if (fallback == null) "Termin entfernt." else "Termin entfernt. Status zurück auf „${fallback.label}“."
 
     /** Street, postal code and city on one line. Null when nothing is known. */
     fun address(street: String?, postalCode: String?, city: String?): String? =
@@ -528,9 +543,9 @@ object Appointment {
      *
      * A [visit] differs in two places. On first sight it takes nothing
      * (NotYetHere) — only an event equal to the row is recorded. And gone while
-     * still ahead with an invitation ([invited]) it is MissingInvited, not
-     * deleted. UpdateEvent for a visit means only that the row is ahead; the
-     * server writes the event, not this device.
+     * still ahead it is MissingVisit, never deleted, invitation or not.
+     * UpdateEvent for a visit means only that the row is ahead; the server
+     * writes the event, not this device.
      */
     fun reconcile(
         row: Slot,
@@ -538,14 +553,13 @@ object Appointment {
         event: Slot?,
         nowMillis: Long,
         visit: Boolean = false,
-        invited: Boolean = false,
     ): Reconcile {
         if (event == null) {
             if (seen == null) return Reconcile.NotYetHere
             val last = row.endMillis ?: row.startMillis
             return when {
                 last <= nowMillis -> Reconcile.Unlink
-                visit && invited -> Reconcile.MissingInvited
+                visit -> Reconcile.MissingVisit
                 else -> Reconcile.DeletedInCalendar
             }
         }

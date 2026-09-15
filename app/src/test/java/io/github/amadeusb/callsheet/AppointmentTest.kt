@@ -561,28 +561,22 @@ class AppointmentTest {
     }
 
     @Test
-    fun `an invited visit gone from the calendar is reported, never deleted`() {
-        // A deselected calendar or a new DAVx5 account looks the same, and a
-        // deletion would send the customer a cancellation.
+    fun `a visit gone from the calendar is reported, never deleted`() {
+        // A calendar deselected in DAVx5 or a new account looks the same. A
+        // deletion would remove the visit on the server and at Infomaniak, and
+        // send an invitee a cancellation. Whether someone is invited no longer
+        // matters.
         assertEquals(
-            Reconcile.MissingInvited,
-            Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayBefore, visit = true, invited = true),
+            Reconcile.MissingVisit,
+            Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayBefore, visit = true),
         )
         assertEquals(
             Reconcile.Unlink,
-            Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayAfter, visit = true, invited = true),
+            Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayAfter, visit = true),
         )
         assertEquals(
             Reconcile.NotYetHere,
-            Appointment.reconcile(row = planned, seen = null, event = null, nowMillis = dayBefore, visit = true, invited = true),
-        )
-    }
-
-    @Test
-    fun `a visit without an invitation gone from the calendar is deleted as before`() {
-        assertEquals(
-            Reconcile.DeletedInCalendar,
-            Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayBefore, visit = true, invited = false),
+            Appointment.reconcile(row = planned, seen = null, event = null, nowMillis = dayBefore, visit = true),
         )
     }
 
@@ -591,7 +585,7 @@ class AppointmentTest {
         assertEquals(Reconcile.TakeEvent(planned), Appointment.reconcile(row = later, seen = null, event = planned, nowMillis = dayBefore))
         assertEquals(
             Reconcile.DeletedInCalendar,
-            Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayBefore, invited = true),
+            Appointment.reconcile(row = planned, seen = planned, event = null, nowMillis = dayBefore),
         )
     }
 
@@ -1171,6 +1165,16 @@ class AppointmentTest {
     }
 
     @Test
+    fun `a visit without an invitation missing from the calendar offers its removal too`() {
+        val visit = entry("A-1", "2026-09-10T14:00:00+02:00").copy(eventUid = "abc", calendarState = CalendarState.OK)
+
+        assertEquals(
+            CalendarLine("Im Kalender nicht mehr gefunden", error = true, offersRemoval = true),
+            Appointment.calendarLine(visit, syncConfigured = true, missing = true),
+        )
+    }
+
+    @Test
     fun `a callback has no calendar line of this kind`() {
         val callback = entry("R-1", "2026-09-10T14:00:00+02:00").copy(kind = AppointmentKind.CALLBACK, dirty = true)
 
@@ -1184,5 +1188,22 @@ class AppointmentTest {
         assertEquals("test@example.org bekommt eine Absage.", Appointment.cancellationNotice(visit.copy(inviteEmail = "test@example.org")))
         assertNull(Appointment.cancellationNotice(visit))
         assertNull(Appointment.cancellationNotice(visit.copy(kind = AppointmentKind.CALLBACK, inviteEmail = "test@example.org")))
+    }
+
+    @Test
+    fun `removing a visit missing from the calendar asks only when someone gets a cancellation`() {
+        val visit = entry("A-1", "2026-09-10T14:00:00+02:00")
+
+        assertFalse(Appointment.removalAsks(visit, missing = true))
+        assertTrue(Appointment.removalAsks(visit.copy(inviteEmail = "test@example.org"), missing = true))
+        // The ordinary „Entfernen" always asks: it removes a piece of the record.
+        assertTrue(Appointment.removalAsks(visit, missing = false))
+        assertTrue(Appointment.removalAsks(visit.copy(kind = AppointmentKind.CALLBACK), missing = false))
+    }
+
+    @Test
+    fun `a removal that did not ask says what it did`() {
+        assertEquals("Termin entfernt.", Appointment.removedHint(null))
+        assertEquals("Termin entfernt. Status zurück auf „Angerufen“.", Appointment.removedHint(Status.CALLED))
     }
 }
