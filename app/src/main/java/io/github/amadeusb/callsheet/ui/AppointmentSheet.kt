@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -26,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -40,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.AppointmentDraft
 import io.github.amadeusb.callsheet.calling.Appointment
@@ -74,14 +77,16 @@ private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
  * the day has to scroll without taking the save button off the screen with it.
  * That only holds if the timeline is the part that gives way — hence
  * `weight(1f)` on it and a bounded height on the column around it.
- * The fields under the strip scroll in an area of at most 240 dp, and the strip
- * keeps at least 160 dp: title, date row and labels (~160 dp), strip, fields,
+ * The fields under the strip scroll in an area of at most 240 dp for a
+ * callback, 320 dp for a visit and 200 dp while a visit's conflict shows, and
+ * the strip keeps at least 160 dp: title, date row and labels (~160 dp), strip, fields,
  * a conflict notice (~120 dp) and the button (~96 dp) stay within an ordinary
  * phone's sheet — "Termin speichern" is never pushed off the bottom, least of
  * all when a conflict is showing. A callback has no place: the location field
  * is left out, and the durations are a phone call's. A visit's place starts at
  * the contact person's address and offers every address of the business as a
- * chip.
+ * chip. Title and invitation are a visit's only — its event is written by the
+ * server, which sends the invitation.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -141,14 +146,31 @@ fun AppointmentSheet(
             )
 
             // The fields under the strip scroll within a bounded height of their
-            // own. Stacked at natural height they come to some 400 dp; together
+            // own. Stacked at natural height a callback's come to some 250 dp, a
+            // visit's — title, place and chips, invitation — to some 700; together
             // with the strip's minimum, a conflict notice and the button that is
-            // more than a sheet has, and the button would go first.
+            // more than a sheet has, and the button would go first. A visit gets
+            // more room, and gives it back while a conflict notice needs it.
+            val fieldsMax = when {
+                callback -> 240.dp
+                draft.conflict.isNotEmpty() -> 200.dp
+                else -> 320.dp
+            }
             Column(
                 modifier = Modifier
-                    .heightIn(max = 240.dp)
+                    .heightIn(max = fieldsMax)
                     .verticalScroll(rememberScrollState()),
             ) {
+                if (!callback) {
+                    SectionLabel("Titel")
+                    OutlinedTextField(
+                        value = draft.title,
+                        onValueChange = { onDraft(draft.copy(title = it)) },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        singleLine = true,
+                    )
+                }
+
                 SectionLabel("Dauer")
                 Row(
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -225,6 +247,14 @@ fun AppointmentSheet(
                     }
                 }
 
+                if (!callback) {
+                    InviteSection(
+                        draft = draft,
+                        contact = contacts.firstOrNull { it.id == draft.contactId },
+                        onDraft = onDraft,
+                    )
+                }
+
                 if (draft.eventElsewhere) {
                     Text(
                         text = "Der Kalendereintrag liegt auf einem anderen Gerät. " +
@@ -262,6 +292,87 @@ private fun SectionLabel(text: String) {
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 6.dp),
+    )
+}
+
+/**
+ * „Einladung senden": the invitee's address, one of the contact person's or
+ * typed. The server sends the invitation from the calendar account; what the
+ * invitee gets to see is said right here, so the note stays a private one. A
+ * new contact person brings their address in the view model (withInvite).
+ */
+@Composable
+private fun InviteSection(
+    draft: AppointmentDraft,
+    contact: Contact?,
+    onDraft: (AppointmentDraft) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "Einladung senden",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = draft.invite,
+            onCheckedChange = { on ->
+                onDraft(
+                    draft.copy(
+                        invite = on,
+                        inviteEmail = if (on && draft.inviteEmail.isBlank()) {
+                            Appointment.inviteSuggestion(contact)
+                        } else {
+                            draft.inviteEmail
+                        },
+                    )
+                )
+            },
+        )
+    }
+    if (draft.invite) {
+        val addresses = contact?.emails.orEmpty()
+        if (addresses.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                addresses.forEach { address ->
+                    FilterChip(
+                        selected = draft.inviteEmail.trim() == address.email,
+                        onClick = { onDraft(draft.copy(inviteEmail = address.email)) },
+                        label = { Text(address.email) },
+                    )
+                }
+            }
+        }
+        OutlinedTextField(
+            value = draft.inviteEmail,
+            onValueChange = { onDraft(draft.copy(inviteEmail = it)) },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            singleLine = true,
+            isError = draft.inviteError != null,
+            placeholder = { Text("name@betrieb.de") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+        )
+        draft.inviteError?.let { error ->
+            Text(
+                text = error,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
+    }
+    Text(
+        text = "Der Eingeladene sieht Titel, Zeit und Ort, nicht die Notiz.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
     )
 }
 

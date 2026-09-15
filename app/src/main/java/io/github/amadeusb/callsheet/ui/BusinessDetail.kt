@@ -84,6 +84,10 @@ fun BusinessDetailScreen(
     calls: List<CallEntry>,
     contacts: List<Contact>,
     appointments: List<AppointmentEntry>,
+    /** A sync server is set up; without one a visit never says it is on its way. */
+    syncConfigured: Boolean,
+    /** Invited visits the read-back did not find in the calendar. See State.detailMissingInCalendar. */
+    missingInCalendar: Set<String>,
     addresses: List<BusinessAddress>,
     noteFocus: Boolean,
     statusSuggestion: Status?,
@@ -287,6 +291,8 @@ fun BusinessDetailScreen(
                 AppointmentsBlock(
                     business = business,
                     appointments = visits,
+                    syncConfigured = syncConfigured,
+                    missingInCalendar = missingInCalendar,
                     contacts = contacts,
                     onSet = onAppointment,
                     onRemove = { removeAppointment = it },
@@ -388,6 +394,8 @@ fun BusinessDetailScreen(
             text = {
                 Text(
                     listOfNotNull(
+                        // Said first: it is the one thing that leaves the house.
+                        Appointment.cancellationNotice(entry),
                         when {
                             callback && record -> "Der Rückruf ist erledigt und bleibt sonst als Nachweis stehen. " +
                                 "Er wird auch aus dem Kalender gelöscht."
@@ -708,6 +716,8 @@ internal fun geoUri(name: String, address: BusinessAddress): String? {
 private fun AppointmentsBlock(
     business: Business,
     appointments: List<AppointmentEntry>,
+    syncConfigured: Boolean,
+    missingInCalendar: Set<String>,
     contacts: List<Contact>,
     onSet: (String?) -> Unit,
     onRemove: (AppointmentEntry) -> Unit,
@@ -733,13 +743,13 @@ private fun AppointmentsBlock(
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        ahead.forEach { AppointmentItem(it, contacts, onSet, onRemove, onOpenUrl) }
+        ahead.forEach { AppointmentItem(it, contacts, onSet, onRemove, onOpenUrl, syncConfigured, it.id in missingInCalendar) }
 
         if (past.isNotEmpty()) {
             TextButton(onClick = { showPast = !showPast }) {
                 Text("Frühere Termine (${past.size})")
             }
-            if (showPast) past.forEach { AppointmentItem(it, contacts, onSet, onRemove, onOpenUrl) }
+            if (showPast) past.forEach { AppointmentItem(it, contacts, onSet, onRemove, onOpenUrl, syncConfigured, it.id in missingInCalendar) }
         }
 
         Spacer(Modifier.height(8.dp))
@@ -758,6 +768,8 @@ private fun AppointmentItem(
     onSet: (String?) -> Unit,
     onRemove: (AppointmentEntry) -> Unit,
     onOpenUrl: (String) -> Unit,
+    syncConfigured: Boolean,
+    missing: Boolean,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Text(
@@ -785,12 +797,19 @@ private fun AppointmentItem(
                     .padding(vertical = 4.dp),
             )
         }
-        if (entry.calendarEventId != null) {
+        // Where the visit stands on its way into the calendar — the server puts it there.
+        Appointment.calendarLine(entry, syncConfigured, missing)?.let { line ->
             Text(
-                text = "Im Kalender abgelegt.",
+                text = line.text,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (line.error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // Not found with an invitation: removing it is offered, never done
+            // unasked. It goes through the dialog, which names who gets the
+            // cancellation.
+            if (line.offersRemoval) {
+                TextButton(onClick = { onRemove(entry) }) { Text("Termin entfernen") }
+            }
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
