@@ -138,12 +138,29 @@ enum class AppointmentKind(val key: String, val label: String) {
 }
 
 /**
+ * Where a visit stands on its way into the calendar, as the server says.
+ * Stored as [key]. Null — no key, or one this app does not know — for a
+ * callback, for a visit saved before schema 8, and against a server without
+ * the feature.
+ */
+enum class CalendarState(val key: String) {
+    PENDING("pending"),
+    OK("ok"),
+    ERROR("error");
+
+    companion object {
+        fun fromKey(s: String?): CalendarState? = entries.firstOrNull { it.key == s }
+    }
+}
+
+/**
  * An appointment: on site, or a callback. A business can have any number of
  * them — one after another, or side by side.
  *
  * [eventUid] names the linked calendar event on every device carrying the
- * shared calendar. [calendarEventId] and the `seen` fields describe this
- * device's calendar only and never travel.
+ * shared calendar — for a visit the server sets it, for a callback the app.
+ * [calendarEventId] and the `seen` fields describe this device's calendar only
+ * and never travel.
  */
 data class AppointmentEntry(
     val id: String,
@@ -168,6 +185,18 @@ data class AppointmentEntry(
     val kind: AppointmentKind = AppointmentKind.VISIT,
     /** When a callback was completed. Null while open, and always for a visit. */
     val doneAt: String? = null,
+    /** A visit's calendar title as typed. Null means Appointment.defaultTitle. Always null for a callback. */
+    val title: String? = null,
+    /** Who a visit invites. Null means no invitation. Always null for a callback. */
+    val inviteEmail: String? = null,
+    /** The server's. Saving never writes it. */
+    val calendarState: CalendarState? = null,
+    /** The server's words behind [CalendarState.ERROR]. */
+    val calendarError: String? = null,
+    /** The title this device last saw in a visit's event. Local, like the other `seen` fields. */
+    val seenTitle: String? = null,
+    /** Waiting to go up. Read only: saving ignores it and always marks. */
+    val dirty: Boolean = false,
 )
 
 /**

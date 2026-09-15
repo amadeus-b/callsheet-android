@@ -7,6 +7,7 @@ import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.BusinessAddress
+import io.github.amadeusb.callsheet.data.CalendarState
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.ContactDraft
 import io.github.amadeusb.callsheet.data.Database
@@ -701,6 +702,58 @@ class RepositoryTest {
 
         assertNull(repo.appointment("R-1")!!.location)
         assertEquals("Zehentstraße 39", repo.appointment("A-1")!!.location)
+    }
+
+    @Test
+    fun `a visit keeps its title and invitation, a callback stores neither`() = runTest {
+        repo.saveAppointment(
+            visit("A-1", "t-1", "2026-09-16T09:00:00+02:00").copy(title = "Erstgespräch", inviteEmail = "info@example.org")
+        )
+        repo.saveAppointment(
+            callback("R-1", "t-1", "2026-09-15T09:00:00+02:00").copy(title = "Erstgespräch", inviteEmail = "info@example.org")
+        )
+
+        val visit = repo.appointment("A-1")!!
+        assertEquals("Erstgespräch", visit.title)
+        assertEquals("info@example.org", visit.inviteEmail)
+        assertTrue(visit.dirty)
+        assertNull(repo.appointment("R-1")!!.title)
+        assertNull(repo.appointment("R-1")!!.inviteEmail)
+    }
+
+    @Test
+    fun `switching the invitation off clears the address`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00").copy(inviteEmail = "info@example.org"))
+
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00"))
+
+        assertNull(repo.appointment("A-1")!!.inviteEmail)
+    }
+
+    @Test
+    fun `the server's calendar state is read, and saving leaves it alone`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00"))
+        execute(
+            "UPDATE appointments SET calendar_state = 'error', calendar_error = 'Im Kalender gelöscht', dirty = 0 " +
+                "WHERE id = 'A-1'"
+        )
+
+        repo.saveAppointment(repo.appointment("A-1")!!.copy(note = "Angebot"))
+
+        val stored = repo.appointment("A-1")!!
+        assertEquals(CalendarState.ERROR, stored.calendarState)
+        assertEquals("Im Kalender gelöscht", stored.calendarError)
+    }
+
+    @Test
+    fun `the title this device saw goes with the link, and away with it`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00"))
+
+        repo.setCalendarLink("A-1", 4711L, "2026-09-16T09:00:00+02:00", null, null, seenTitle = "Erstgespräch")
+        assertEquals("Erstgespräch", repo.appointment("A-1")!!.seenTitle)
+
+        repo.setCalendarLink("A-1", null, null, null, null)
+        assertNull(repo.appointment("A-1")!!.seenTitle)
     }
 
     @Test

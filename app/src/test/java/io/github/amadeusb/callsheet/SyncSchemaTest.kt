@@ -51,6 +51,14 @@ class SyncSchemaTest {
     }
 
     @Test
+    fun `appointments carry a title, an invitation and the server's calendar state`() {
+        val appointments = columns("appointments")
+        for (column in listOf("title", "invite_email", "calendar_state", "calendar_error", "calendar_seen_title")) {
+            assertTrue("$column missing", appointments.contains(column))
+        }
+    }
+
+    @Test
     fun `an upgrade from version one keeps the work`() {
         val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
         ctx.deleteDatabase("callsheet.db")

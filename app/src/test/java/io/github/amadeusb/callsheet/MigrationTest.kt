@@ -227,6 +227,33 @@ class MigrationTest {
         db.close()
     }
 
+    /**
+     * The version 7 schema, as the business-addresses release builds it:
+     * version 6 with the address table, a contact's address and the local
+     * table of removed main addresses. alt-1's visit has an event the app
+     * wrote into the calendar itself. No carried-over address rows: the
+     * upgrade to 8 touches appointments only.
+     */
+    private fun createVersionSeven() {
+        createVersionSix()
+        val db = context.openOrCreateDatabase("callsheet.db", 0, null)
+        db.execSQL(
+            "CREATE TABLE business_addresses (id TEXT PRIMARY KEY, place_id TEXT NOT NULL, label TEXT, street TEXT, " +
+                "postal_code TEXT, city TEXT, latitude REAL, longitude REAL, position INTEGER, " +
+                "updated_at TEXT NOT NULL, dirty INTEGER NOT NULL DEFAULT 0)"
+        )
+        db.execSQL("CREATE INDEX idx_business_addresses_place_id ON business_addresses(place_id)")
+        db.execSQL("CREATE INDEX idx_business_addresses_dirty ON business_addresses(dirty)")
+        db.execSQL("ALTER TABLE contacts ADD COLUMN address_id TEXT")
+        db.execSQL("CREATE TABLE removed_main_addresses (place_id TEXT PRIMARY KEY)")
+        db.execSQL(
+            "UPDATE appointments SET kind = 'visit', event_uid = 'legacy-alt-1', calendar_event_id = 4711 " +
+                "WHERE id = 'legacy-alt-1'"
+        )
+        db.version = 7
+        db.close()
+    }
+
     private fun columnsOf(table: String, db: android.database.sqlite.SQLiteDatabase): Set<String> =
         db.rawQuery("PRAGMA table_info($table)", null).use { c ->
             generateSequence { if (c.moveToNext()) c.getString(1) else null }.toSet()
@@ -422,6 +449,9 @@ class MigrationTest {
         assertTrue("event_uid" in fresh)
         assertTrue("kind" in fresh)
         assertTrue("done_at" in fresh)
+        assertTrue("title" in fresh)
+        assertTrue("calendar_state" in fresh)
+        assertTrue("calendar_seen_title" in fresh)
         assertEquals(fresh, upgraded)
     }
 
@@ -622,6 +652,30 @@ class MigrationTest {
         assertTrue("contacts.address_id" in fresh)
         assertTrue("removed.place_id" in fresh)
         assertEquals(fresh, upgraded)
+    }
+
+    // --- from version 7, the road business-address devices are on -----------
+
+    @Test
+    fun `an upgrade from version seven adds the invitation and calendar columns empty`() {
+        createVersionSeven()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery(
+            "SELECT starts_at, event_uid, calendar_event_id, dirty, " +
+                "title, invite_email, calendar_state, calendar_error, calendar_seen_title " +
+                "FROM appointments WHERE id = 'legacy-alt-1'",
+            null,
+        ).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("2026-09-10T14:00:00+02:00", c.getString(0))
+            assertEquals("legacy-alt-1", c.getString(1))
+            assertEquals(4711L, c.getLong(2))
+            // Nothing new to tell the server.
+            assertEquals(0, c.getInt(3))
+            for (i in 4..8) assertTrue("column $i not null", c.isNull(i))
+        }
     }
 
     // --- and a database that never had to migrate at all ---------------------

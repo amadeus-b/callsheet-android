@@ -918,6 +918,12 @@ class Repository(context: Context) {
             put("starts_at", entry.startsAt)
             put("ends_at", entry.endsAt)
             put("location", if (entry.kind == AppointmentKind.CALLBACK) null else entry.location)
+            // A callback has neither: its title is built from its note, and
+            // nobody is invited to a phone call. A null title is the default,
+            // a null address no invitation — both written, so switching the
+            // invitation off clears it.
+            put("title", if (entry.kind == AppointmentKind.CALLBACK) null else entry.title)
+            put("invite_email", if (entry.kind == AppointmentKind.CALLBACK) null else entry.inviteEmail)
             put("note", entry.note)
             put("contact_id", entry.contactId)
             if (entry.eventUid != null) put("event_uid", entry.eventUid)
@@ -935,8 +941,9 @@ class Repository(context: Context) {
 
     /**
      * Records which event this device links an appointment to, and what it
-     * saw in that event. A null [eventId] drops the link. Local only: no
-     * `updated_at`, no mark — none of these columns travels.
+     * saw in that event — the title only for a visit. A null [eventId] drops
+     * the link. Local only: no `updated_at`, no mark — none of these columns
+     * travels.
      */
     suspend fun setCalendarLink(
         id: String,
@@ -944,12 +951,14 @@ class Repository(context: Context) {
         seenStartsAt: String?,
         seenEndsAt: String?,
         seenLocation: String?,
+        seenTitle: String? = null,
     ) = withContext(Dispatchers.IO) {
         val values = ContentValues().apply {
             if (eventId == null) putNull("calendar_event_id") else put("calendar_event_id", eventId)
             put("calendar_seen_starts_at", if (eventId == null) null else seenStartsAt)
             put("calendar_seen_ends_at", if (eventId == null) null else seenEndsAt)
             put("calendar_seen_location", if (eventId == null) null else seenLocation)
+            put("calendar_seen_title", if (eventId == null) null else seenTitle)
         }
         helper.writableDatabase.update("appointments", values, "id = ?", arrayOf(id))
         notifyChanged()
@@ -1199,6 +1208,12 @@ class Repository(context: Context) {
         seenLocation = c.text("calendar_seen_location"),
         kind = AppointmentKind.fromKey(c.text("kind")),
         doneAt = c.text("done_at"),
+        title = c.text("title"),
+        inviteEmail = c.text("invite_email"),
+        calendarState = CalendarState.fromKey(c.text("calendar_state")),
+        calendarError = c.text("calendar_error"),
+        seenTitle = c.text("calendar_seen_title"),
+        dirty = c.int("dirty") == 1,
     )
 
     private fun Cursor.text(column: String): String? {

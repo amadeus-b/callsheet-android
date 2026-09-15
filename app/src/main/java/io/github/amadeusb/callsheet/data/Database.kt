@@ -89,6 +89,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         db.execSQL(TABLE_ADDRESSES)
         for (sql in INDEXES_ADDRESSES) db.execSQL(sql)
         db.execSQL(TABLE_REMOVED_MAIN_ADDRESSES)
+        for (sql in COLUMNS_APPOINTMENTS_8) db.execSQL(sql)
         db.execSQL("CREATE INDEX idx_businesses_status ON businesses(status)")
         db.execSQL("CREATE INDEX idx_businesses_industry ON businesses(industry)")
         db.execSQL("CREATE INDEX idx_businesses_is_target ON businesses(is_target)")
@@ -272,6 +273,12 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
                 """.trimIndent()
             )
         }
+        if (old < 8) {
+            // Nothing to carry over and nothing to mark: the columns arrive
+            // empty. A visit saved before has no calendar_state and shows
+            // nothing about it.
+            for (sql in COLUMNS_APPOINTMENTS_8) db.execSQL(sql)
+        }
     }
 
     /**
@@ -287,7 +294,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
 
     companion object {
         const val NAME = "callsheet.db"
-        const val VERSION = 7
+        const val VERSION = 8
 
         @Volatile
         private var shared: Database? = null
@@ -475,6 +482,22 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
                 place_id TEXT PRIMARY KEY
             )
         """
+
+        /**
+         * Schema 8: visits reach the calendar through the server. `title` and
+         * `invite_email` are the app's; `calendar_state` and `calendar_error`
+         * the server's (see Rows.SERVER_OWNED). `calendar_seen_title` is local,
+         * next to the other `calendar_seen_` columns. Added by ALTER on both
+         * roads, for the reason COLUMNS_APPOINTMENTS_6 gives. All nullable, as
+         * every new synchronised column is.
+         */
+        private val COLUMNS_APPOINTMENTS_8 = listOf(
+            "ALTER TABLE appointments ADD COLUMN title TEXT",
+            "ALTER TABLE appointments ADD COLUMN invite_email TEXT",
+            "ALTER TABLE appointments ADD COLUMN calendar_state TEXT",
+            "ALTER TABLE appointments ADD COLUMN calendar_error TEXT",
+            "ALTER TABLE appointments ADD COLUMN calendar_seen_title TEXT",
+        )
 
         /**
          * Tombstones. Contacts, their numbers and emails, appointments and
