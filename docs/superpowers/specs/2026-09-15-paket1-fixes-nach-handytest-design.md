@@ -135,6 +135,9 @@ Nothing marked.
 ### Interface
 
 - Detail view, below the master data rows: **Stammdaten bearbeiten**.
+- The detail row for `contact_name` reads „Ansprechpartner (importiert)" while the
+  name is the imported one, and „Ansprechpartner" once `contact_name` is in
+  `edited_fields`.
 - The form in editing mode: title „Stammdaten bearbeiten", sections „Betrieb"
   (Name, Telefon, Branche) and „Kontakt" (Ansprechpartner, Webseite, E-Mail),
   save button „Stammdaten speichern". Back leads to the detail view, which shows
@@ -198,7 +201,8 @@ the server and from Infomaniak. An invited visit was already safe
 - `SyncEngineTest` — the first sync on schema 9 starts from watermark 0, once.
 - `MasterDataTest` — changed fields: only real changes, clearing counts,
   whitespace and phone notation do not; the list is parsed and written sorted,
-  garbage reads as empty; the draft from a business.
+  garbage reads as empty; the draft from a business; the contact name's label
+  with and without `contact_name` in the list.
 - `RepositoryTest`
   - editing writes the changed columns, stamps and marks the business, and
     records the changed fields; the list grows across saves;
@@ -224,7 +228,8 @@ decisions above; its wiring is covered by `assembleDebug` and the phone test.
 1. Create a business with the number of an existing one: it is saved.
 2. Open an imported business, **Stammdaten bearbeiten**: change the email, clear
    the website, save. The detail view shows the new values; the phone book entry
-   carries the new email.
+   carries the new email. Change the contact name: the row reads
+   „Ansprechpartner", no longer „(importiert)".
 3. Re-import the business file: email and website stay as edited; another
    business's changed data from the file is taken.
 4. On a second phone, after sync: the same values; its re-import keeps them too.

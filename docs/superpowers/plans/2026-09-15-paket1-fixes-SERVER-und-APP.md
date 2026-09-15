@@ -17,6 +17,8 @@
 - **Only changed columns are written** when master data is saved. Unchanged columns keep their stored text, even where it carries whitespace the form would trim: rewriting them would make the next import see a difference that is not one.
 - **The editing mode reuses the business form's state** (`State.draft`, `formError`, `saving`) under a new screen `Screen.MasterDataForm(placeId)`.
 - **„Termin entfernen" without a dialog says what it did** in the detail view's hint („Termin entfernt." / „Termin entfernt. Status zurück auf „Angerufen“."), because the dialog that would have said it is skipped.
+- **The detail row „Ansprechpartner (importiert)" reads „Ansprechpartner"** once `contact_name` is in `edited_fields` (coordinator decision; `MasterData.contactNameLabel`, `Business.editedFields`).
+- **Version 1.6.0** (coordinator decision). Package 2 may ship in the same release under the same heading.
 - **The read-back's deletion hint now only ever concerns callbacks**, so its visit branch (status fallback) goes.
 
 ## Global Constraints
@@ -663,6 +665,7 @@ object MasterData {
     fun parse(text: String?): Set<String>
     fun format(fields: Set<String>): String?
     fun draft(business: Business): BusinessDraft      // addresses = emptyList()
+    fun contactNameLabel(editedFields: Set<String>): String // „Ansprechpartner (importiert)" / „Ansprechpartner"
 }
 ```
 
@@ -774,6 +777,13 @@ class MasterDataTest {
         assertTrue(MasterData.parse("kaputt").isEmpty())
         assertEquals(setOf("email"), MasterData.parse("[\"email\", null, \"\"]"))
         assertEquals(setOf("rating"), MasterData.parse("[\"rating\"]"))
+    }
+
+    @Test
+    fun `the contact name loses its imported label once it was changed by hand`() {
+        assertEquals("Ansprechpartner (importiert)", MasterData.contactNameLabel(emptySet()))
+        assertEquals("Ansprechpartner (importiert)", MasterData.contactNameLabel(setOf("email", "phone")))
+        assertEquals("Ansprechpartner", MasterData.contactNameLabel(setOf("contact_name")))
     }
 
     @Test
@@ -902,6 +912,13 @@ object MasterData {
         contactName = business.contactName.orEmpty(),
     )
 
+    /**
+     * The detail view's label for `contact_name`. „(importiert)" says where the
+     * name came from — no longer true once it was changed by hand.
+     */
+    fun contactNameLabel(editedFields: Set<String>): String =
+        if ("contact_name" in editedFields) "Ansprechpartner" else "Ansprechpartner (importiert)"
+
     private fun String?.clean(): String? = this?.trim()?.ifEmpty { null }
 }
 ```
@@ -928,12 +945,13 @@ git commit -m "Regeln für Stammdaten: geänderte Felder, die Liste dazu, der En
 **Repository:** app.
 
 **Files:**
-- Modify: `…/data/Repository.kt` (`import`: the `same` query in the known-business branch; new private `keepEdited` after `matchesStored`; new `updateMasterData` after `create`; KDoc at the top of the class)
+- Modify: `…/data/Repository.kt` (`import`: the `same` query in the known-business branch; new private `keepEdited` after `matchesStored`; new `updateMasterData` after `create`; `fromCursor`; KDoc at the top of the class)
+- Modify: `…/data/Models.kt` (`Business`: new property `editedFields`)
 - Test: `test/RepositoryTest.kt` (new section before `private fun count(`; imports)
 
 **Interfaces:**
 - Consumes: `MasterData`, `MasterValues` (Task 4); column `edited_fields` (Task 3).
-- Produces: `suspend fun updateMasterData(placeId: String, draft: BusinessDraft): Result<Unit>` in `Repository`. Failure messages exactly „Ohne Namen lässt sich der Betrieb nicht speichern.", „Die Telefonnummer ist unvollständig. Lass sie leer oder trag sie vollständig ein.", „Den Betrieb gibt es auf diesem Gerät nicht mehr.".
+- Produces: `Business.editedFields: Set<String>` (default `emptySet()`, filled by every repository read of a business). `suspend fun updateMasterData(placeId: String, draft: BusinessDraft): Result<Unit>` in `Repository`. Failure messages exactly „Ohne Namen lässt sich der Betrieb nicht speichern.", „Die Telefonnummer ist unvollständig. Lass sie leer oder trag sie vollständig ein.", „Den Betrieb gibt es auf diesem Gerät nicht mehr.".
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -970,6 +988,8 @@ Insert this section before `private fun count(sql: String): Int =`:
         assertTrue(b.updatedAt != "2026-01-01T00:00:00+01:00")
         assertEquals(1, count("SELECT dirty FROM businesses WHERE place_id = 'P1'"))
         assertEquals("[\"email\",\"phone\"]", editedFields("P1"))
+        // The business as read carries the list too — the detail view's label reads it.
+        assertEquals(setOf("email", "phone"), b.editedFields)
     }
 
     @Test
@@ -1201,6 +1221,19 @@ After the function `matchesStored`, add:
     }
 ```
 
+In `…/data/Models.kt`, `data class Business`, after `val additionalNumbers: Int = 0,`:
+
+```kotlin
+    /** The master data columns changed by hand (`edited_fields`, see MasterData). */
+    val editedFields: Set<String> = emptySet(),
+```
+
+In `…/data/Repository.kt`, `fromCursor`, after `additionalNumbers = c.int("additional_numbers") ?: 0,`:
+
+```kotlin
+        editedFields = MasterData.parse(c.text("edited_fields")),
+```
+
 In the class KDoc at the top of the file, replace rule 2:
 
 ```kotlin
@@ -1227,7 +1260,7 @@ Expected: BUILD SUCCESSFUL.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add app/src/main/java/io/github/amadeusb/callsheet/data/Repository.kt app/src/test/java/io/github/amadeusb/callsheet/RepositoryTest.kt
+git add app/src/main/java/io/github/amadeusb/callsheet/data/Repository.kt app/src/main/java/io/github/amadeusb/callsheet/data/Models.kt app/src/test/java/io/github/amadeusb/callsheet/RepositoryTest.kt
 git commit -m "Stammdaten speichern, der Import lässt von Hand Geändertes stehen"
 ```
 
@@ -1240,11 +1273,11 @@ git commit -m "Stammdaten speichern, der Import lässt von Hand Geändertes steh
 **Files:**
 - Modify: `…/CallsheetViewModel.kt` (`Screen`; `back()`; new functions after `saveDraft`)
 - Modify: `…/ui/BusinessForm.kt` (`BusinessFormScreen`)
-- Modify: `…/ui/BusinessDetail.kt` (`BusinessDetailScreen` parameters; the `master-data` item; `MasterData`)
+- Modify: `…/ui/BusinessDetail.kt` (`BusinessDetailScreen` parameters; the `master-data` item; `MasterData`, its contact name label included)
 - Modify: `…/MainActivity.kt` (`Screen.Detail` branch; new branch after `Screen.BusinessForm`)
 
 **Interfaces:**
-- Consumes: `Repository.updateMasterData` (Task 5), `MasterData.draft` (Task 4).
+- Consumes: `Repository.updateMasterData`, `Business.editedFields` (Task 5), `MasterData.draft`, `MasterData.contactNameLabel` (Task 4).
 - Produces: `Screen.MasterDataForm(placeId: String)`; `CallsheetViewModel.showMasterData(placeId: String)`, `saveMasterData(placeId: String)`; `BusinessFormScreen(…, editing: Boolean = false)`; `BusinessDetailScreen(…, onEditMasterData: () -> Unit, …)`.
 
 No unit test: view model and Compose wiring (Global Constraints). The rules behind it are tested in Tasks 4 and 5; this task is checked by `assembleDebug` and Task 10.
@@ -1427,6 +1460,21 @@ In the item `master-data`, the call `MasterData(…)` gains, after `onEditAddres
 ```kotlin
                     onEditMasterData = onEditMasterData,
 ```
+
+In the private composable `MasterData`, replace
+
+```kotlin
+        DataRow("Ansprechpartner (importiert)", business.contactName)
+```
+
+with:
+
+```kotlin
+        // „(importiert)" only while the name is the imported one — see MasterData.contactNameLabel.
+        DataRow(io.github.amadeusb.callsheet.data.MasterData.contactNameLabel(business.editedFields), business.contactName)
+```
+
+The name is written out in full because this file's own composable is called `MasterData` too.
 
 The private composable `MasterData` gains a parameter after `onEditAddresses: () -> Unit,`:
 
@@ -2043,7 +2091,7 @@ follow at once.
 - [ ] **Step 3: Changelog**
 
 Run: `git tag --list 'v1.*' | tail -1; grep -n '^versionName' version.properties`
-Expected: `v1.5.0` and `versionName=1.5.0`. The version this plan proposes is **1.6.0** (new feature and schema change). If the coordinator „caller-app-34" has answered with another version, use that heading instead.
+Expected: `v1.5.0` and `versionName=1.5.0`. The version is **1.6.0** (decided by „caller-app-34"). If package 2 has already added a `## 1.6.0` section, add these bullets to it instead of a second heading.
 
 In `CHANGELOG.md`, insert above `## 1.5.0`:
 
@@ -2168,7 +2216,7 @@ Expected: `Installed on 1 device`.
 Ask the user to check, with phone book, calendar and sync switched on, and report each result:
 
 1. **Neuer Betrieb** with the number of an existing business: it is saved; both show in the work list.
-2. An imported business → **Stammdaten bearbeiten**: change the email, clear the website, save. The detail view shows the new values; after DAVx5 has synced, the phone book entry carries the new email.
+2. An imported business → **Stammdaten bearbeiten**: change the email, clear the website, save. The detail view shows the new values; after DAVx5 has synced, the phone book entry carries the new email. Change the contact name: the row reads „Ansprechpartner" instead of „Ansprechpartner (importiert)".
 3. **Stammdaten bearbeiten**, clear the name: the form says „Ohne Namen lässt sich der Betrieb nicht speichern." Type „0621" as number: „Die Telefonnummer ist unvollständig. …".
 4. Re-import the business file: email and website stay as edited; the import summary counts no update for that business unless something else in the file changed.
 5. On a second phone with the new version, after sync: the same values; a re-import there keeps them too.
@@ -2180,5 +2228,5 @@ Anything that does not match: stop, find the cause (superpowers:systematic-debug
 
 - [ ] **Step 4: Release**
 
-Only after Task 9 is done and the user says yes. The proposed version is **1.6.0**, the heading Task 8 wrote; confirm it with „caller-app-34" first. Then run `tools/release.sh minor` (or `tools/release.sh <x.y.z>` for the confirmed version, whose heading must be the one in `CHANGELOG.md`).
+Only after Task 9 is done and the user says yes. The version is **1.6.0**, the heading Task 8 wrote; package 2 may ship in the same release — ask „caller-app-34" whether to wait for it. Then run `tools/release.sh minor`.
 Expected: the script builds, tests, tags and publishes the version with its CHANGELOG section as release notes. Every phone is updated before the business file is imported again.
