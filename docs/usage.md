@@ -120,8 +120,9 @@ navigation reads.
 in the app. **Ansprechpartner** picks who to ask for on site.
 
 **Einladung senden** invites somebody: pick one of the contact person's
-addresses or type one; picking another person brings their first address along
-unless you chose one yourself. The invitation comes from christoph@bauer-ki.de;
+addresses, the business's own (marked „Betrieb") or type one. Without a contact
+person's address the business's is preselected; picking another person brings
+their first address along unless you chose one yourself. The invitation comes from christoph@bauer-ki.de;
 moving the visit sends an update, removing it a cancellation. The invitee sees
 title, time and place — never the note. Changing only the note sends nothing.
 

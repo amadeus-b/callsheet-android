@@ -2582,6 +2582,7 @@ With `test@example.org`, one at a time, the user reports each result:
 10. The view model's own behaviour, which no unit test covers: saving a visit syncs twice (the line moves from „Wird im Kalender angelegt …" to „Im Kalender" without a tap); picking another contact person with the invitation on brings their first address, a typed address stays; with a visit still pending, opening the business syncs and the line moves on.
 11. An invited visit (seen on this phone once), then the calendar deselected in DAVx5, open the business → nothing is removed; „Im Kalender nicht mehr gefunden" with „Termin entfernen". Select the calendar again, let DAVx5 sync, open the business → the hint is gone. Deselect again and tap „Termin entfernen" → the dialog names `test@example.org`; „Entfernen" → a cancellation arrives.
 12. The same without an invitation → the visit is removed with the hint „Der Termin wurde im Kalender gelöscht …".
+13. Besuch bei importiertem Betrieb ohne Ansprechpartner: Einladung ist mit der Betriebs-E-Mail vorbelegt.
 
 Any failure: stop, use superpowers:systematic-debugging, fix in a task of its own with a test.
 

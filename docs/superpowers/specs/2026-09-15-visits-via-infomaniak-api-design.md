@@ -38,7 +38,8 @@ Two facts about the API shape the design:
   `/sync`. A slow or unreachable Infomaniak must not stall the sync of calls and
   contacts.
 - **An invitation is a choice per visit**: a switch „Einladung senden" and an
-  address, preset to the contact person's first email.
+  address, preset to the contact person's first email, else the business's
+  own (`businesses.email`) — imported businesses rarely have a contact person.
 - **Saving works offline.** The visit is stored and shown as pending; the server
   creates the event and sends the invitation when the row reaches it.
 - **The invitee sees title, time and place** — never the note, never a phone
@@ -229,10 +230,15 @@ Every error is logged with the appointment id, never with the token.
   `Erstgespräch KI bei <Firma> – Christoph Bauer`. Left empty, the preset is
   saved. Stored in `title`.
 - **Ort** — preset as described under Decisions.
-- **Einladung senden** — a switch. On, it shows the addresses from the contact
-  person's `contact_emails` (first preselected) and a free field; without a
-  contact person only the free field. A malformed address blocks saving with a
-  hint. Off, `invite_email = null`.
+- **Einladung senden** — a switch. On, it offers the contact person's
+  `contact_emails` in order, then the business's `businesses.email` (trimmed,
+  left out when blank or already among them, ignoring case; its chip reads
+  „<Adresse> (Betrieb)", the stored value is the address alone), and a free
+  field. The first of them is preselected — the business's address where there
+  is no contact person or they have none, because imported businesses rarely
+  have a contact person. A new contact person brings their first address, or
+  the business's, unless one was typed or picked. A malformed address blocks
+  saving with a hint. Off, `invite_email = null`.
 - Below the switch: „Der Eingeladene sieht Titel, Zeit und Ort, nicht die Notiz."
 
 Callbacks show none of the three.

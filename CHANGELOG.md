@@ -39,7 +39,9 @@ as the release notes on GitHub.
   bei <Betrieb> – Christoph Bauer".
 - **Einladung senden**: a real calendar invitation from christoph@bauer-ki.de,
   with an update when the visit moves and a cancellation when it is removed.
-  The invitee sees title, time and place, never the note.
+  The invitee sees title, time and place, never the note. The address is one
+  of the contact person's or the business's own — preset to the business's
+  where there is no contact person, as with most imported businesses.
 - Under each visit the detail view says whether it is in the calendar yet, who
   is invited, or what went wrong.
 - An invited visit whose entry is gone from the calendar is not removed by
