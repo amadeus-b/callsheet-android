@@ -135,7 +135,9 @@ calendar_seen_title     TEXT              -- local; a visit's only (schema 8)
 kind                    TEXT              -- 'visit' | 'callback'; NULL reads as 'visit'
 done_at                 TEXT              -- when a callback was completed; NULL while open, always for a visit
 title                   TEXT              -- a visit's calendar title; NULL = „Erstgespräch KI bei <Firma> – Christoph Bauer" (schema 8)
-invite_email            TEXT              -- a visit's invitee; NULL = no invitation (schema 8)
+invite_email            TEXT              -- no longer used since schema 10, not emptied; see attendees
+attendees               TEXT              -- a visit's attendees, JSON array of addresses; NULL = nobody (schema 10)
+attendees_notify        INTEGER           -- 1 | 0 | NULL (read as 1): whether the last change to attendees notifies (schema 10)
 calendar_state          TEXT              -- server-owned: 'pending' | 'ok' | 'error'; NULL for callbacks (schema 8)
 calendar_error          TEXT              -- server-owned: the text behind 'error' (schema 8)
 dirty                   INTEGER NOT NULL DEFAULT 0
@@ -164,13 +166,23 @@ completed by a call to its business (`done_at`); saving never clears
 `done_at`, the same way it never clears `event_uid`.
 
 Schema 8: a visit reaches the calendar through the server, which creates,
-moves and removes its event through the Infomaniak API and sends the
-invitation to `invite_email`. The app never writes a visit's event. The
+moves and removes its event through the Infomaniak API and notifies its
+attendees. The app never writes a visit's event. The
 server owns `calendar_state`, `calendar_error` and a visit's `event_uid`: the
 app never sends the first two, and takes all three from the server even where
 it keeps its own, newer row — the server writes them without moving
 `updated_at`. A callback's `event_uid` stays the app's. A visit is read back
 from the calendar only with a UID, the state `ok` and nothing waiting to go up.
+
+Schema 10: a visit invites a list, `attendees`, instead of one address. The app
+writes `attendees_notify` only in a save that changes the list: 1 after
+„Senden" or when title, time or place changed as well, 0 after „Ohne Mail
+speichern"; a save that leaves the list alone leaves it alone. The server
+notifies everybody when title, time or place changed, and on a change to the
+list alone only unless `attendees_notify` is 0. At a standstill the two columns
+are filled together or `attendees_notify` not at all. The migration carried a
+non-blank `invite_email` over as the only attendee, as the server's migration
+012 does, and marked nothing.
 
 ### `business_addresses`
 
@@ -305,8 +317,8 @@ and its rows stay marked — counted as open — until the server is updated. Th
 first sync after upgrading to schema 4 fetches from watermark 0 once, because a
 1.3.x app skipped appointments while its watermark moved past them. The first
 sync on schema 6 does so once more: a 1.4.0 app stored the callbacks it pulled
-without `kind` and `done_at`. Schemas 7 and 9 do it once each, for the addresses
-and for `edited_fields` a 1.5.x app could not store.
+without `kind` and `done_at`. Schemas 7, 9 and 10 do it once each, for the
+addresses, for `edited_fields` and for the attendees an older app could not store.
 
 Like the server, the app fills gaps at a standstill: an incoming row with the
 same `updated_at` writes only into columns that are NULL here, never over a

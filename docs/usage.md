@@ -119,12 +119,19 @@ navigation reads.
 **Notiz** says what the appointment is for — „Besichtigung", „Angebot". It stays
 in the app. **Ansprechpartner** picks who to ask for on site.
 
-**Einladung senden** invites somebody: pick one of the contact person's
-addresses, the business's own (marked „Betrieb") or type one. Without a contact
-person's address the business's is preselected; picking another person brings
-their first address along unless you chose one yourself. The invitation comes from christoph@bauer-ki.de;
-moving the visit sends an update, removing it a cancellation. The invitee sees
-title, time and place — never the note. Changing only the note sends nothing.
+**Teilnehmende** lists who is invited. Tap one of the contact person's addresses
+or the business's own (marked „Betrieb") to add it, or type any address and tap
+**Hinzufügen**; the cross on an address takes it off. Nothing is preselected.
+The invitation comes from christoph@bauer-ki.de. Attendees see title, time and
+place — never the note. Changing only the note sends nothing.
+
+When saving changes nothing but the list, the app asks: „Mail an … senden?",
+„Absage an … senden?", or both. **Senden** sends the invitation or
+cancellation; **Ohne Mail speichern** saves all the same, and nobody gets a
+mail. Beside the dialog or Back returns to the sheet without saving. When title,
+time or place change, nothing is asked and everybody on the list gets the
+update — also somebody added without mail before. A person taken off with mail
+gets „Veranstaltung gelöscht" from the calendar, although the visit stays.
 
 **When the slot is already taken** the app says what is there and asks, instead
 of writing a second entry on top:
@@ -139,7 +146,7 @@ Saving writes the appointment and sets the status to „Termin" if it is still
 ahead — offline too. The sync server then puts it into the Infomaniak calendar,
 whatever the calendar switch in the settings says; DAVx5 brings the entry onto
 the phones. Under the appointment the detail view says where it stands:
-„Wird im Kalender angelegt …", „Im Kalender · Eingeladen: <Adresse>", or what
+„Wird im Kalender angelegt …", „Im Kalender · Teilnehmende: <Adressen>", or what
 went wrong, in red. Without a sync server a visit does not reach the calendar.
 Without calendar permission the strip says so rather than pretending the day is
 free.
@@ -151,14 +158,14 @@ version into the calendar, and once this phone has seen the entry before: an
 entry seen for the first time is only taken note of when it matches. If the
 entry is gone from the calendar, the visit is **not** removed — a calendar
 switched off in DAVx5 looks exactly the same. The detail view says „Im Kalender
-nicht mehr gefunden" and offers **Termin entfernen**: without an invitation it
-removes the visit at once and says so, with an invitation it asks first, as the
-invitee gets a cancellation. If the entry turns up again, the note goes. A
+nicht mehr gefunden" and offers **Termin entfernen**: without attendees it
+removes the visit at once and says so, with attendees it asks first, as they
+get a cancellation. If the entry turns up again, the note goes. A
 callback deleted in the calendar is removed, and the app says so. A past entry
 that a calendar clears out on its own leaves the appointment in place.
 
 **Entfernen** asks first, for a past appointment too: it removes a piece of the
-record. With an invitation it names who gets the cancellation.
+record. With attendees it names who gets the cancellation.
 
 Tapping an address, in the appointment or in the master data, hands it to a map
 application.

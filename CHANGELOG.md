@@ -16,7 +16,16 @@ as the release notes on GitHub.
   calendar switched off in DAVx5 looked like a deleted entry and would have
   removed visits on the server and at Infomaniak. The detail view now says „Im
   Kalender nicht mehr gefunden" and offers **Termin entfernen** — at once
-  without an invitation, after asking with one.
+  without attendees, after asking with them.
+- **Teilnehmende instead of „Einladung senden".** A visit invites any number of
+  people: the contact person's addresses and the business's own are one tap
+  away, any other can be typed. Nothing is preselected.
+- **Asked before mail goes out.** Saving a change to nothing but the list asks
+  „Mail an … senden?" or „Absage an … senden?"; **Ohne Mail speichern** saves
+  without mail. Moving the visit or changing its title or place notifies
+  everybody on the list without asking.
+- A visit invited in 1.5.0 keeps its invitee as the only attendee; no mail goes
+  out through the update.
 - **Update the sync server first, then every phone, and only then import
   again.** The first sync after the update fetches everything once. A phone
   still on 1.5.0 overwrites hand edits when it imports.

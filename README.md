@@ -23,7 +23,7 @@ The user interface is German; the code and documentation are English.
 - **Status and note** in one go after hanging up
 - **Appointments on site and callbacks**, as many per business as the work
   needs, each with a time, a length, a note and a contact person. Visits reach
-  the calendar through the sync server, with an invitation if wanted; callbacks
+  the calendar through the sync server, with the attendees invited; callbacks
   are mirrored into the device's calendar; a call completes the callbacks due
 - **"Termine"**: overdue callbacks, then today, then every coming day
 - **Contacts** per business, merged with the device's phone book
