@@ -85,6 +85,10 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         db.execSQL(TABLE_APPOINTMENTS)
         for (sql in INDEXES_APPOINTMENTS) db.execSQL(sql)
         for (sql in COLUMNS_APPOINTMENTS_6) db.execSQL(sql)
+        db.execSQL(COLUMN_CONTACTS_7)
+        db.execSQL(TABLE_ADDRESSES)
+        for (sql in INDEXES_ADDRESSES) db.execSQL(sql)
+        db.execSQL(TABLE_REMOVED_MAIN_ADDRESSES)
         db.execSQL("CREATE INDEX idx_businesses_status ON businesses(status)")
         db.execSQL("CREATE INDEX idx_businesses_industry ON businesses(industry)")
         db.execSQL("CREATE INDEX idx_businesses_is_target ON businesses(is_target)")
@@ -243,6 +247,31 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             // change to the business: no updated_at, no mark.
             db.execSQL("UPDATE businesses SET follow_up_at = NULL WHERE follow_up_at IS NOT NULL")
         }
+        if (old < 7) {
+            db.execSQL(COLUMN_CONTACTS_7)
+            db.execSQL(TABLE_ADDRESSES)
+            for (sql in INDEXES_ADDRESSES) db.execSQL(sql)
+            db.execSQL(TABLE_REMOVED_MAIN_ADDRESSES)
+            // The business's address becomes its main address. The id is fixed,
+            // not a fresh UUID: the server's migration 009 writes the same
+            // 'main-' || place_id under the same condition, so the two meet as
+            // one row. updated_at comes from the business for the same reason.
+            //
+            // Marked dirty, as schemas 4 and 6 marked their rows: an address the
+            // server does not have yet reaches it, and one it has arrives there
+            // as a standstill and changes nothing.
+            //
+            // The old columns stay and are not emptied: nothing new reads them,
+            // and a device still on the old version keeps its address.
+            db.execSQL(
+                """
+                INSERT INTO business_addresses (id, place_id, street, postal_code, city, latitude, longitude, position, updated_at, dirty)
+                SELECT 'main-' || place_id, place_id, street, postal_code, city, latitude, longitude, 0, updated_at, 1
+                FROM businesses
+                WHERE COALESCE(street, '') <> '' OR COALESCE(postal_code, '') <> '' OR COALESCE(city, '') <> ''
+                """.trimIndent()
+            )
+        }
     }
 
     /**
@@ -258,7 +287,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
 
     companion object {
         const val NAME = "callsheet.db"
-        const val VERSION = 6
+        const val VERSION = 7
 
         @Volatile
         private var shared: Database? = null
@@ -397,9 +426,60 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         )
 
         /**
-         * Tombstones. Contacts, their numbers and appointments are the only rows
-         * the app deletes; without a marker a deletion would come back with the
-         * next sync.
+         * Schema 7: every address of a business — the one it had carried over
+         * as `main-<place_id>`. Synchronised like contact_emails: a row per
+         * address, deleted through tombstones.
+         *
+         * `position` is nullable, as on the server, where a NOT NULL column would
+         * stand where a gap belongs. The app writes it always and reads a NULL
+         * as last.
+         */
+        private const val TABLE_ADDRESSES = """
+            CREATE TABLE business_addresses (
+                id          TEXT PRIMARY KEY,
+                place_id    TEXT NOT NULL,
+                label       TEXT,
+                street      TEXT,
+                postal_code TEXT,
+                city        TEXT,
+                latitude    REAL,
+                longitude   REAL,
+                position    INTEGER,
+                updated_at  TEXT NOT NULL,
+                dirty       INTEGER NOT NULL DEFAULT 0
+            )
+        """
+
+        private val INDEXES_ADDRESSES = listOf(
+            "CREATE INDEX idx_business_addresses_place_id ON business_addresses(place_id)",
+            "CREATE INDEX idx_business_addresses_dirty ON business_addresses(dirty)",
+        )
+
+        /**
+         * Schema 7: the address a contact person sits at. Added by ALTER on both
+         * roads, like COLUMNS_APPOINTMENTS_6. Nullable: null is no assignment.
+         */
+        private const val COLUMN_CONTACTS_7 = "ALTER TABLE contacts ADD COLUMN address_id TEXT"
+
+        /**
+         * Local only, never synchronised: the businesses whose `main-` address
+         * was removed — by hand on this device, or by a tombstone from the
+         * server. Only the import reads it, so a re-import does not bring the
+         * address back.
+         *
+         * `deletions` cannot say it. It is the outgoing queue: a tombstone
+         * leaves it once the server has it, and an incoming one is not kept.
+         */
+        private const val TABLE_REMOVED_MAIN_ADDRESSES = """
+            CREATE TABLE removed_main_addresses (
+                place_id TEXT PRIMARY KEY
+            )
+        """
+
+        /**
+         * Tombstones. Contacts, their numbers and emails, appointments and
+         * business addresses are the only rows the app deletes; without a marker
+         * a deletion would come back with the next sync.
          */
         private const val TABLE_DELETIONS = """
             CREATE TABLE deletions (

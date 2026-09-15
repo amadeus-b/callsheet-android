@@ -27,7 +27,7 @@ class SyncSchemaTest {
 
     @Test
     fun `every synchronised table carries a dirty flag`() {
-        for (table in listOf("businesses", "calls", "contacts", "contact_numbers", "contact_emails", "appointments")) {
+        for (table in listOf("businesses", "calls", "contacts", "contact_numbers", "contact_emails", "appointments", "business_addresses")) {
             assertTrue("dirty missing on $table", columns(table).contains("dirty"))
         }
     }
@@ -56,7 +56,7 @@ class SyncSchemaTest {
         ctx.deleteDatabase("callsheet.db")
         // Version 1 nachbauen, eine Arbeitszeile hineinschreiben, dann hochziehen.
         val alt = ctx.openOrCreateDatabase("callsheet.db", 0, null)
-        alt.execSQL("CREATE TABLE businesses (place_id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'new', note TEXT, follow_up_at TEXT, updated_at TEXT NOT NULL)")
+        alt.execSQL("CREATE TABLE businesses (place_id TEXT PRIMARY KEY, name TEXT NOT NULL, street TEXT, postal_code TEXT, city TEXT, status TEXT NOT NULL DEFAULT 'new', note TEXT, follow_up_at TEXT, updated_at TEXT NOT NULL)")
         alt.execSQL("CREATE TABLE calls (id TEXT PRIMARY KEY, place_id TEXT NOT NULL, started_at TEXT NOT NULL, duration_seconds INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'call')")
         alt.execSQL("CREATE TABLE contacts (id TEXT PRIMARY KEY, place_id TEXT NOT NULL, name TEXT NOT NULL, role TEXT, email TEXT, note TEXT, position INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, contact_version INTEGER)")
         alt.execSQL("CREATE TABLE contact_numbers (id TEXT PRIMARY KEY, contact_id TEXT NOT NULL, number TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'other', position INTEGER NOT NULL DEFAULT 0)")
@@ -127,5 +127,15 @@ class SyncSchemaTest {
         for (column in listOf("calendar_seen_starts_at", "calendar_seen_ends_at", "calendar_seen_location")) {
             assertFalse("$column must not come in from the server", values.containsKey(column))
         }
+    }
+
+    @Test
+    fun `business addresses, a contact's address and the removed main addresses have their columns`() {
+        assertEquals(
+            setOf("id", "place_id", "label", "street", "postal_code", "city", "latitude", "longitude", "position", "updated_at", "dirty"),
+            columns("business_addresses"),
+        )
+        assertTrue(columns("contacts").contains("address_id"))
+        assertEquals(setOf("place_id"), columns("removed_main_addresses"))
     }
 }

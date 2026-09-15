@@ -197,6 +197,36 @@ class MigrationTest {
         db.close()
     }
 
+    /**
+     * The version 6 schema, as 1.5.0 ships it: version 4 plus contact emails (5)
+     * and the appointment kind (6). alt-1 carries a full imported address with
+     * coordinates and is synchronised, alt-2 only a city and is not uploaded
+     * yet, alt-3 an empty street — no address. alt-1 has a contact person.
+     */
+    private fun createVersionSix() {
+        createVersionFour()
+        val db = context.openOrCreateDatabase("callsheet.db", 0, null)
+        db.execSQL(
+            "CREATE TABLE contact_emails (id TEXT PRIMARY KEY, contact_id TEXT NOT NULL, email TEXT NOT NULL, " +
+                "position INTEGER NOT NULL DEFAULT 0, updated_at TEXT, dirty INTEGER NOT NULL DEFAULT 0)"
+        )
+        db.execSQL("ALTER TABLE appointments ADD COLUMN kind TEXT")
+        db.execSQL("ALTER TABLE appointments ADD COLUMN done_at TEXT")
+        db.execSQL("UPDATE businesses SET follow_up_at = NULL")
+        db.execSQL(
+            "UPDATE businesses SET street = 'Zehentstraße 39', postal_code = '85055', city = 'Ingolstadt', " +
+                "latitude = 48.7651, longitude = 11.4237, dirty = 0 WHERE place_id = 'alt-1'"
+        )
+        db.execSQL("UPDATE businesses SET city = 'Gaimersheim', dirty = 1 WHERE place_id = 'alt-2'")
+        db.execSQL("UPDATE businesses SET street = '', dirty = 0 WHERE place_id = 'alt-3'")
+        db.execSQL(
+            "INSERT INTO contacts (id, place_id, name, position, updated_at, dirty) " +
+                "VALUES ('k-1', 'alt-1', 'Erika Beispiel', 0, '2026-09-07T12:00:00+02:00', 0)"
+        )
+        db.version = 6
+        db.close()
+    }
+
     private fun columnsOf(table: String, db: android.database.sqlite.SQLiteDatabase): Set<String> =
         db.rawQuery("PRAGMA table_info($table)", null).use { c ->
             generateSequence { if (c.moveToNext()) c.getString(1) else null }.toSet()
@@ -506,6 +536,92 @@ class MigrationTest {
             assertTrue(c.isNull(1))
             assertEquals(0, c.getInt(2))
         }
+    }
+
+    // --- from version 6, the road 1.5.0 devices are on ----------------------
+
+    @Test
+    fun `an upgrade from version six carries each address over as the main address`() {
+        createVersionSix()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery(
+            "SELECT id, place_id, label, street, postal_code, city, latitude, longitude, position, updated_at, dirty " +
+                "FROM business_addresses ORDER BY id",
+            null,
+        ).use { c ->
+            assertEquals(2, c.count)
+            assertTrue(c.moveToFirst())
+            assertEquals("main-alt-1", c.getString(0))
+            assertEquals("alt-1", c.getString(1))
+            assertTrue(c.isNull(2))
+            assertEquals("Zehentstraße 39", c.getString(3))
+            assertEquals("85055", c.getString(4))
+            assertEquals("Ingolstadt", c.getString(5))
+            assertEquals(48.7651, c.getDouble(6), 0.0)
+            assertEquals(11.4237, c.getDouble(7), 0.0)
+            assertEquals(0, c.getInt(8))
+            // The business's timestamp, so the server's carried-over row meets this one as a standstill.
+            assertEquals("2026-09-07T12:00:00+02:00", c.getString(9))
+            // Sent up: a server that has the row takes it as a standstill.
+            assertEquals(1, c.getInt(10))
+            assertTrue(c.moveToNext())
+            assertEquals("main-alt-2", c.getString(0))
+            assertTrue(c.isNull(3))
+            assertEquals("Gaimersheim", c.getString(5))
+            assertEquals("2026-09-08T09:00:00+02:00", c.getString(9))
+        }
+    }
+
+    @Test
+    fun `an upgrade from version six keeps the old address columns and leaves the businesses unmarked`() {
+        createVersionSix()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery("SELECT street, city, dirty, updated_at FROM businesses WHERE place_id = 'alt-1'", null).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("Zehentstraße 39", c.getString(0))
+            assertEquals("Ingolstadt", c.getString(1))
+            assertEquals(0, c.getInt(2))
+            assertEquals("2026-09-07T12:00:00+02:00", c.getString(3))
+        }
+    }
+
+    @Test
+    fun `an upgrade from version six gives contacts an empty address and leaves them unmarked`() {
+        createVersionSix()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery("SELECT address_id, dirty FROM contacts WHERE id = 'k-1'", null).use { c ->
+            assertTrue(c.moveToFirst())
+            assertTrue(c.isNull(0))
+            assertEquals(0, c.getInt(1))
+        }
+    }
+
+    @Test
+    fun `a fresh database and an upgraded one have the same address columns`() {
+        createVersionSix()
+        val upgraded = Database(context).readableDatabase.let { db ->
+            (columnsOf("business_addresses", db) + columnsOf("contacts", db).map { "contacts.$it" } +
+                columnsOf("removed_main_addresses", db).map { "removed.$it" }).also { db.close() }
+        }
+        Database.resetSharedInstanceForTesting()
+        context.deleteDatabase("callsheet.db")
+
+        val fresh = Database(context).readableDatabase.let { db ->
+            columnsOf("business_addresses", db) + columnsOf("contacts", db).map { "contacts.$it" } +
+                columnsOf("removed_main_addresses", db).map { "removed.$it" }
+        }
+
+        // PRAGMA on a missing table returns no columns on both sides.
+        assertTrue("position" in fresh)
+        assertTrue("contacts.address_id" in fresh)
+        assertTrue("removed.place_id" in fresh)
+        assertEquals(fresh, upgraded)
     }
 
     // --- and a database that never had to migrate at all ---------------------
