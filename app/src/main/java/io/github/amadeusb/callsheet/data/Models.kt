@@ -52,6 +52,48 @@ data class Business(
         get() = !phone.isNullOrBlank() || additionalNumbers > 0
 }
 
+/**
+ * One of a business's addresses — head office, branch, yard. The first by
+ * [position] is the main address: the preset wherever nothing more specific
+ * applies.
+ *
+ * The address a business had before schema 7 became `main-<place_id>`, the same
+ * id the server's migration 009 writes; the import keeps that row up to date.
+ * Every other address has a UUID.
+ */
+data class BusinessAddress(
+    val id: String,
+    val placeId: String,
+    /** „Hauptsitz", „Filiale" … Free text, optional. */
+    val label: String?,
+    val street: String?,
+    val postalCode: String?,
+    val city: String?,
+    /** From the import. Cleared when street, postal code or city are changed by hand. */
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    /** Null reads as last. */
+    val position: Int? = null,
+) {
+    /** Street, postal code and city on one line. Null when nothing is known. */
+    val oneLine: String?
+        get() = Addresses.oneLine(street, postalCode, city)
+}
+
+/** One address row in a form — text as typed. */
+data class AddressDraft(
+    /** The row being edited; null for a new one. */
+    val id: String? = null,
+    val label: String = "",
+    val street: String = "",
+    val postalCode: String = "",
+    val city: String = "",
+) {
+    /** Street, postal code and city all empty: not saved, label or not. */
+    val isBlank: Boolean
+        get() = street.isBlank() && postalCode.isBlank() && city.isBlank()
+}
+
 /** Where a log entry came from. */
 enum class EntryKind(val key: String) {
     /** Came out of a dial attempt — carries a call duration. */
@@ -197,6 +239,12 @@ data class Contact(
     val contactVersion: Int? = null,
     /** The contact's email addresses, in the order they were entered. */
     val emails: List<ContactEmail> = emptyList(),
+    /**
+     * The business address this person sits at, or null for none. A row that is
+     * not here (deleted elsewhere, not synchronised yet) reads as none — see
+     * [Addresses.assigned]. Never cleared on reading: the row may still arrive.
+     */
+    val addressId: String? = null,
 )
 
 /** One number row in the edit form — text as typed, not yet validated. */
@@ -225,6 +273,8 @@ data class ContactDraft(
     val note: String = "",
     val numbers: List<PhoneDraft> = listOf(PhoneDraft()),
     val emails: List<EmailDraft> = listOf(EmailDraft()),
+    /** The chosen address; null is „Keiner". */
+    val addressId: String? = null,
 )
 
 /** A dialable number of a business — the main one or a contact's. */

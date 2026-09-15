@@ -8,6 +8,7 @@ import io.github.amadeusb.callsheet.calling.SavePlan
 import io.github.amadeusb.callsheet.calling.Slot
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
+import io.github.amadeusb.callsheet.data.BusinessAddress
 import io.github.amadeusb.callsheet.data.Clock
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.PhoneNumber
@@ -162,6 +163,39 @@ class AppointmentTest {
         assertEquals("Zehentstraße 39", Appointment.address("Zehentstraße 39", null, null))
         assertNull(Appointment.address(null, null, null))
         assertNull(Appointment.address(" ", "", null))
+    }
+
+    // --- place of a visit ---------------------------------------------------
+
+    private val head = BusinessAddress("main-P1", "P1", null, "Musterweg 1", "85000", "Musterstadt", position = 0)
+    private val branch = BusinessAddress("A2", "P1", "Filiale", "Hafenstraße 5", "85001", "Hafenstadt", position = 1)
+
+    private fun person(id: String, addressId: String?) = Contact(
+        id = id, placeId = "P1", name = "Erika Beispiel", role = null, email = null, note = null,
+        numbers = emptyList(), updatedAt = "2026-09-15T10:00:00+02:00", addressId = addressId,
+    )
+
+    @Test
+    fun `a visit starts at the chosen person's assigned address`() {
+        assertEquals(
+            "Hafenstraße 5, 85001 Hafenstadt",
+            Appointment.presetLocation("k1", listOf(person("k1", "A2")), listOf(head, branch)),
+        )
+    }
+
+    @Test
+    fun `without a person, an assignment or its row, a visit starts at the main address`() {
+        val addresses = listOf(branch, head)
+        val main = "Musterweg 1, 85000 Musterstadt"
+
+        assertEquals(main, Appointment.presetLocation(null, emptyList(), addresses))
+        assertEquals(main, Appointment.presetLocation("k1", listOf(person("k1", null)), addresses))
+        assertEquals(main, Appointment.presetLocation("k1", listOf(person("k1", "gone")), addresses))
+    }
+
+    @Test
+    fun `without any address the place stays empty`() {
+        assertEquals("", Appointment.presetLocation("k1", listOf(person("k1", "A2")), emptyList()))
     }
 
     // --- readableRange ------------------------------------------------------

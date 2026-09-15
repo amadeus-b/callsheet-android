@@ -1,7 +1,9 @@
 package io.github.amadeusb.callsheet.calling
 
+import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
+import io.github.amadeusb.callsheet.data.BusinessAddress
 import io.github.amadeusb.callsheet.data.Clock
 import io.github.amadeusb.callsheet.data.Contact
 import io.github.amadeusb.callsheet.data.Status
@@ -214,14 +216,17 @@ object Appointment {
     }
 
     /** Street, postal code and city on one line. Null when nothing is known. */
-    fun address(street: String?, postalCode: String?, city: String?): String? {
-        val town = listOfNotNull(
-            postalCode?.trim()?.ifEmpty { null },
-            city?.trim()?.ifEmpty { null },
-        ).joinToString(" ").ifEmpty { null }
-        return listOfNotNull(street?.trim()?.ifEmpty { null }, town)
-            .joinToString(", ")
-            .ifEmpty { null }
+    fun address(street: String?, postalCode: String?, city: String?): String? =
+        Addresses.oneLine(street, postalCode, city)
+
+    /**
+     * The place a visit starts at: the address of [contactId]'s person — the one
+     * they are assigned to, else the business's main address. Empty without any
+     * address.
+     */
+    fun presetLocation(contactId: String?, contacts: List<Contact>, addresses: List<BusinessAddress>): String {
+        val person = contacts.firstOrNull { it.id == contactId }
+        return Addresses.forContact(person?.addressId, addresses)?.oneLine.orEmpty()
     }
 
     /** Within a minute counts as the same moment. */
