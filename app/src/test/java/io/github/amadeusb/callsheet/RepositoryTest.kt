@@ -7,6 +7,7 @@ import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.BusinessAddress
+import io.github.amadeusb.callsheet.data.BusinessDraft
 import io.github.amadeusb.callsheet.data.CalendarState
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.ContactDraft
@@ -15,6 +16,7 @@ import io.github.amadeusb.callsheet.data.PhoneDraft
 import io.github.amadeusb.callsheet.data.PhoneType
 import io.github.amadeusb.callsheet.data.EntryKind
 import io.github.amadeusb.callsheet.data.Filter
+import io.github.amadeusb.callsheet.data.MasterData
 import io.github.amadeusb.callsheet.data.Repository
 import io.github.amadeusb.callsheet.data.Status
 import io.github.amadeusb.callsheet.data.Clock
@@ -622,6 +624,176 @@ class RepositoryTest {
     }
 
     // -------------------------------------------------------------- Appointment
+
+    // ------------------------------------------------------------ Master data
+
+    /** Opens the form on [placeId] as it is stored now and saves [change] of it. */
+    private suspend fun edit(placeId: String, change: (BusinessDraft) -> BusinessDraft): Result<Unit> {
+        val business = repo.business(placeId)!!
+        return repo.updateMasterData(placeId, MasterData.of(business), change(MasterData.draft(business)))
+    }
+
+    private fun editedFields(placeId: String): String? =
+        Database.instance(ApplicationProvider.getApplicationContext<android.content.Context>()).readableDatabase
+            .rawQuery("SELECT edited_fields FROM businesses WHERE place_id = ?", arrayOf(placeId))
+            .use { if (it.moveToFirst() && !it.isNull(0)) it.getString(0) else null }
+
+    @Test
+    fun `editing master data writes the changed fields, stamps and marks the business, and records them`() = runTest {
+        import(FIRST_IMPORT)
+        execute("UPDATE businesses SET updated_at = '2026-01-01T00:00:00+01:00', dirty = 0 WHERE place_id = 'P1'")
+
+        edit("P1") { it.copy(email = "test@example.org", phone = "0621 9900099") }.getOrThrow()
+
+        val b = repo.business("P1")!!
+        assertEquals("test@example.org", b.email)
+        assertEquals("+496219900099", b.phone)
+        assertTrue(b.updatedAt != "2026-01-01T00:00:00+01:00")
+        assertEquals(1, count("SELECT dirty FROM businesses WHERE place_id = 'P1'"))
+        assertEquals("[\"email\",\"phone\"]", editedFields("P1"))
+        // The business as read carries the list too — the detail view's label reads it.
+        assertEquals(setOf("email", "phone"), b.editedFields)
+    }
+
+    @Test
+    fun `the recorded fields grow across edits`() = runTest {
+        import(FIRST_IMPORT)
+
+        edit("P1") { it.copy(email = "test@example.org") }.getOrThrow()
+        edit("P1") { it.copy(website = "beispiel.example") }.getOrThrow()
+
+        assertEquals("[\"email\",\"website\"]", editedFields("P1"))
+    }
+
+    @Test
+    fun `a change made elsewhere while the form was open stays and is not recorded as a hand edit`() = runTest {
+        import(FIRST_IMPORT)
+        val opened = repo.business("P1")!!
+        // Another device changes the email, the sync brings it in, the form is still open.
+        execute("UPDATE businesses SET email = 'anderes-geraet@example.org' WHERE place_id = 'P1'")
+
+        repo.updateMasterData("P1", MasterData.of(opened), MasterData.draft(opened).copy(phone = "0621 9900099")).getOrThrow()
+
+        val b = repo.business("P1")!!
+        assertEquals("anderes-geraet@example.org", b.email)
+        assertEquals("+496219900099", b.phone)
+        assertEquals("[\"phone\"]", editedFields("P1"))
+    }
+
+    @Test
+    fun `a change to name or email leaves is_target alone`() = runTest {
+        import(FIRST_IMPORT)
+        // Not what the rule would say for this business: only a changed phone or industry may rewrite it.
+        execute("UPDATE businesses SET is_target = 0 WHERE place_id = 'P1'")
+
+        edit("P1") { it.copy(email = "test@example.org") }.getOrThrow()
+
+        assertFalse(repo.business("P1")!!.isTarget)
+    }
+
+    @Test
+    fun `saving master data unchanged writes nothing`() = runTest {
+        import(FIRST_IMPORT)
+        execute("UPDATE businesses SET dirty = 0")
+        val before = repo.business("P1")!!.updatedAt
+
+        edit("P1") { it }.getOrThrow()
+
+        assertEquals(before, repo.business("P1")!!.updatedAt)
+        assertEquals(0, count("SELECT dirty FROM businesses WHERE place_id = 'P1'"))
+        assertNull(editedFields("P1"))
+    }
+
+    @Test
+    fun `clearing the number records it and takes the business out of the target set`() = runTest {
+        import(FIRST_IMPORT)
+        assertTrue(repo.business("P1")!!.isTarget)
+
+        edit("P1") { it.copy(phone = "") }.getOrThrow()
+
+        val b = repo.business("P1")!!
+        assertNull(b.phone)
+        assertFalse(b.isTarget)
+        assertEquals("[\"phone\"]", editedFields("P1"))
+    }
+
+    @Test
+    fun `a new name is found by the search`() = runTest {
+        import(FIRST_IMPORT)
+
+        edit("P1") { it.copy(name = "Lichttechnik Erfunden") }.getOrThrow()
+
+        val found = repo.list(Filter(status = emptySet(), onlyTargets = false, search = "lichttechnik"))
+        assertEquals(listOf("P1"), found.map { it.placeId })
+        // The cities stay in the search text.
+        assertTrue(repo.list(Filter(status = emptySet(), onlyTargets = false, search = "ingolstadt")).any { it.placeId == "P1" })
+    }
+
+    @Test
+    fun `master data without a name or with an incomplete number is refused, nothing written`() = runTest {
+        import(FIRST_IMPORT)
+        execute("UPDATE businesses SET dirty = 0")
+
+        val noName = edit("P1") { it.copy(name = "  ") }
+        val shortNumber = edit("P1") { it.copy(phone = "0621") }
+
+        assertEquals("Ohne Namen lässt sich der Betrieb nicht speichern.", noName.exceptionOrNull()!!.message)
+        assertTrue(shortNumber.exceptionOrNull()!!.message!!.contains("unvollständig"))
+        assertEquals("Elektro Beispiel GmbH", repo.business("P1")!!.name)
+        assertEquals(0, count("SELECT dirty FROM businesses WHERE place_id = 'P1'"))
+    }
+
+    @Test
+    fun `master data may take a number another business holds`() = runTest {
+        import(FIRST_IMPORT)
+
+        val result = edit("P2") { it.copy(phone = "+49 621 990 0011") }
+
+        assertTrue(result.isSuccess)
+        assertEquals("+496219900011", repo.business("P2")!!.phone)
+    }
+
+    @Test
+    fun `a re-import leaves hand-edited fields alone and updates the rest`() = runTest {
+        import(FIRST_IMPORT)
+        edit("P1") { it.copy(name = "Elektro von Hand", email = "test@example.org") }.getOrThrow()
+
+        import(SECOND_IMPORT)
+
+        val b = repo.business("P1")!!
+        assertEquals("Elektro von Hand", b.name)
+        assertEquals("test@example.org", b.email)
+        // Not edited: taken from the file as before.
+        assertEquals(listOf("Elektriker", "Handwerk"), b.categories)
+        assertEquals("[\"email\",\"name\"]", editedFields("P1"))
+    }
+
+    @Test
+    fun `a re-import that differs only in hand-edited fields writes nothing`() = runTest {
+        import(FIRST_IMPORT)
+        edit("P1") { it.copy(name = "Elektro von Hand") }.getOrThrow()
+        execute("UPDATE businesses SET dirty = 0")
+        execute("UPDATE business_addresses SET dirty = 0")
+        val before = repo.business("P1")!!.updatedAt
+
+        val e = import(FIRST_IMPORT)
+
+        assertEquals(0, e.updated)
+        assertEquals(before, repo.business("P1")!!.updatedAt)
+        assertEquals(0, count("SELECT dirty FROM businesses WHERE place_id = 'P1'"))
+    }
+
+    @Test
+    fun `a number cleared by hand keeps the business out of the target set on re-import`() = runTest {
+        import(FIRST_IMPORT)
+        edit("P1") { it.copy(phone = "") }.getOrThrow()
+
+        import(FIRST_IMPORT)
+
+        val b = repo.business("P1")!!
+        assertNull(b.phone)
+        assertFalse(b.isTarget)
+    }
 
     // Through the shared helper the repository uses, which aufbau() resets —
     // a fresh Database(ctx) per call would open a connection nobody closes.

@@ -17,8 +17,9 @@ import java.io.InputStream
  * Two rules deliberately live in SQL rather than in the user interface:
  * 1. Businesses with status `do_not_call` show up in no list at all — only
  *    [blockedBusinesses] returns them.
- * 2. Re-importing only refreshes imported master data. Status, note, appointments
- *    and call history are never touched.
+ * 2. Re-importing only refreshes imported master data, and none that was
+ *    changed by hand (`edited_fields`). Status, note, appointments and call
+ *    history are never touched.
  */
 class Repository(context: Context) {
 
@@ -65,9 +66,16 @@ class Repository(context: Context) {
                 val businessChanged = if (known.contains(s.placeId)) {
                     // Imported master data only. status, note and
                     // updated_at are deliberately absent from [importedValues].
+                    // Columns changed by hand are left out first: a file that
+                    // differs only there writes nothing.
                     val same = db.rawQuery(
                         "SELECT * FROM businesses WHERE place_id = ?", arrayOf(s.placeId),
-                    ).use { c -> c.moveToFirst() && matchesStored(c, values) }
+                    ).use { c ->
+                        c.moveToFirst() && run {
+                            keepEdited(c, values)
+                            matchesStored(c, values)
+                        }
+                    }
                     if (!same) {
                         values.put("updated_at", now)
                         values.put("dirty", 1)
@@ -158,6 +166,25 @@ class Repository(context: Context) {
             if (!same) return false
         }
         return true
+    }
+
+    /**
+     * Takes the columns changed by hand (`edited_fields`, see [MasterData]) out
+     * of [values], so the import neither compares nor writes them. `is_target`
+     * then follows the stored number and industry where those were edited, and
+     * the file's values of the rest — a number cleared by hand keeps the
+     * business out of the target set.
+     */
+    private fun keepEdited(c: Cursor, values: ContentValues) {
+        val edited = MasterData.parse(c.text("edited_fields"))
+        if (edited.isEmpty()) return
+        for (column in edited) values.remove(column)
+        if ("phone" in edited || "industry" in edited) {
+            val industry = if ("industry" in edited) c.text("industry") else values.getAsString("industry")
+            val phone = if ("phone" in edited) c.text("phone") else values.getAsString("phone")
+            val closed = (values.getAsInteger("closed") ?: 0) == 1
+            values.put("is_target", if (TargetRule.isTarget(industry, phone, closed)) 1 else 0)
+        }
     }
 
     /**
@@ -445,6 +472,69 @@ class Repository(context: Context) {
         }
         notifyChanged()
         Result.success(placeId)
+    }
+
+    /**
+     * Saves the master data of an existing business from the form in editing
+     * mode: name, number, industry, website, email, contact name. Addresses,
+     * note and status are saved elsewhere.
+     *
+     * Validated as [create] validates: a name, and a number that is empty or
+     * complete. Another business holding the number is fine.
+     *
+     * Only columns the user changed in the form are written: compared with
+     * [before], the values as the form opened (MasterData.changedFields), not
+     * with what is stored now — a column another device changed meanwhile
+     * stays as that device left it and is not taken for a hand edit. Each
+     * written column is added to `edited_fields`; the import leaves it alone
+     * from then on. Unchanged columns keep their stored text: rewritten
+     * trimmed, they would look changed to the next import. With a change,
+     * `updated_at` and the mark move and `search_text` follows; `is_target`
+     * only when phone or industry changed. Without one, nothing is written.
+     */
+    suspend fun updateMasterData(placeId: String, before: MasterValues, draft: BusinessDraft): Result<Unit> = withContext(Dispatchers.IO) {
+        val after = MasterData.fromDraft(draft)
+        if (after.name.isEmpty()) {
+            return@withContext Result.failure(IllegalArgumentException("Ohne Namen lässt sich der Betrieb nicht speichern."))
+        }
+        if (draft.phone.isNotBlank() && after.phone == null) {
+            return@withContext Result.failure(
+                IllegalArgumentException("Die Telefonnummer ist unvollständig. Lass sie leer oder trag sie vollständig ein.")
+            )
+        }
+
+        val db = helper.writableDatabase
+        var written = false
+        db.beginTransaction()
+        try {
+            val (stored, edited) = db.rawQuery("SELECT * FROM businesses WHERE place_id = ?", arrayOf(placeId))
+                .use { c -> if (c.moveToFirst()) fromCursor(c) to MasterData.parse(c.text("edited_fields")) else null }
+                ?: return@withContext Result.failure(IllegalStateException("Den Betrieb gibt es auf diesem Gerät nicht mehr."))
+            val changed = MasterData.changedFields(before, after)
+            if (changed.isNotEmpty()) {
+                val newValues = after.byColumn()
+                val values = ContentValues().apply {
+                    for (column in changed) put(column, newValues[column])
+                    if ("phone" in changed || "industry" in changed) {
+                        // The other of the two as stored now: it may have changed elsewhere.
+                        val phone = if ("phone" in changed) after.phone else stored.phone
+                        val industry = if ("industry" in changed) after.industry else stored.industry
+                        put("is_target", if (TargetRule.isTarget(industry, phone, stored.closed)) 1 else 0)
+                    }
+                    put("edited_fields", MasterData.format(edited + changed))
+                    put("updated_at", Clock.now())
+                    put("dirty", 1)
+                }
+                db.update("businesses", values, "place_id = ?", arrayOf(placeId))
+                AddressRows.refreshSearchText(db, placeId)
+                written = true
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        if (written) notifyChanged()
+        Result.success(Unit)
     }
 
     /** Appends an entry to the log. */
@@ -1163,6 +1253,7 @@ class Repository(context: Context) {
         note = c.text("note"),
         updatedAt = c.text("updated_at") ?: "",
         additionalNumbers = c.int("additional_numbers") ?: 0,
+        editedFields = MasterData.parse(c.text("edited_fields")),
     )
 
     private fun addressFromCursor(c: Cursor): BusinessAddress = BusinessAddress(

@@ -42,6 +42,8 @@ data class Business(
      * list queries fill this in; everywhere else it stays 0.
      */
     val additionalNumbers: Int = 0,
+    /** The master data columns changed by hand (`edited_fields`, see MasterData). */
+    val editedFields: Set<String> = emptySet(),
 ) {
     /** Whether any number at all can be dialled — the main one or a contact's. */
     val hasNumber: Boolean
