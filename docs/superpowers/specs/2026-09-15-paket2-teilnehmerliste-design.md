@@ -66,8 +66,9 @@ sides, is no longer read and no longer written (the pattern of the old address
 columns).
 
 - **`attendees`**: trimmed addresses in the order added, no address twice
-  (ignoring case), never the organizer's own address. An empty list is stored
-  as NULL. Always NULL for a callback.
+  (ignoring case). An empty list is stored as NULL. Always NULL for a callback.
+  The server leaves the organizer's own address out when it reads the list: the
+  API adds the organizer itself.
 - **`attendees_notify`** is written by the app **only in a save that changes the
   list**: 1 after „Senden" or where no question was asked (title, time or place
   changed too), 0 after „Ohne Mail speichern". A save that leaves the list alone
