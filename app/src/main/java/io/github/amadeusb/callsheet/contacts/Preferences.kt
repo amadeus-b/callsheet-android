@@ -104,6 +104,23 @@ class Preferences(context: Context) {
         get() = store.getBoolean(REFETCHED_FOR_ADDRESSES, false)
         set(value) = store.edit().putBoolean(REFETCHED_FOR_ADDRESSES, value).apply()
 
+    /**
+     * Whether this device has fetched the server's stock from the start since
+     * it learnt which master data was changed by hand (schema 9).
+     *
+     * While it still ran 1.5.0, the server delivered businesses whose
+     * `edited_fields` another device had set, and the old app stored them
+     * without the column while its watermark moved past. After the update
+     * those rows hold NULL: an import here would overwrite the hand edits, and
+     * the next save of such a business would send the NULL up as the newer
+     * row. One fetch from zero brings each row again at a standstill, and the
+     * store fills the gap (SyncStore.fillGaps). A flag for the reason
+     * [refetchedForAppointments] gives.
+     */
+    var refetchedForEditedFields: Boolean
+        get() = store.getBoolean(REFETCHED_FOR_EDITED_FIELDS, false)
+        set(value) = store.edit().putBoolean(REFETCHED_FOR_EDITED_FIELDS, value).apply()
+
     /** Whether appointments get mirrored into the device calendar at all. */
     var calendarEnabled: Boolean
         get() = store.getBoolean(CALENDAR_ENABLED, false)
@@ -144,6 +161,7 @@ class Preferences(context: Context) {
         const val REFETCHED_FOR_APPOINTMENTS = "refetched_for_appointments"
         const val REFETCHED_FOR_CALLBACKS = "refetched_for_callbacks"
         const val REFETCHED_FOR_ADDRESSES = "refetched_for_addresses"
+        const val REFETCHED_FOR_EDITED_FIELDS = "refetched_for_edited_fields"
         const val CALENDAR_ENABLED = "calendar_enabled"
         const val CALENDAR_ID = "calendar_id"
         const val APPOINTMENT_MINUTES = "appointment_minutes"

@@ -39,6 +39,11 @@ class SyncSchemaTest {
     }
 
     @Test
+    fun `businesses carry the fields changed by hand`() {
+        assertTrue(columns("businesses").contains("edited_fields"))
+    }
+
+    @Test
     fun `there is a table for tombstones`() {
         assertEquals(setOf("table_name", "row_id", "deleted_at"), columns("deletions"))
     }

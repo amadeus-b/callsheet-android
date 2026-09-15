@@ -254,6 +254,20 @@ class MigrationTest {
         db.close()
     }
 
+    /**
+     * The version 8 schema, as 1.5.0 ships it: version 7 with a visit's title,
+     * invitation and calendar state. The upgrade to 9 touches businesses only.
+     */
+    private fun createVersionEight() {
+        createVersionSeven()
+        val db = context.openOrCreateDatabase("callsheet.db", 0, null)
+        for (column in listOf("title TEXT", "invite_email TEXT", "calendar_state TEXT", "calendar_error TEXT", "calendar_seen_title TEXT")) {
+            db.execSQL("ALTER TABLE appointments ADD COLUMN $column")
+        }
+        db.version = 8
+        db.close()
+    }
+
     private fun columnsOf(table: String, db: android.database.sqlite.SQLiteDatabase): Set<String> =
         db.rawQuery("PRAGMA table_info($table)", null).use { c ->
             generateSequence { if (c.moveToNext()) c.getString(1) else null }.toSet()
@@ -676,6 +690,37 @@ class MigrationTest {
             assertEquals(0, c.getInt(3))
             for (i in 4..8) assertTrue("column $i not null", c.isNull(i))
         }
+    }
+
+    // --- from version 8, the road 1.5.0 devices are on -------------------------
+
+    @Test
+    fun `an upgrade from version eight adds edited_fields empty and leaves the businesses unmarked`() {
+        createVersionEight()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery("SELECT name, edited_fields, dirty FROM businesses WHERE place_id = 'alt-1'", null).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("Bestandsbetrieb", c.getString(0))
+            assertTrue(c.isNull(1))
+            // Nothing new to tell the server.
+            assertEquals(0, c.getInt(2))
+        }
+    }
+
+    @Test
+    fun `a fresh database and one upgraded from version eight have the same business columns`() {
+        createVersionEight()
+        val upgraded = Database(context).readableDatabase.let { db -> columnsOf("businesses", db).also { db.close() } }
+        Database.resetSharedInstanceForTesting()
+        context.deleteDatabase("callsheet.db")
+
+        val fresh = columnsOf("businesses", Database(context).readableDatabase)
+
+        // PRAGMA on a missing table returns no columns on both sides.
+        assertTrue("edited_fields" in fresh)
+        assertEquals(fresh, upgraded)
     }
 
     // --- and a database that never had to migrate at all ---------------------

@@ -106,6 +106,13 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
                 prefs.watermark = 0
                 prefs.refetchedForAddresses = true
             }
+            // Once more, on the first sync that runs on schema 9 — see
+            // Preferences.refetchedForEditedFields. The hand-edited fields a
+            // 1.5.0 app could not store come down at a standstill.
+            if (!prefs.refetchedForEditedFields) {
+                prefs.watermark = 0
+                prefs.refetchedForEditedFields = true
+            }
             var rounds = 0
             val total = store.pendingCount()
             onProgress(total, total)

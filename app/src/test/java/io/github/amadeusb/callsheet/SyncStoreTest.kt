@@ -591,6 +591,28 @@ class SyncStoreTest {
     }
 
     @Test
+    fun `a newer business brings its hand-edited fields and replaces the list here`() {
+        // The list belongs to its row: no union.
+        einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 0)
+        schreibe("UPDATE businesses SET edited_fields = '[\"email\"]' WHERE place_id = 'P1'")
+
+        store.apply(antwort(betriebJson("P1", null, "2026-09-07T11:00:00+02:00").put("edited_fields", "[\"phone\"]")))
+
+        assertEquals("[\"phone\"]", einzeln("SELECT edited_fields FROM businesses WHERE place_id = 'P1'"))
+    }
+
+    @Test
+    fun `a standstill fills hand-edited fields a 1_5_0 phone could not store`() {
+        einBetrieb("P1", "lokal", "2026-09-07T10:00:00+02:00", dirty = 0)
+
+        store.apply(antwort(betriebJson("P1", "lokal", "2026-09-07T10:00:00+02:00").put("edited_fields", "[\"email\",\"phone\"]")))
+
+        assertEquals("[\"email\",\"phone\"]", einzeln("SELECT edited_fields FROM businesses WHERE place_id = 'P1'"))
+        // Filled from the server, so nothing to send back.
+        assertEquals(0, store.pendingCount())
+    }
+
+    @Test
     fun `a standstill fills gaps in every synchronised table, the way the server does`() {
         einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 0)
 

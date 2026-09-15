@@ -90,6 +90,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         for (sql in INDEXES_ADDRESSES) db.execSQL(sql)
         db.execSQL(TABLE_REMOVED_MAIN_ADDRESSES)
         for (sql in COLUMNS_APPOINTMENTS_8) db.execSQL(sql)
+        db.execSQL(COLUMN_BUSINESSES_9)
         db.execSQL("CREATE INDEX idx_businesses_status ON businesses(status)")
         db.execSQL("CREATE INDEX idx_businesses_industry ON businesses(industry)")
         db.execSQL("CREATE INDEX idx_businesses_is_target ON businesses(is_target)")
@@ -279,6 +280,11 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             // nothing about it.
             for (sql in COLUMNS_APPOINTMENTS_8) db.execSQL(sql)
         }
+        if (old < 9) {
+            // Nothing to carry over and nothing to mark: nothing was edited by
+            // hand before this version could say so.
+            db.execSQL(COLUMN_BUSINESSES_9)
+        }
     }
 
     /**
@@ -294,7 +300,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
 
     companion object {
         const val NAME = "callsheet.db"
-        const val VERSION = 8
+        const val VERSION = 9
 
         @Volatile
         private var shared: Database? = null
@@ -498,6 +504,15 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             "ALTER TABLE appointments ADD COLUMN calendar_error TEXT",
             "ALTER TABLE appointments ADD COLUMN calendar_seen_title TEXT",
         )
+
+        /**
+         * Schema 9: the master data columns changed by hand, as a sorted JSON
+         * array of column names (see MasterData). The import leaves those
+         * columns alone. Synchronised; nullable, as every new synchronised
+         * column is. Added by ALTER on both roads, for the reason
+         * COLUMNS_APPOINTMENTS_6 gives.
+         */
+        private const val COLUMN_BUSINESSES_9 = "ALTER TABLE businesses ADD COLUMN edited_fields TEXT"
 
         /**
          * Tombstones. Contacts, their numbers and emails, appointments and
