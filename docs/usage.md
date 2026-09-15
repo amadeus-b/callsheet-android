@@ -148,13 +148,14 @@ free.
 on a laptop, and the app takes the new time, place and title over the next time
 the record is opened, without asking — once the server has put the latest
 version into the calendar, and once this phone has seen the entry before: an
-entry seen for the first time is only taken note of when it matches. Delete the
-entry in the calendar and the appointment is removed — said out loud, because
-the status falls back to „Angerufen" once no other appointment is ahead. Not so
-with an invitation: the detail view says „Im Kalender nicht mehr gefunden" and
-offers **Termin entfernen**, which asks first, as the invitee would get a
-cancellation. If the entry turns up again, the note goes. A past entry that a
-calendar clears out on its own leaves the appointment in place.
+entry seen for the first time is only taken note of when it matches. If the
+entry is gone from the calendar, the visit is **not** removed — a calendar
+switched off in DAVx5 looks exactly the same. The detail view says „Im Kalender
+nicht mehr gefunden" and offers **Termin entfernen**: without an invitation it
+removes the visit at once and says so, with an invitation it asks first, as the
+invitee gets a cancellation. If the entry turns up again, the note goes. A
+callback deleted in the calendar is removed, and the app says so. A past entry
+that a calendar clears out on its own leaves the appointment in place.
 
 **Entfernen** asks first, for a past appointment too: it removes a piece of the
 record. With an invitation it names who gets the cancellation.
@@ -185,6 +186,19 @@ holds it once per business.
 
 Hand-entered businesses get an id carrying the `manual:` prefix. A later import
 can therefore never hit one of them and never overwrite it.
+
+## Editing master data
+
+**Stammdaten bearbeiten** in the detail view opens the business form for an
+existing business: name, phone, industry, contact name, website and email.
+Addresses keep their own screen, note and status stay in the detail view. The
+same rules as for a new business apply: a name is required, and a number is
+empty or complete.
+
+What you change here stays: a later import of the business file leaves every
+field you changed alone — on every phone, once they have synchronised — and
+updates the rest. Clearing a field counts as a change. The phone book entries
+follow at once.
 
 ## Addresses
 

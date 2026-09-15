@@ -4,6 +4,23 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.6.0
+
+- **Stammdaten bearbeiten.** Name, phone, industry, contact name, website and
+  email of an existing business can be changed in the detail view.
+- **A hand edit survives the import.** Re-importing the business file leaves
+  every field changed by hand alone, on every phone, and updates the rest.
+- **The same number at several businesses.** A business can be created with a
+  number another one already has; the phone book holds it once per business.
+- **A visit is never removed because its calendar entry is missing.** A
+  calendar switched off in DAVx5 looked like a deleted entry and would have
+  removed visits on the server and at Infomaniak. The detail view now says „Im
+  Kalender nicht mehr gefunden" and offers **Termin entfernen** — at once
+  without an invitation, after asking with one.
+- **Update the sync server first, then every phone, and only then import
+  again.** The first sync after the update fetches everything once. A phone
+  still on 1.5.0 overwrites hand edits when it imports.
+
 ## 1.5.0
 
 - **A follow-up is an appointment now: a callback.** „in 2 Tagen", „nächste

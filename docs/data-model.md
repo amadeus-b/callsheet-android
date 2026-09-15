@@ -58,7 +58,8 @@ between the two without translation.
 
 ### `businesses`
 
-Master data, overwritten by every import:
+Master data, overwritten by every import — except the columns named in
+`edited_fields`:
 
 ```
 place_id        TEXT PRIMARY KEY
@@ -75,6 +76,7 @@ closed          INTEGER         -- 0/1
 is_target       INTEGER         -- 0/1, computed on import
 origin          TEXT            -- JSON array as text
 collected_at    TEXT            -- ISO-8601
+edited_fields   TEXT            -- since schema 9: JSON array of the columns changed by hand, e.g. ["email","phone"]
 latitude        REAL            -- no longer used since schema 7
 longitude       REAL            -- no longer used since schema 7
 ```
@@ -95,6 +97,14 @@ dirty           INTEGER NOT NULL DEFAULT 0   -- 1 while a change is waiting to s
 
 `is_target` = 1 when the industry does **not** end in `(kein Ziel)` **and** a
 phone number is present **and** the business is not closed.
+
+`edited_fields` names the master data columns changed by hand in the app
+(„Stammdaten bearbeiten"): `name`, `phone`, `industry`, `website`, `email`,
+`contact_name`, sorted; NULL for none. Clearing a field counts. The list only
+grows. The import leaves those columns as they are; `is_target` then follows the
+stored number and industry where those were edited. The list travels with the
+business: the newer row wins with its list, and lists are never merged — a list
+describes the values of its own row.
 
 There is also a `search_text` column: the name and the cities of all the
 business's addresses, lower-cased. SQLite only lower-cases ASCII on its own;
@@ -295,7 +305,8 @@ and its rows stay marked — counted as open — until the server is updated. Th
 first sync after upgrading to schema 4 fetches from watermark 0 once, because a
 1.3.x app skipped appointments while its watermark moved past them. The first
 sync on schema 6 does so once more: a 1.4.0 app stored the callbacks it pulled
-without `kind` and `done_at`.
+without `kind` and `done_at`. Schemas 7 and 9 do it once each, for the addresses
+and for `edited_fields` a 1.5.x app could not store.
 
 Like the server, the app fills gaps at a standstill: an incoming row with the
 same `updated_at` writes only into columns that are NULL here, never over a
@@ -372,10 +383,11 @@ DAVx5, the appointment reaches the server the same way; the app itself speaks
   here for the first time, or moved only in the calendar, the calendar wins;
   where the row changed, the row wins and the event is updated. With a server
   configured, this waits for a sync. An event not found that this device never
-  saw means nothing yet. One seen before and gone is a deletion while the
-  appointment is ahead — the appointment goes, and the status falls back to
-  `called` if it was still `appointment` and no other appointment is ahead — and
-  only a lost link once it is past.
+  saw means nothing yet. One seen before and gone, while the appointment is
+  ahead, is a deletion for a callback only — the callback goes, and the status
+  stays. A visit is never removed that way: a calendar deselected in DAVx5 looks
+  the same. The detail view says „Im Kalender nicht mehr gefunden" and offers
+  „Termin entfernen". Once an appointment is past, only the link goes.
 - After a sync, appointments changed elsewhere move their events and deleted
   ones take their events along.
 - Busy times for the picker are read from every visible calendar, and only read.
@@ -393,7 +405,8 @@ without a new build.
 
 1. Matching happens on `place_id`.
 2. New businesses are created with `status = 'new'`.
-3. Known businesses: **master data only.** Status, note, callbacks,
+3. Known businesses: **master data only**, and none that was changed by hand
+   (`edited_fields`). Status, note, callbacks,
    appointments and the call history stay untouched. A fresh export must never
    overwrite the work.
 4. Phone numbers are normalised: `phoneUnformatted` preferred, brought to E.164
