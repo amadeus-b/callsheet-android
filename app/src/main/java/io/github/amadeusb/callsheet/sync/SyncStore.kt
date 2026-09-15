@@ -339,6 +339,9 @@ class SyncStore(context: Context) {
      * after the server's migration left a value there: nothing reads them, and
      * the row stays unmarked.
      *
+     * One exception to column by column: `attendees_notify` only together with
+     * `attendees`, see the comment in the body.
+     *
      * Never marks the row: the values came from the server. Local-only columns
      * are never touched — [Rows.toValues] leaves them out, and [local] never
      * carries them. No gap, no write; returns whether there was one.
@@ -352,8 +355,19 @@ class SyncStore(context: Context) {
         tableColumns: Set<String>,
     ): Boolean {
         val gaps = Rows.toValues(row, tableColumns)
+        val incoming = Rows.toValues(row, tableColumns)
         for (name in gaps.keySet().toList()) {
             if (!local.isNull(name) || gaps.get(name) == null) gaps.remove(name)
+        }
+        // A visit's attendees and whether a change to them notifies are one
+        // decision of one save: filled together — the decision then over what is
+        // stored — or the decision not at all. The server's pairAttendees.
+        if (table == "appointments") {
+            if (gaps.containsKey("attendees") && incoming.containsKey("attendees_notify")) {
+                gaps.put("attendees_notify", incoming.getAsInteger("attendees_notify"))
+            } else {
+                gaps.remove("attendees_notify")
+            }
         }
         if (gaps.size() == 0) return false
         db.update(table, gaps, "${Rows.key(table)} = ?", arrayOf(id))

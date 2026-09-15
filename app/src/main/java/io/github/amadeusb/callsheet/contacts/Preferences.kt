@@ -121,6 +121,22 @@ class Preferences(context: Context) {
         get() = store.getBoolean(REFETCHED_FOR_EDITED_FIELDS, false)
         set(value) = store.edit().putBoolean(REFETCHED_FOR_EDITED_FIELDS, value).apply()
 
+    /**
+     * Whether this device has fetched the server's stock from the start since
+     * it learnt about attendees (schema 10).
+     *
+     * While it ran the version before, the server delivered visits whose
+     * `attendees` another device had set, and the old app stored them without
+     * the column while its watermark moved past. After the update those visits
+     * would show nobody, and the next save would send the empty list up as the
+     * newer row. One fetch from zero brings each row again at a standstill, and
+     * the store fills the gap. A flag for the reason [refetchedForAppointments]
+     * gives.
+     */
+    var refetchedForAttendees: Boolean
+        get() = store.getBoolean(REFETCHED_FOR_ATTENDEES, false)
+        set(value) = store.edit().putBoolean(REFETCHED_FOR_ATTENDEES, value).apply()
+
     /** Whether appointments get mirrored into the device calendar at all. */
     var calendarEnabled: Boolean
         get() = store.getBoolean(CALENDAR_ENABLED, false)
@@ -162,6 +178,7 @@ class Preferences(context: Context) {
         const val REFETCHED_FOR_CALLBACKS = "refetched_for_callbacks"
         const val REFETCHED_FOR_ADDRESSES = "refetched_for_addresses"
         const val REFETCHED_FOR_EDITED_FIELDS = "refetched_for_edited_fields"
+        const val REFETCHED_FOR_ATTENDEES = "refetched_for_attendees"
         const val CALENDAR_ENABLED = "calendar_enabled"
         const val CALENDAR_ID = "calendar_id"
         const val APPOINTMENT_MINUTES = "appointment_minutes"

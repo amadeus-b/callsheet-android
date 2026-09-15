@@ -113,6 +113,13 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
                 prefs.watermark = 0
                 prefs.refetchedForEditedFields = true
             }
+            // Once more, on the first sync that runs on schema 10 — see
+            // Preferences.refetchedForAttendees. Shipped with schema 9, both
+            // flags reset the watermark in this same sync: one download.
+            if (!prefs.refetchedForAttendees) {
+                prefs.watermark = 0
+                prefs.refetchedForAttendees = true
+            }
             var rounds = 0
             val total = store.pendingCount()
             onProgress(total, total)

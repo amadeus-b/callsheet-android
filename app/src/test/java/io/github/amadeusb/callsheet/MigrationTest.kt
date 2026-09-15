@@ -268,6 +268,20 @@ class MigrationTest {
         db.close()
     }
 
+    /**
+     * The version 9 schema, as package 1 builds it: version 8 with a business's
+     * hand-edited fields. alt-1's visit invites somebody, as a 1.5.0 phone saved
+     * it — with the whitespace the server keeps in `invite_email` too.
+     */
+    private fun createVersionNine() {
+        createVersionEight()
+        val db = context.openOrCreateDatabase("callsheet.db", 0, null)
+        db.execSQL("ALTER TABLE businesses ADD COLUMN edited_fields TEXT")
+        db.execSQL("UPDATE appointments SET invite_email = ' test@example.org ' WHERE id = 'legacy-alt-1'")
+        db.version = 9
+        db.close()
+    }
+
     private fun columnsOf(table: String, db: android.database.sqlite.SQLiteDatabase): Set<String> =
         db.rawQuery("PRAGMA table_info($table)", null).use { c ->
             generateSequence { if (c.moveToNext()) c.getString(1) else null }.toSet()
@@ -706,6 +720,30 @@ class MigrationTest {
             assertTrue(c.isNull(1))
             // Nothing new to tell the server.
             assertEquals(0, c.getInt(2))
+        }
+    }
+
+    // --- from version 9, the road package 1 devices are on --------------------
+
+    @Test
+    fun `an upgrade from version nine carries the invitation over as the only attendee and marks nothing`() {
+        createVersionNine()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery(
+            "SELECT attendees, attendees_notify, invite_email, dirty FROM appointments WHERE id = 'legacy-alt-1'", null,
+        ).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("[\"test@example.org\"]", c.getString(0))
+            assertTrue(c.isNull(1))
+            // Kept, as the old address columns were.
+            assertEquals(" test@example.org ", c.getString(2))
+            assertEquals(0, c.getInt(3))
+        }
+        db.rawQuery("SELECT COUNT(*) FROM appointments WHERE attendees IS NOT NULL", null).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals(1, c.getInt(0))
         }
     }
 

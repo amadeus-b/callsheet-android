@@ -382,12 +382,35 @@ class SyncEngineTest {
     }
 
     @Test
+    fun `the first sync after the attendees update starts from watermark zero, and only that one`() {
+        prefs.watermark = 42
+        prefs.refetchedForAppointments = true
+        prefs.refetchedForCallbacks = true
+        prefs.refetchedForAddresses = true
+        prefs.refetchedForEditedFields = true
+        prefs.refetchedForAttendees = false
+        val seen = mutableListOf<Int>()
+        val transport = object : Transport {
+            override fun post(payload: JSONObject): JSONObject {
+                seen.add(payload.getInt("since"))
+                return leereAntwort(17)
+            }
+        }
+
+        engine.sync(transport)
+        engine.sync(transport)
+
+        assertEquals(listOf(0, 17), seen)
+    }
+
+    @Test
     fun `a device that has fetched everything since keeps its watermark`() {
         prefs.watermark = 42
         prefs.refetchedForAppointments = true
         prefs.refetchedForCallbacks = true
         prefs.refetchedForAddresses = true
         prefs.refetchedForEditedFields = true
+        prefs.refetchedForAttendees = true
         val seen = mutableListOf<Int>()
 
         engine.sync(object : Transport {

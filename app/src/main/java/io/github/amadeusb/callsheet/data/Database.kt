@@ -91,6 +91,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         db.execSQL(TABLE_REMOVED_MAIN_ADDRESSES)
         for (sql in COLUMNS_APPOINTMENTS_8) db.execSQL(sql)
         db.execSQL(COLUMN_BUSINESSES_9)
+        for (sql in COLUMNS_APPOINTMENTS_10) db.execSQL(sql)
         db.execSQL("CREATE INDEX idx_businesses_status ON businesses(status)")
         db.execSQL("CREATE INDEX idx_businesses_industry ON businesses(industry)")
         db.execSQL("CREATE INDEX idx_businesses_is_target ON businesses(is_target)")
@@ -285,6 +286,10 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             // hand before this version could say so.
             db.execSQL(COLUMN_BUSINESSES_9)
         }
+        if (old < 10) {
+            for (sql in COLUMNS_APPOINTMENTS_10) db.execSQL(sql)
+            carryInvitationsOver(db)
+        }
     }
 
     /**
@@ -298,9 +303,24 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
     override fun onDowngrade(db: SQLiteDatabase, old: Int, new: Int) {
     }
 
+    /**
+     * Schema 10: a visit's single invitee becomes its only attendee — the value
+     * the server's migration 012 writes, so the rows need not travel and are
+     * not marked. Read first and written after: no update runs while the
+     * cursor is open.
+     */
+    private fun carryInvitationsOver(db: SQLiteDatabase) {
+        val invited = db.rawQuery(
+            "SELECT id, invite_email FROM appointments WHERE TRIM(COALESCE(invite_email, '')) <> ''", null,
+        ).use { c -> generateSequence { if (c.moveToNext()) c.getString(0) to c.getString(1) else null }.toList() }
+        for ((id, email) in invited) {
+            db.execSQL("UPDATE appointments SET attendees = ? WHERE id = ?", arrayOf(Attendees.format(listOf(email)), id))
+        }
+    }
+
     companion object {
         const val NAME = "callsheet.db"
-        const val VERSION = 9
+        const val VERSION = 10
 
         @Volatile
         private var shared: Database? = null
@@ -513,6 +533,19 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
          * COLUMNS_APPOINTMENTS_6 gives.
          */
         private const val COLUMN_BUSINESSES_9 = "ALTER TABLE businesses ADD COLUMN edited_fields TEXT"
+
+        /**
+         * Schema 10: a visit's attendees (a JSON array, see Attendees) and
+         * whether the last change to them notifies (1/0/NULL, NULL read as 1).
+         * Both synchronised and nullable; a standstill fills them together
+         * (SyncStore.fillGaps). Added by ALTER on both roads, for the reason
+         * COLUMNS_APPOINTMENTS_6 gives. `invite_email` stays and is read by
+         * nothing after the switch.
+         */
+        private val COLUMNS_APPOINTMENTS_10 = listOf(
+            "ALTER TABLE appointments ADD COLUMN attendees TEXT",
+            "ALTER TABLE appointments ADD COLUMN attendees_notify INTEGER",
+        )
 
         /**
          * Tombstones. Contacts, their numbers and emails, appointments and

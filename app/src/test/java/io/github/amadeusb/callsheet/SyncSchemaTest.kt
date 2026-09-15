@@ -167,4 +167,11 @@ class SyncSchemaTest {
         assertTrue(values.containsKey("calendar_error"))
         assertFalse(values.containsKey("calendar_seen_title"))
     }
+
+    @Test
+    fun `appointments carry their attendees and whether changing them notifies`() {
+        val appointments = columns("appointments")
+        assertTrue(appointments.contains("attendees"))
+        assertTrue(appointments.contains("attendees_notify"))
+    }
 }

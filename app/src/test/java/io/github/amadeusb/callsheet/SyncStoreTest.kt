@@ -613,6 +613,31 @@ class SyncStoreTest {
     }
 
     @Test
+    fun `a standstill fills a visit's attendees and their notify decision together`() {
+        // Everybody removed here without mail; the same save elsewhere still carried the list.
+        einBesuch("A1", "2026-09-07T10:00:00+02:00", dirty = 0)
+        schreibe("UPDATE appointments SET attendees_notify = 0 WHERE id = 'A1'")
+        val incoming = terminJson("A1", "2026-09-07T10:00:00+02:00").put("kind", "visit")
+            .put("attendees", "[\"test@example.org\"]").put("attendees_notify", 1)
+
+        store.apply(leereAntwort().put("appointments", JSONArray(listOf(incoming))))
+
+        assertEquals(listOf("[\"test@example.org\"]", "1"), zeile("SELECT attendees, attendees_notify FROM appointments WHERE id = 'A1'"))
+    }
+
+    @Test
+    fun `a standstill never fills the notify decision without the attendees`() {
+        einBesuch("A1", "2026-09-07T10:00:00+02:00", dirty = 0)
+        schreibe("UPDATE appointments SET attendees = '[\"test@example.org\"]' WHERE id = 'A1'")
+        val incoming = terminJson("A1", "2026-09-07T10:00:00+02:00").put("kind", "visit")
+            .put("attendees", "[\"zweite@example.org\"]").put("attendees_notify", 0)
+
+        store.apply(leereAntwort().put("appointments", JSONArray(listOf(incoming))))
+
+        assertEquals(listOf("[\"test@example.org\"]", null), zeile("SELECT attendees, attendees_notify FROM appointments WHERE id = 'A1'"))
+    }
+
+    @Test
     fun `a standstill fills gaps in every synchronised table, the way the server does`() {
         einBetrieb("P1", null, "2026-09-07T10:00:00+02:00", dirty = 0)
 
