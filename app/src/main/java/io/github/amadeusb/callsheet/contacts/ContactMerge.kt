@@ -108,6 +108,8 @@ object ContactMerge {
             role = existing.role.orEmpty(),
             email = email,
             note = existing.note.orEmpty(),
+            // Not in the phone book at all: what the app holds stays.
+            addressId = existing.addressId,
             // With no numbers in the phone book the app's own stay put: more
             // likely an entry read incompletely than someone who deleted every
             // number of a person and kept the entry.

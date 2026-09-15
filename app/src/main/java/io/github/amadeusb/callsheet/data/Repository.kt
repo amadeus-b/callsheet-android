@@ -568,7 +568,7 @@ class Repository(context: Context) {
                 }
             }
             db.rawQuery(
-                "SELECT id, place_id, name, role, email, note, updated_at, contact_version " +
+                "SELECT id, place_id, name, role, email, note, updated_at, contact_version, address_id " +
                     "FROM contacts " +
                     "WHERE place_id = ? ORDER BY position, name COLLATE NOCASE",
                 arrayOf(placeId),
@@ -588,6 +588,7 @@ class Repository(context: Context) {
                             updatedAt = c.getString(6),
                             contactVersion = if (c.isNull(7)) null else c.getInt(7),
                             emails = emails[id].orEmpty(),
+                            addressId = if (c.isNull(8)) null else c.getString(8),
                         )
                     )
                 }
@@ -654,6 +655,7 @@ class Repository(context: Context) {
                     put("role", draft.role.trim().ifEmpty { null })
                     put("email", email.ifEmpty { null })
                     put("note", draft.note.trim().ifEmpty { null })
+                    put("address_id", draft.addressId)
                     put("updated_at", now)
                     put("dirty", 1)
                 }
@@ -781,6 +783,96 @@ class Repository(context: Context) {
             while (c.moveToNext()) list.add(addressFromCursor(c))
             list
         }
+    }
+
+    /**
+     * Writes a business's addresses as the form holds them: in this order, the
+     * first one the main address. Blank rows ([AddressDraft.isBlank]) are left
+     * out, label or not.
+     *
+     * Only rows that changed are stamped and marked; a moved position counts.
+     * Changing street, postal code or city clears the coordinates — they
+     * belonged to the old address. A row no longer in [drafts] is removed with a
+     * tombstone, the contacts assigned to it lose the assignment and are marked,
+     * and a removed `main-` row is remembered so a re-import leaves it out.
+     */
+    suspend fun saveAddresses(placeId: String, drafts: List<AddressDraft>) = withContext(Dispatchers.IO) {
+        val rows = drafts.filterNot { it.isBlank }
+        val db = helper.writableDatabase
+        val now = Clock.now()
+        db.beginTransaction()
+        try {
+            val before = db.rawQuery("SELECT * FROM business_addresses WHERE place_id = ?", arrayOf(placeId))
+                .use { c -> generateSequence { if (c.moveToNext()) addressFromCursor(c) else null }.associateBy { it.id } }
+            val kept = HashSet<String>()
+            rows.forEachIndexed { index, draft ->
+                val label = draft.label.trim().ifEmpty { null }
+                val street = draft.street.trim().ifEmpty { null }
+                val postalCode = draft.postalCode.trim().ifEmpty { null }
+                val city = draft.city.trim().ifEmpty { null }
+                val stored = draft.id?.let { before[it] }
+                if (stored == null) {
+                    // New — or deleted by a sync while the form was open, and
+                    // then a new row too: its old id carries a tombstone.
+                    db.insert(
+                        "business_addresses", null,
+                        ContentValues().apply {
+                            put("id", java.util.UUID.randomUUID().toString())
+                            put("place_id", placeId)
+                            put("label", label)
+                            put("street", street)
+                            put("postal_code", postalCode)
+                            put("city", city)
+                            put("position", index)
+                            put("updated_at", now)
+                            put("dirty", 1)
+                        },
+                    )
+                    return@forEachIndexed
+                }
+                kept.add(stored.id)
+                val moved = stored.street != street || stored.postalCode != postalCode || stored.city != city
+                if (!moved && stored.label == label && stored.position == index) return@forEachIndexed
+                db.update(
+                    "business_addresses",
+                    ContentValues().apply {
+                        put("label", label)
+                        put("street", street)
+                        put("postal_code", postalCode)
+                        put("city", city)
+                        if (moved) {
+                            putNull("latitude")
+                            putNull("longitude")
+                        }
+                        put("position", index)
+                        put("updated_at", now)
+                        put("dirty", 1)
+                    },
+                    "id = ?", arrayOf(stored.id),
+                )
+            }
+            for (gone in before.keys - kept) {
+                tombstone(db, "business_addresses", gone, now)
+                db.delete("business_addresses", "id = ?", arrayOf(gone))
+                if (gone == Addresses.mainId(placeId)) AddressRows.rememberMainRemoved(db, placeId)
+                // Here, on the device that removes it. A device that learns of
+                // the removal by sync reads the dangling id as no assignment.
+                db.update(
+                    "contacts",
+                    ContentValues().apply {
+                        putNull("address_id")
+                        put("updated_at", now)
+                        put("dirty", 1)
+                    },
+                    "address_id = ?", arrayOf(gone),
+                )
+            }
+            AddressRows.refreshSearchText(db, placeId)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        notifyChanged()
     }
 
     // ------------------------------------------------------------ Appointments

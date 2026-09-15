@@ -2,6 +2,8 @@ package io.github.amadeusb.callsheet
 
 import androidx.test.core.app.ApplicationProvider
 import io.github.amadeusb.callsheet.calling.CallFlow
+import io.github.amadeusb.callsheet.data.AddressDraft
+import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.AppointmentEntry
 import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.BusinessAddress
@@ -1053,6 +1055,150 @@ class RepositoryTest {
         assertEquals("Eichstaett", inIngolstadt.single { it.placeId == "P2" }.city)
         assertEquals("Eichstaett", repo.business("P2")!!.city)
         assertTrue(repo.cities().containsAll(listOf("Eichstaett", "Ingolstadt")))
+    }
+
+    /** P1 with its imported main address and a branch, nothing marked. */
+    private suspend fun twoAddresses(): List<BusinessAddress> {
+        import(FIRST_IMPORT)
+        repo.saveAddresses(
+            "P1",
+            listOf(
+                AddressDraft(id = "main-P1", street = "Musterweg 1", postalCode = "85049", city = "Ingolstadt"),
+                AddressDraft(label = "Filiale", street = "Hafenstraße 5", postalCode = "85001", city = "Hafenstadt"),
+            ),
+        )
+        execute("UPDATE business_addresses SET dirty = 0")
+        return repo.addresses("P1")
+    }
+
+    @Test
+    fun `saved addresses keep the order given, blank rows are left out, unchanged rows stay unmarked`() = runTest {
+        import(FIRST_IMPORT)
+        execute("UPDATE business_addresses SET dirty = 0")
+
+        repo.saveAddresses(
+            "P1",
+            listOf(
+                AddressDraft(label = "Lager", street = " "),
+                AddressDraft(id = "main-P1", street = "Musterweg 1", postalCode = "85049", city = "Ingolstadt"),
+                AddressDraft(label = "Filiale", city = "Hafenstadt"),
+            ),
+        )
+
+        val addresses = repo.addresses("P1")
+        assertEquals(2, addresses.size)
+        assertEquals("main-P1", addresses[0].id)
+        assertEquals(0, addresses[0].position)
+        assertEquals(0, count("SELECT dirty FROM business_addresses WHERE id = 'main-P1'"))
+        assertEquals("Filiale", addresses[1].label)
+        assertEquals(1, addresses[1].position)
+        assertEquals(1, count("SELECT dirty FROM business_addresses WHERE label = 'Filiale'"))
+    }
+
+    @Test
+    fun `a contact's address is saved and read back`() = runTest {
+        val (_, branch) = twoAddresses()
+
+        val id = repo.saveContact(ContactDraft(placeId = "P1", name = "Erika Beispiel", addressId = branch.id)).getOrThrow()
+
+        assertEquals(branch.id, repo.contacts("P1").single { it.id == id }.addressId)
+    }
+
+    @Test
+    fun `removing an address clears its contacts' assignment, marks them and leaves a tombstone`() = runTest {
+        val (head, branch) = twoAddresses()
+        val id = repo.saveContact(ContactDraft(placeId = "P1", name = "Erika Beispiel", addressId = branch.id)).getOrThrow()
+        execute("UPDATE contacts SET dirty = 0")
+
+        repo.saveAddresses("P1", Addresses.drafts(listOf(head)))
+
+        assertEquals(listOf("main-P1"), repo.addresses("P1").map { it.id })
+        assertNull(repo.contacts("P1").single { it.id == id }.addressId)
+        assertEquals(1, count("SELECT dirty FROM contacts WHERE id = '$id'"))
+        assertEquals(
+            1,
+            count("SELECT COUNT(*) FROM deletions WHERE table_name = 'business_addresses' AND row_id = '${branch.id}'"),
+        )
+    }
+
+    @Test
+    fun `removing the main address makes the next one the main address`() = runTest {
+        val (_, branch) = twoAddresses()
+
+        repo.saveAddresses("P1", Addresses.drafts(listOf(branch)))
+
+        val left = repo.addresses("P1").single()
+        assertEquals(branch.id, left.id)
+        assertEquals(0, left.position)
+        assertEquals(1, count("SELECT dirty FROM business_addresses WHERE id = '${branch.id}'"))
+    }
+
+    @Test
+    fun `making a row the main address renumbers and marks only the moved rows`() = runTest {
+        import(FIRST_IMPORT)
+        repo.saveAddresses(
+            "P1",
+            listOf(
+                AddressDraft(id = "main-P1", street = "Musterweg 1", postalCode = "85049", city = "Ingolstadt"),
+                AddressDraft(label = "Filiale", city = "Hafenstadt"),
+                AddressDraft(label = "Lager", city = "Königsmoos"),
+            ),
+        )
+        execute("UPDATE business_addresses SET dirty = 0")
+        val before = repo.addresses("P1")
+
+        repo.saveAddresses("P1", Addresses.makeMain(Addresses.drafts(before), 1))
+
+        assertEquals(listOf(before[1].id, before[0].id, before[2].id), repo.addresses("P1").map { it.id })
+        assertEquals(2, count("SELECT COUNT(*) FROM business_addresses WHERE dirty = 1"))
+        assertEquals(0, count("SELECT dirty FROM business_addresses WHERE id = '${before[2].id}'"))
+    }
+
+    @Test
+    fun `changing street, postal code or city clears the coordinates, a new label does not`() = runTest {
+        import(
+            """[{"placeId":"t-2","title":"Koordinaten Erfunden","phone":"+49 841 222",
+                "street":"Musterweg 1","city":"Ingolstadt","location":{"lat":48.7651,"lng":11.4237}}]"""
+        )
+        val imported = repo.addresses("t-2").single()
+        assertEquals(48.7651, imported.latitude!!, 0.0)
+
+        repo.saveAddresses("t-2", listOf(AddressDraft(id = imported.id, label = "Hauptsitz", street = "Musterweg 1", city = "Ingolstadt")))
+        assertEquals(48.7651, repo.addresses("t-2").single().latitude!!, 0.0)
+
+        repo.saveAddresses("t-2", listOf(AddressDraft(id = imported.id, label = "Hauptsitz", street = "Musterweg 2", city = "Ingolstadt")))
+        assertNull(repo.addresses("t-2").single().latitude)
+        assertNull(repo.addresses("t-2").single().longitude)
+    }
+
+    @Test
+    fun `a main address removed by hand does not come back with a re-import`() = runTest {
+        import(FIRST_IMPORT)
+        repo.saveAddresses("P1", listOf(AddressDraft(label = "Filiale", city = "Hafenstadt")))
+        // The tombstone leaves the outgoing queue once the server has it.
+        execute("DELETE FROM deletions")
+
+        import(SECOND_IMPORT)
+
+        assertEquals(listOf("Hafenstadt"), repo.addresses("P1").map { it.city })
+    }
+
+    @Test
+    fun `the search text follows saved addresses`() = runTest {
+        import(FIRST_IMPORT)
+
+        repo.saveAddresses(
+            "P1",
+            listOf(
+                AddressDraft(id = "main-P1", street = "Musterweg 1", postalCode = "85049", city = "Ingolstadt"),
+                AddressDraft(city = "Hafenstadt"),
+            ),
+        )
+
+        assertEquals(
+            listOf("P1"),
+            repo.list(Filter(status = emptySet(), onlyTargets = false, search = "hafenstadt")).map { it.placeId },
+        )
     }
 
     private companion object {

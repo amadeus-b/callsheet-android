@@ -172,4 +172,11 @@ class ContactMergeTest {
         val draft = ContactMerge.merge(contact(email = null), phoneBook, businessEmail = "info@example.org")!!
         assertEquals("neu@example.org", draft.email)
     }
+
+    @Test
+    fun `a merged draft keeps the person's address`() {
+        val draft = ContactMerge.merge(contact().copy(addressId = "A2"), fromPhoneBook(name = "Frau Anders"))!!
+
+        assertEquals("A2", draft.addressId)
+    }
 }
