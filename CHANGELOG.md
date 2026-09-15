@@ -4,7 +4,7 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
-## 1.6.0
+## 1.5.1
 
 - **Stammdaten bearbeiten.** Name, phone, industry, contact name, website and
   email of an existing business can be changed in the detail view.
