@@ -205,8 +205,22 @@ object Appointment {
     fun inviteToStore(invite: Boolean, email: String): String? =
         if (invite) email.trim().ifEmpty { null } else null
 
-    /** The address the invitation starts at: the contact person's first. */
-    fun inviteSuggestion(contact: Contact?): String = contact?.emails?.firstOrNull()?.email.orEmpty()
+    /**
+     * The addresses a visit's invitation offers: the contact person's in their
+     * order, then the business's own — imported businesses rarely have a
+     * contact person. The business's is trimmed, and left out when blank or
+     * already among the person's (ignoring case).
+     */
+    fun inviteAddresses(contact: Contact?, businessEmail: String?): List<String> {
+        val personal = contact?.emails.orEmpty().map { it.email }
+        val business = businessEmail?.trim().orEmpty()
+        val known = business.isEmpty() || personal.any { it.trim().equals(business, ignoreCase = true) }
+        return if (known) personal else personal + business
+    }
+
+    /** The address the invitation starts at: the contact person's first, else the business's, else none. */
+    fun inviteSuggestion(contact: Contact?, businessEmail: String?): String =
+        inviteAddresses(contact, businessEmail).firstOrNull().orEmpty()
 
     /**
      * The invitation's address after the sheet reported [incoming], or null to

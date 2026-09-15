@@ -299,6 +299,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
                         draft = draft,
                         contacts = state.detailContacts,
                         addresses = state.detailAddresses,
+                        businessEmail = state.detail?.takeIf { it.placeId == draft.placeId }?.email,
                         onDraft = vm::updateAppointmentDraft,
                         onSave = { vm.saveAppointment() },
                         onLink = { vm.saveAppointment(linkExisting = it) },

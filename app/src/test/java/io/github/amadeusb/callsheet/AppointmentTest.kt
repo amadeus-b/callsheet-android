@@ -992,9 +992,39 @@ class AppointmentTest {
 
     @Test
     fun `the invitation is preset to the contact person's first address`() {
-        assertEquals("a@meier.de", Appointment.inviteSuggestion(personWithEmails("a@meier.de", "b@meier.de")))
-        assertEquals("", Appointment.inviteSuggestion(personWithEmails()))
-        assertEquals("", Appointment.inviteSuggestion(null))
+        assertEquals("a@meier.de", Appointment.inviteSuggestion(personWithEmails("a@meier.de", "b@meier.de"), null))
+        assertEquals("a@meier.de", Appointment.inviteSuggestion(personWithEmails("a@meier.de"), "info@meier.de"))
+        assertEquals("", Appointment.inviteSuggestion(personWithEmails(), null))
+        assertEquals("", Appointment.inviteSuggestion(null, null))
+    }
+
+    @Test
+    fun `without a contact person's address the invitation is preset to the business's`() {
+        // Imported businesses rarely have a contact person.
+        assertEquals("info@meier.de", Appointment.inviteSuggestion(null, " info@meier.de "))
+        assertEquals("info@meier.de", Appointment.inviteSuggestion(personWithEmails(), "info@meier.de"))
+    }
+
+    @Test
+    fun `the business's address is offered after the contact person's, once and only when there is one`() {
+        assertEquals(
+            listOf("a@meier.de", "b@meier.de", "info@meier.de"),
+            Appointment.inviteAddresses(personWithEmails("a@meier.de", "b@meier.de"), " info@meier.de "),
+        )
+        assertEquals(listOf("Info@Meier.de"), Appointment.inviteAddresses(personWithEmails("Info@Meier.de"), " info@meier.de"))
+        assertEquals(listOf("a@meier.de"), Appointment.inviteAddresses(personWithEmails("a@meier.de"), "   "))
+        assertEquals(emptyList<String>(), Appointment.inviteAddresses(null, ""))
+        assertEquals(emptyList<String>(), Appointment.inviteAddresses(null, null))
+    }
+
+    @Test
+    fun `switching the contact person to nobody brings the business's address, a typed one stays`() {
+        val people = mapOf("K-M" to personWithEmails("a@meier.de"))
+        val withBusiness = { contactId: String? -> Appointment.inviteAddresses(people[contactId], "info@meier.de") }
+
+        assertEquals("info@meier.de", Appointment.inviteAfterContactChange(invited, invited.copy(contactId = null), withBusiness))
+        val typed = invited.copy(inviteEmail = "chef@meier.de")
+        assertNull(Appointment.inviteAfterContactChange(typed, typed.copy(contactId = null), withBusiness))
     }
 
     private val emails = mapOf(

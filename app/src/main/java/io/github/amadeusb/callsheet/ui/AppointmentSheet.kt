@@ -94,6 +94,8 @@ fun AppointmentSheet(
     draft: AppointmentDraft,
     contacts: List<Contact>,
     addresses: List<BusinessAddress>,
+    /** The business's own address, offered for the invitation after the contact person's. */
+    businessEmail: String?,
     onDraft: (AppointmentDraft) -> Unit,
     onSave: () -> Unit,
     onLink: (Long) -> Unit,
@@ -251,6 +253,7 @@ fun AppointmentSheet(
                     InviteSection(
                         draft = draft,
                         contact = contacts.firstOrNull { it.id == draft.contactId },
+                        businessEmail = businessEmail,
                         onDraft = onDraft,
                     )
                 }
@@ -296,8 +299,8 @@ private fun SectionLabel(text: String) {
 }
 
 /**
- * „Einladung senden": the invitee's address, one of the contact person's or
- * typed. The server sends the invitation from the calendar account; what the
+ * „Einladung senden": the invitee's address, one of the contact person's, the
+ * business's own or typed. The server sends the invitation from the calendar account; what the
  * invitee gets to see is said right here, so the note stays a private one. A
  * new contact person brings their address in the view model (withInvite).
  */
@@ -305,6 +308,7 @@ private fun SectionLabel(text: String) {
 private fun InviteSection(
     draft: AppointmentDraft,
     contact: Contact?,
+    businessEmail: String?,
     onDraft: (AppointmentDraft) -> Unit,
 ) {
     Row(
@@ -323,7 +327,7 @@ private fun InviteSection(
                     draft.copy(
                         invite = on,
                         inviteEmail = if (on && draft.inviteEmail.isBlank()) {
-                            Appointment.inviteSuggestion(contact)
+                            Appointment.inviteSuggestion(contact, businessEmail)
                         } else {
                             draft.inviteEmail
                         },
@@ -333,7 +337,8 @@ private fun InviteSection(
         )
     }
     if (draft.invite) {
-        val addresses = contact?.emails.orEmpty()
+        val addresses = Appointment.inviteAddresses(contact, businessEmail)
+        val personal = contact?.emails.orEmpty().map { it.email }
         if (addresses.isNotEmpty()) {
             Row(
                 modifier = Modifier
@@ -343,9 +348,10 @@ private fun InviteSection(
             ) {
                 addresses.forEach { address ->
                     FilterChip(
-                        selected = draft.inviteEmail.trim() == address.email,
-                        onClick = { onDraft(draft.copy(inviteEmail = address.email)) },
-                        label = { Text(address.email) },
+                        selected = draft.inviteEmail.trim() == address,
+                        onClick = { onDraft(draft.copy(inviteEmail = address)) },
+                        // Only the address is stored; the label says whose it is.
+                        label = { Text(if (address in personal) address else "$address (Betrieb)") },
                     )
                 }
             }

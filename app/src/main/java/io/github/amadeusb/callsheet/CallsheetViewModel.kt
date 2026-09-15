@@ -1108,13 +1108,15 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
     /**
      * The invitation's address as the sheet shows it after [incoming]: a new
      * contact person brings their first address where the previous person's
-     * was still preselected. See Appointment.inviteAfterContactChange.
+     * was still preselected — or the business's address, for nobody or a
+     * person without one. See Appointment.inviteAfterContactChange.
      */
     private fun withInvite(previous: AppointmentDraft?, incoming: AppointmentDraft): AppointmentDraft {
         if (previous == null) return incoming
-        val contacts = _state.value.detailContacts
+        val state = _state.value
+        val businessEmail = state.detail?.takeIf { it.placeId == incoming.placeId }?.email
         val address = Appointment.inviteAfterContactChange(previous, incoming) { contactId ->
-            contacts.firstOrNull { it.id == contactId }?.emails.orEmpty().map { it.email }
+            Appointment.inviteAddresses(state.detailContacts.firstOrNull { it.id == contactId }, businessEmail)
         }
         return address?.let { incoming.copy(inviteEmail = it) } ?: incoming
     }
