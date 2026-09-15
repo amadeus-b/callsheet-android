@@ -146,4 +146,20 @@ class SyncSchemaTest {
         assertTrue(columns("contacts").contains("address_id"))
         assertEquals(setOf("place_id"), columns("removed_main_addresses"))
     }
+
+    @Test
+    fun `the server's calendar state comes in, what this device saw of a title does not`() {
+        val row = JSONObject().apply {
+            put("id", "A1")
+            put("calendar_state", "ok")
+            put("calendar_error", JSONObject.NULL)
+            put("calendar_seen_title", "Erstgespräch")
+        }
+
+        val values = Rows.toValues(row, row.keys().asSequence().toSet())
+
+        assertEquals("ok", values.getAsString("calendar_state"))
+        assertTrue(values.containsKey("calendar_error"))
+        assertFalse(values.containsKey("calendar_seen_title"))
+    }
 }

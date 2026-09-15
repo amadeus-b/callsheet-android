@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import io.github.amadeusb.callsheet.data.AddressRows
+import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.Database
 import org.json.JSONArray
@@ -19,8 +20,17 @@ data class AppliedAppointments(
     fun isEmpty(): Boolean = written.isEmpty() && removed.isEmpty()
 }
 
-/** An appointment that is gone from the database, and where its event was. */
-data class RemovedAppointment(val id: String, val calendarEventId: Long?, val eventUid: String?)
+/**
+ * An appointment that is gone from the database, and where its event was. The
+ * kind says who deletes that event: the app for a callback, the server for a
+ * visit.
+ */
+data class RemovedAppointment(
+    val id: String,
+    val calendarEventId: Long?,
+    val eventUid: String?,
+    val kind: AppointmentKind = AppointmentKind.VISIT,
+)
 
 /**
  * The database side of synchronisation: what is waiting to go up, and what
@@ -262,8 +272,10 @@ class SyncStore(context: Context) {
             (local?.optString("status") == Merge.BLOCKED || row.optString("status") == Merge.BLOCKED)
 
         if (local != null && !Merge.isNewer(remoteAt, local.optString("updated_at", null))) {
-            // The incoming version is no newer, so it replaces nothing. It may
-            // still carry columns this row has never had a value for.
+            // The incoming version is no newer, so it replaces nothing — except
+            // what only the server writes. See takeServerOwned.
+            val owned = table == "appointments" && takeServerOwned(db, id, row)
+            // It may still carry columns this row has never had a value for.
             val filled = Merge.isSameMoment(remoteAt, local.optString("updated_at", null)) &&
                 fillGaps(db, table, id, local, row, tableColumns)
             if (blocked && local.optString("status") != Merge.BLOCKED) {
@@ -272,7 +284,7 @@ class SyncStore(context: Context) {
                     put("dirty", 1)
                 }, "place_id = ?", arrayOf(id))
             }
-            return filled
+            return filled || owned
         }
 
         val values = if (table == "calls" && local != null) {
@@ -348,6 +360,41 @@ class SyncStore(context: Context) {
         return true
     }
 
+    /**
+     * Writes what only the server writes onto an appointment this device keeps:
+     * the calendar state, and a visit's `event_uid`. The server stamps them
+     * without moving `updated_at`, so a row edited here is newer than the
+     * server's copy or level with it. Without this the state would stay
+     * „pending" for good, and the UID would never arrive.
+     *
+     * Only columns the incoming row carries: a server without the feature sends
+     * none, and nothing is cleared. A visit's UID only when one comes — the
+     * server never takes one back. A callback's UID stays the app's. Never
+     * marks the row. Returns whether anything was written.
+     */
+    private fun takeServerOwned(db: SQLiteDatabase, id: String, row: JSONObject): Boolean {
+        val values = ContentValues()
+        val owned = Rows.SERVER_OWNED
+        db.rawQuery(
+            "SELECT ${owned.joinToString()}, event_uid, kind FROM appointments WHERE id = ?", arrayOf(id),
+        ).use { c ->
+            if (!c.moveToFirst()) return false
+            owned.forEachIndexed { i, name ->
+                if (!row.has(name)) return@forEachIndexed
+                val incoming = if (row.isNull(name)) null else row.getString(name)
+                val stored = if (c.isNull(i)) null else c.getString(i)
+                if (incoming != stored) values.put(name, incoming)
+            }
+            val storedUid = if (c.isNull(owned.size)) null else c.getString(owned.size)
+            val kind = AppointmentKind.fromKey(if (c.isNull(owned.size + 1)) null else c.getString(owned.size + 1))
+            val uid = if (row.isNull("event_uid")) null else row.getString("event_uid")
+            if (kind == AppointmentKind.VISIT && uid != null && uid != storedUid) values.put("event_uid", uid)
+        }
+        if (values.size() == 0) return false
+        db.update("appointments", values, "id = ?", arrayOf(id))
+        return true
+    }
+
     private fun applyTombstone(db: SQLiteDatabase, stone: JSONObject, searchStale: MutableSet<String>): RemovedAppointment? {
         val table = stone.getString("table_name")
         val id = stone.getString("row_id")
@@ -382,9 +429,14 @@ class SyncStore(context: Context) {
         // The link has to be read before the row goes, or the calendar could
         // not follow the deletion.
         val link = if (table == "appointments") {
-            db.rawQuery("SELECT calendar_event_id, event_uid FROM appointments WHERE id = ?", arrayOf(id)).use { c ->
+            db.rawQuery("SELECT calendar_event_id, event_uid, kind FROM appointments WHERE id = ?", arrayOf(id)).use { c ->
                 c.moveToFirst()
-                RemovedAppointment(id, if (c.isNull(0)) null else c.getLong(0), if (c.isNull(1)) null else c.getString(1))
+                RemovedAppointment(
+                    id,
+                    if (c.isNull(0)) null else c.getLong(0),
+                    if (c.isNull(1)) null else c.getString(1),
+                    AppointmentKind.fromKey(if (c.isNull(2)) null else c.getString(2)),
+                )
             }
         } else {
             null

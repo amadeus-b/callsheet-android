@@ -48,14 +48,24 @@ object Rows {
      */
     private val LOCAL_ONLY = setOf(
         "dirty", "contact_version", "calendar_event_id",
-        "calendar_seen_starts_at", "calendar_seen_ends_at", "calendar_seen_location",
+        "calendar_seen_starts_at", "calendar_seen_ends_at", "calendar_seen_location", "calendar_seen_title",
     )
+
+    /**
+     * Columns only the server writes: where a visit stands on its way into the
+     * calendar. They come down like any other column but never go up, and
+     * SyncStore.apply takes them whatever `updated_at` says — the server writes
+     * them without moving `updated_at`. A visit's `event_uid` is the server's
+     * too, but it shares its column with a callback's, which is the app's;
+     * SyncStore tells the two apart by kind.
+     */
+    val SERVER_OWNED = listOf("calendar_state", "calendar_error")
 
     fun toJson(c: Cursor): JSONObject {
         val row = JSONObject()
         for (i in 0 until c.columnCount) {
             val name = c.getColumnName(i)
-            if (name in LOCAL_ONLY) continue
+            if (name in LOCAL_ONLY || name in SERVER_OWNED) continue
             when (c.getType(i)) {
                 Cursor.FIELD_TYPE_NULL -> row.put(name, JSONObject.NULL)
                 Cursor.FIELD_TYPE_INTEGER -> row.put(name, c.getLong(i))

@@ -1,6 +1,7 @@
 package io.github.amadeusb.callsheet
 
 import androidx.test.core.app.ApplicationProvider
+import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.Database
 import io.github.amadeusb.callsheet.sync.Merge
 import io.github.amadeusb.callsheet.sync.SyncStore
@@ -80,6 +81,26 @@ class SyncStoreTest {
         put("ends_at", JSONObject.NULL); put("location", JSONObject.NULL); put("note", "Angebot")
         put("contact_id", JSONObject.NULL); put("event_uid", id); put("updated_at", zeit)
     }
+
+    private fun einBesuch(
+        id: String,
+        zeit: String,
+        dirty: Int,
+        state: String? = null,
+        uid: String? = null,
+        kind: String? = "visit",
+    ) = schreibe(
+        "INSERT INTO appointments (id, place_id, starts_at, updated_at, event_uid, calendar_state, kind, dirty) " +
+            "VALUES ('$id', 'P1', '2026-09-10T14:00:00+02:00', '$zeit', ${uid?.let { "'$it'" } ?: "NULL"}, " +
+            "${state?.let { "'$it'" } ?: "NULL"}, ${kind?.let { "'$it'" } ?: "NULL"}, $dirty)"
+    )
+
+    /** The first row of [sql], every column as text. */
+    private fun zeile(sql: String): List<String?> =
+        Database(ctx).readableDatabase.rawQuery(sql, null).use { c ->
+            assertTrue(c.moveToFirst())
+            (0 until c.columnCount).map { if (c.isNull(it)) null else c.getString(it) }
+        }
 
     private fun adresseJson(id: String, placeId: String, city: String?, zeit: String, position: Int = 0) = JSONObject().apply {
         put("id", id); put("place_id", placeId); put("label", JSONObject.NULL)
@@ -764,6 +785,94 @@ class SyncStoreTest {
         }))))
 
         assertEquals("A2", einzeln("SELECT address_id FROM contacts WHERE id = 'K1'"))
+    }
+
+    @Test
+    fun `pending never carries the server's calendar columns or the seen title`() {
+        einBesuch("A1", "2026-09-07T10:00:00+02:00", dirty = 1, state = "ok", uid = "abc@infomaniak")
+        schreibe(
+            "UPDATE appointments SET title = 'Erstgespräch', invite_email = 'info@example.org', " +
+                "calendar_error = 'x', calendar_seen_title = 'y' WHERE id = 'A1'"
+        )
+
+        val row = store.pending(500).getJSONArray("appointments").getJSONObject(0)
+
+        assertEquals("Erstgespräch", row.getString("title"))
+        assertEquals("info@example.org", row.getString("invite_email"))
+        for (column in listOf("calendar_state", "calendar_error", "calendar_seen_title")) {
+            assertFalse("$column must not travel", row.has(column))
+        }
+    }
+
+    @Test
+    fun `the server's calendar state and UID are taken onto a visit edited here since, which stays marked`() {
+        // Edited on this phone after the server created the event: the local row is newer.
+        einBesuch("A1", "2026-09-07T11:00:00+02:00", dirty = 1, state = "pending")
+        val incoming = terminJson("A1", "2026-09-07T10:00:00+02:00")
+            .put("kind", "visit").put("event_uid", "abc@infomaniak")
+            .put("calendar_state", "ok").put("calendar_error", JSONObject.NULL)
+
+        val applied = store.apply(leereAntwort().put("appointments", JSONArray(listOf(incoming))))
+
+        assertEquals(
+            listOf("ok", "abc@infomaniak", "2026-09-10T14:00:00+02:00", "2026-09-07T11:00:00+02:00", "1"),
+            zeile("SELECT calendar_state, event_uid, starts_at, updated_at, dirty FROM appointments WHERE id = 'A1'"),
+        )
+        assertEquals(listOf("A1"), applied.written)
+    }
+
+    @Test
+    fun `the server's calendar state is taken at a standstill`() {
+        // The server writes the state without moving updated_at.
+        einBesuch("A1", "2026-09-07T10:00:00+02:00", dirty = 0, state = "pending")
+        val incoming = terminJson("A1", "2026-09-07T10:00:00+02:00")
+            .put("kind", "visit").put("calendar_state", "error").put("calendar_error", "Im Kalender gelöscht")
+
+        store.apply(leereAntwort().put("appointments", JSONArray(listOf(incoming))))
+
+        assertEquals(
+            listOf("error", "Im Kalender gelöscht"),
+            zeile("SELECT calendar_state, calendar_error FROM appointments WHERE id = 'A1'"),
+        )
+    }
+
+    @Test
+    fun `a callback's UID is not taken from an older server row`() {
+        einBesuch("R1", "2026-09-07T11:00:00+02:00", dirty = 1, uid = "mine", kind = "callback")
+        val incoming = terminJson("R1", "2026-09-07T10:00:00+02:00").put("kind", "callback").put("event_uid", "theirs")
+
+        store.apply(leereAntwort().put("appointments", JSONArray(listOf(incoming))))
+
+        assertEquals(listOf("mine"), zeile("SELECT event_uid FROM appointments WHERE id = 'R1'"))
+    }
+
+    @Test
+    fun `a server that sends no calendar state clears nothing on a newer local row`() {
+        // The local row is newer and waiting to go up, so the incoming, older row
+        // replaces nothing and only takeServerOwned looks at it: an absent state
+        // and a null UID must not clear what the server said before.
+        einBesuch("A1", "2026-09-07T11:00:00+02:00", dirty = 1, state = "ok", uid = "abc@infomaniak")
+        val incoming = terminJson("A1", "2026-09-07T10:00:00+02:00").put("kind", "visit").put("event_uid", JSONObject.NULL)
+
+        val applied = store.apply(leereAntwort().put("appointments", JSONArray(listOf(incoming))))
+
+        assertEquals(
+            listOf("ok", "abc@infomaniak", "2026-09-07T11:00:00+02:00", "1"),
+            zeile("SELECT calendar_state, event_uid, updated_at, dirty FROM appointments WHERE id = 'A1'"),
+        )
+        assertEquals(emptyList<String>(), applied.written)
+    }
+
+    @Test
+    fun `a remote tombstone reports the kind of the removed appointment`() {
+        einBesuch("R1", "2026-09-07T10:00:00+02:00", dirty = 0, uid = "R1", kind = "callback")
+        val stone = JSONObject().apply {
+            put("table_name", "appointments"); put("row_id", "R1"); put("deleted_at", "2026-09-07T11:00:00+02:00")
+        }
+
+        val applied = store.apply(leereAntwort().put("deleted", JSONArray(listOf(stone))))
+
+        assertEquals(AppointmentKind.CALLBACK, applied.removed.single().kind)
     }
 
     private fun zahl(sql: String): Int =
