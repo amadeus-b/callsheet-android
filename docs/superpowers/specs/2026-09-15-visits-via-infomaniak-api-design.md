@@ -68,8 +68,8 @@ All nullable, as `server/README.md` asks of every new column.
 `event_uid` exists. For a visit the server sets it from the export; for a
 callback the app sets it, as today.
 
-App: database version 6 → 7, `ALTER TABLE appointments ADD COLUMN` for the four.
-Server: migration `009-visits-via-api.sql`.
+App: database version 7 → 8, `ALTER TABLE appointments ADD COLUMN` for the four.
+Server: migration `010-visits-via-api.sql`.
 
 ### Server-owned columns
 
@@ -292,7 +292,7 @@ the calendar through the server either way.
 
 ### Server (`node:test`)
 
-- **Migration 009** — the four columns and `infomaniak_events` exist; existing
+- **Migration 010** — the four columns and `infomaniak_events` exist; existing
   rows keep their values.
 - **`receive`**
   - a new visit queues `create`, a new callback queues nothing;
@@ -326,7 +326,7 @@ the calendar through the server either way.
 
 ### App (JUnit / Robolectric)
 
-- `MigrationTest` — 6 → 7 adds the four columns and `calendar_seen_title`.
+- `MigrationTest` — 7 → 8 adds the four columns and `calendar_seen_title`.
 - `SyncSchemaTest` — `title` and `invite_email` go up; `calendar_state`,
   `calendar_error` come down and never go up; `calendar_seen_title` neither.
 - `SyncStoreTest` — the server-owned columns are taken from a server row older
