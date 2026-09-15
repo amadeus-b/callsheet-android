@@ -84,8 +84,9 @@ For the same reason the app takes these columns from the server **whatever
 `updated_at` says**: a row edited on a phone is newer than the server's copy,
 and without this rule the next merge would write the phone's `event_uid = null`
 over the UID the server just fetched. `Rows` names them as server-owned;
-`SyncStore.apply` writes them even where it otherwise keeps the local row, and
-the app never sends them.
+`SyncStore.apply` writes them even where it otherwise keeps the local row. The
+app never sends `calendar_state` or `calendar_error`; it may send a visit's
+`event_uid` like any column, and the server ignores it.
 
 On the server, `receive.js` adds them to `SERVER_OWNED` for visits. `event_uid`
 is server-owned only where the row's kind is `visit` (or null): a callback's
@@ -130,7 +131,12 @@ Inside the existing transaction, no outside calls:
    fills a gap in `title`, `starts_at`, `ends_at`, `location` or
    `invite_email`), compute the wanted state
    `{title ?? defaultTitle, starts_at, ends_at, location, invite_email}`.
-   `defaultTitle` needs the business name, read from `businesses`.
+   `defaultTitle` needs the business name, read from `businesses`:
+   `Erstgespräch KI bei <Firma> – Christoph Bauer`, and
+   `Erstgespräch KI – Christoph Bauer` where the name is empty. App and server
+   build it byte for byte the same. Title and location are trimmed before they
+   are compared or sent, so whitespace from the web calendar never triggers an
+   update.
 2. No `infomaniak_events` row → insert one with `pending = 'create'`.
    A row whose `pushed` differs from the wanted state → `pending = 'update'`
    (unless it is `create`, which stays `create`).
@@ -254,6 +260,8 @@ Under each visit:
   „Wird im Kalender aktualisiert …".
 - `ok` — „Im Kalender", and „Eingeladen: <Adresse>" with an invitation.
 - `error` — the hint in the error colour with `calendar_error`.
+- `pending` is shown only where a sync server is set up; without one the row
+  could never leave `pending`.
 - null (a visit saved by an app before this version, or a server without the
   feature) — nothing.
 
@@ -267,10 +275,21 @@ The read-back stays for visits, **reading only**:
 - „Event wins" (changed in the calendar) takes over start, end, location — and
   now **title**. The row is marked and synced; the server finds Infomaniak
   already holding that state and sends nothing.
+- **First sight takes nothing.** With no `calendar_seen_*` on this device, an
+  event that differs from the row is not taken over and not remembered: this
+  device's DAVx⁵ may still hold the state from before a change made elsewhere,
+  and taking it would send the invitee an update with the old time. Only an
+  event equal to the row is remembered as seen.
 - „Row wins, the event is updated" does not exist for visits. The server does
   that.
-- Deleted in the calendar, visit ahead: the row is deleted with a tombstone, as
-  today. The server's `DELETE` then gets a 404.
+- Deleted in the calendar, visit ahead, **no invitation**: the row is deleted
+  with a tombstone, as today. The server's `DELETE` then gets a 404.
+- Deleted in the calendar, visit ahead, **with an invitation**: nothing is
+  deleted automatically — a missing event may just as well be a calendar
+  deselected in DAVx⁵ or an account set up again, and a deletion would send the
+  customer a cancellation. The business detail shows „Im Kalender nicht mehr
+  gefunden" with **Termin entfernen** (which asks, as removing an invited visit
+  always does). Nothing is remembered: if the event comes back, the hint goes.
 - After a sync (`SyncStore.apply` reporting written and removed rows) no
   calendar write happens for visits.
 
@@ -338,6 +357,8 @@ the calendar through the server either way.
     nothing and deletes nothing;
   - callbacks: every existing case unchanged.
 - ViewModel — saving a visit syncs twice; removing an invited visit asks first.
+  The app has no view-model test harness: these decisions live in `Appointment`
+  and are tested there; the view model is covered by the phone test.
 
 ### On the phone, once
 

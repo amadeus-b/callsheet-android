@@ -33,8 +33,11 @@ This spec is implemented before the visits spec.
   Their phone book entry then carries only that address, and a visit with them
   starts there. Without an assignment the entry carries every address of the
   business.
-- **The view stays per business.** Addresses are edited in the business form;
-  the assignment in the contact form.
+- **The view stays per business.** Addresses are edited in the business form
+  when a business is created, and for an existing business on an address
+  screen opened from the detail view („Adressen bearbeiten", or „Adresse
+  hinzufügen" when there is none) — the business form only creates businesses.
+  Both share one list component. The assignment is edited in the contact form.
 
 ## Data model
 
@@ -108,8 +111,11 @@ into `main-<place_id>`:
   coordinates are compared; if they differ, they are written, `updated_at` set,
   the row marked. `label` and `position` stay: a label typed by hand, or another
   row made the main address, survive a re-import.
-- **Known business, address row absent** — a tombstone for `main-<place_id>`
-  means it was deleted by hand: nothing is written. No tombstone — the row is
+- **Known business, address row absent** — `main-<place_id>` deleted by hand
+  (on this device, or by an incoming tombstone) means nothing is written. This
+  is remembered in a local-only table `removed_main_addresses`: `deletions` is
+  the outgoing queue and is emptied once the server acknowledges a tombstone, so
+  it cannot answer the question after the next sync. No tombstone — the row is
   created, at the position after the last existing address.
 - **Other address rows** are never touched by an import.
 
