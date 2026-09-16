@@ -16,6 +16,18 @@ as the release notes on GitHub.
   template edited before keeps its text until then.
 - **Mails go out as text and HTML.** The server adds the HTML part; the text
   is unchanged. Nothing to do in the app.
+- **A visit deleted in the calendar is noticed, even if this phone never saw
+  it there.** The detail view says „Im Kalender nicht mehr gefunden" once the
+  entry has been missing for 30 minutes, and only if this phone has since
+  received a visit confirmed later — proof that DAVx5 delivers the calendar
+  here. A phone without the shared calendar never says it. **Termin
+  entfernen** always asks first in this case.
+- **Server abgleichen in the main view.** With a sync server set up, the top
+  bar syncs with the server, like **Jetzt abgleichen** in the settings. It does
+  not update the device calendar; DAVx5 still does that.
+- The database moves to version 11 with two columns that stay on the phone.
+  They start empty, so after the update no visit is reported missing until it
+  has been confirmed again and found missing as described above.
 - **Update the sync server first.**
 
 ## 1.5.1
