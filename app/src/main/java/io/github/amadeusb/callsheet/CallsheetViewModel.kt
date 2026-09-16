@@ -794,6 +794,16 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
         _state.update { it.copy(mailTemplateBody = value) }
     }
 
+    fun resetMailTemplate() {
+        preferences.resetMailTemplate()
+        _state.update {
+            it.copy(
+                mailTemplateSubject = preferences.mailTemplateSubject,
+                mailTemplateBody = preferences.mailTemplateBody,
+            )
+        }
+    }
+
     fun openMailDialog() {
         _state.update { it.copy(mailDialogOpen = true, mailError = null) }
     }

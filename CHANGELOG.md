@@ -4,6 +4,20 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.6.0
+
+- **New mail template.** The mail dialog starts from a revised text that
+  links to the booking page and closes with „Mit bestem Gruß". The salutation
+  reads „Guten Tag [Name],"; replace the placeholder before sending — the
+  server refuses a mail that still contains it, and the dialog stays open
+  with its message.
+- **Standard wiederherstellen.** The mail template in the settings can be
+  reset to the default of the installed version, after a confirmation. A
+  template edited before keeps its text until then.
+- **Mails go out as text and HTML.** The server adds the HTML part; the text
+  is unchanged. Nothing to do in the app.
+- **Update the sync server first.**
+
 ## 1.5.1
 
 - **Stammdaten bearbeiten.** Name, phone, industry, contact name, website and

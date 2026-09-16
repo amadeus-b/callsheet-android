@@ -86,12 +86,14 @@ fun SettingsScreen(
     mailTemplateBody: String,
     onMailTemplateSubjectChange: (String) -> Unit,
     onMailTemplateBodyChange: (String) -> Unit,
+    onResetMailTemplate: () -> Unit,
 ) {
     var confirm by remember { mutableStateOf<Business?>(null) }
     var accountPicker by remember { mutableStateOf(false) }
     var confirmImport by remember { mutableStateOf(false) }
     var calendarPicker by remember { mutableStateOf(false) }
     var confirmReupload by remember { mutableStateOf(false) }
+    var confirmResetTemplate by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -252,7 +254,8 @@ fun SettingsScreen(
                     Text(
                         text = "Betreff und Text, mit denen der Mail-Dialog bei „Mail gesendet“ " +
                             "startet. {{business_name}} wird beim Öffnen durch den Namen des " +
-                            "Betriebs ersetzt.",
+                            "Betriebs ersetzt. [Name] vor dem Senden von Hand ersetzen: Eine " +
+                            "Mail, die es noch enthält, lehnt der Server ab.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -272,6 +275,11 @@ fun SettingsScreen(
                         minLines = 6,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { confirmResetTemplate = true },
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) { Text("Standard wiederherstellen") }
                 }
             }
 
@@ -456,6 +464,28 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmReupload = false }) { Text("Abbrechen") }
+            },
+        )
+    }
+
+    if (confirmResetTemplate) {
+        AlertDialog(
+            onDismissRequest = { confirmResetTemplate = false },
+            title = { Text("Standard wiederherstellen?") },
+            text = {
+                Text(
+                    "Betreff und Text der Mail-Vorlage werden durch den Standard dieser " +
+                        "App-Version ersetzt. Eigene Änderungen an der Vorlage gehen verloren."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onResetMailTemplate()
+                    confirmResetTemplate = false
+                }) { Text("Wiederherstellen") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmResetTemplate = false }) { Text("Abbrechen") }
             },
         )
     }

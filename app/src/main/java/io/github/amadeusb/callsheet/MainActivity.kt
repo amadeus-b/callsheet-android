@@ -424,6 +424,7 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             mailTemplateBody = state.mailTemplateBody,
             onMailTemplateSubjectChange = vm::setMailTemplateSubject,
             onMailTemplateBodyChange = vm::setMailTemplateBody,
+            onResetMailTemplate = vm::resetMailTemplate,
         )
     }
 
