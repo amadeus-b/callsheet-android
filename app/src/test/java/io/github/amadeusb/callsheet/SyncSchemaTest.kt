@@ -130,7 +130,7 @@ class SyncSchemaTest {
             put("event_uid", "T1")
             put("calendar_seen_starts_at", "2026-09-10T14:00:00+02:00")
             put("calendar_seen_ends_at", "2026-09-10T15:00:00+02:00")
-            put("calendar_seen_location", "Zehentstraße 39")
+            put("calendar_seen_location", "Musterstraße 39")
         }
         val columns = row.keys().asSequence().toSet()
 

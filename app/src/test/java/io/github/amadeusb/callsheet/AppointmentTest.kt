@@ -156,15 +156,15 @@ class AppointmentTest {
     @Test
     fun `the address is joined onto one line`() {
         assertEquals(
-            "Zehentstraße 39, 85055 Ingolstadt",
-            Appointment.address("Zehentstraße 39", "85055", "Ingolstadt"),
+            "Musterstraße 39, 85055 Ingolstadt",
+            Appointment.address("Musterstraße 39", "85055", "Ingolstadt"),
         )
     }
 
     @Test
     fun `missing parts of the address drop out`() {
         assertEquals("Ingolstadt", Appointment.address(null, null, "Ingolstadt"))
-        assertEquals("Zehentstraße 39", Appointment.address("Zehentstraße 39", null, null))
+        assertEquals("Musterstraße 39", Appointment.address("Musterstraße 39", null, null))
         assertNull(Appointment.address(null, null, null))
         assertNull(Appointment.address(" ", "", null))
     }
@@ -451,8 +451,8 @@ class AppointmentTest {
     private fun slot(start: String, end: String? = null, location: String? = null) =
         Slot(instant(start), end?.let { instant(it) }, location)
 
-    private val planned = slot("2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Zehentstraße 39")
-    private val later = slot("2026-09-10T16:00:00+02:00", "2026-09-10T17:00:00+02:00", "Zehentstraße 39")
+    private val planned = slot("2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Musterstraße 39")
+    private val later = slot("2026-09-10T16:00:00+02:00", "2026-09-10T17:00:00+02:00", "Musterstraße 39")
     private val office = slot("2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Im Büro")
     private val dayBefore = instant("2026-09-09T12:00:00+02:00")
     private val dayAfter = instant("2026-09-11T12:00:00+02:00")
@@ -500,14 +500,14 @@ class AppointmentTest {
 
     @Test
     fun `seconds and surrounding spaces are no difference`() {
-        val event = Slot(planned.startMillis + 30_000L, planned.endMillis!! + 30_000L, " Zehentstraße 39 ")
+        val event = Slot(planned.startMillis + 30_000L, planned.endMillis!! + 30_000L, " Musterstraße 39 ")
 
         assertEquals(Reconcile.InStep, Appointment.reconcile(row = planned, seen = planned, event = event, nowMillis = dayBefore))
     }
 
     @Test
     fun `a row without an end is not a difference from the event's end`() {
-        val row = slot("2026-09-10T14:00:00+02:00", null, "Zehentstraße 39")
+        val row = slot("2026-09-10T14:00:00+02:00", null, "Musterstraße 39")
 
         assertEquals(Reconcile.InStep, Appointment.reconcile(row = row, seen = null, event = planned, nowMillis = dayBefore))
     }
@@ -751,7 +751,7 @@ class AppointmentTest {
     @Test
     fun `the row slot and the seen slot are read from the entry`() {
         val linked = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00")
-            .copy(location = "Zehentstraße 39", seenStartsAt = "2026-09-10T16:00:00+02:00", seenEndsAt = "2026-09-10T17:00:00+02:00", seenLocation = "Zehentstraße 39")
+            .copy(location = "Musterstraße 39", seenStartsAt = "2026-09-10T16:00:00+02:00", seenEndsAt = "2026-09-10T17:00:00+02:00", seenLocation = "Musterstraße 39")
 
         assertEquals(planned, Appointment.rowSlot(linked))
         assertEquals(later, Appointment.seenSlot(linked))
@@ -766,7 +766,7 @@ class AppointmentTest {
             calendarEventId = 4711L,
             seenStartsAt = "2026-09-10T14:00:00+02:00",
             seenEndsAt = "2026-09-10T15:00:00+02:00",
-            seenLocation = "Zehentstraße 39",
+            seenLocation = "Musterstraße 39",
         )
 
         assertTrue(Appointment.seenIsCurrent(recorded, 4711L, planned))
@@ -802,11 +802,11 @@ class AppointmentTest {
     @Test
     fun `the seen title is read from the entry, and a record without it is not current`() {
         val recorded = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00").copy(
-            location = "Zehentstraße 39",
+            location = "Musterstraße 39",
             calendarEventId = 4711L,
             seenStartsAt = "2026-09-10T14:00:00+02:00",
             seenEndsAt = "2026-09-10T15:00:00+02:00",
-            seenLocation = "Zehentstraße 39",
+            seenLocation = "Musterstraße 39",
         )
         val titled = planned.copy(title = "Erstgespräch")
 
@@ -1305,7 +1305,7 @@ class AppointmentTest {
     // --- attendees: the question on saving ------------------------------------
 
     private val storedVisit = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00")
-        .copy(location = "Zehentstraße 39", attendees = listOf("test@example.org"))
+        .copy(location = "Musterstraße 39", attendees = listOf("test@example.org"))
     private val withSecond = storedVisit.copy(attendees = listOf("test@example.org", "zweite@example.org"))
 
     @Test
@@ -1337,7 +1337,7 @@ class AppointmentTest {
         val name = "Elektro Meier"
         assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(startsAt = "2026-09-10T16:00:00+02:00"), name))
         assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(endsAt = "2026-09-10T16:00:00+02:00"), name))
-        assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(location = "Am Pulverl 5"), name))
+        assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(location = "Am Musterplatz 5"), name))
         assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(title = "Angebot besprechen"), name))
         // The preset title written out, and the same instant with another offset, are no change.
         val onlySecond = AttendeeQuestion(listOf("zweite@example.org"), emptyList())

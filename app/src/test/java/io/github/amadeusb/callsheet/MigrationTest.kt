@@ -133,7 +133,7 @@ class MigrationTest {
         db.execSQL(
             "UPDATE businesses SET appointment_at = '2026-09-10T14:00:00+02:00', " +
                 "appointment_end_at = '2026-09-10T15:00:00+02:00', " +
-                "appointment_location = 'Zehentstraße 39, 85055 Ingolstadt', calendar_event_id = 4711, dirty = 0 " +
+                "appointment_location = 'Musterstraße 39, 85055 Ingolstadt', calendar_event_id = 4711, dirty = 0 " +
                 "WHERE place_id = 'alt-1'"
         )
         db.execSQL(
@@ -214,7 +214,7 @@ class MigrationTest {
         db.execSQL("ALTER TABLE appointments ADD COLUMN done_at TEXT")
         db.execSQL("UPDATE businesses SET follow_up_at = NULL")
         db.execSQL(
-            "UPDATE businesses SET street = 'Zehentstraße 39', postal_code = '85055', city = 'Ingolstadt', " +
+            "UPDATE businesses SET street = 'Musterstraße 39', postal_code = '85055', city = 'Ingolstadt', " +
                 "latitude = 48.7651, longitude = 11.4237, dirty = 0 WHERE place_id = 'alt-1'"
         )
         db.execSQL("UPDATE businesses SET city = 'Gaimersheim', dirty = 1 WHERE place_id = 'alt-2'")
@@ -402,7 +402,7 @@ class MigrationTest {
             assertEquals("alt-1", c.getString(1))
             assertEquals("2026-09-10T14:00:00+02:00", c.getString(2))
             assertEquals("2026-09-10T15:00:00+02:00", c.getString(3))
-            assertEquals("Zehentstraße 39, 85055 Ingolstadt", c.getString(4))
+            assertEquals("Musterstraße 39, 85055 Ingolstadt", c.getString(4))
             assertTrue(c.isNull(5))
             assertTrue(c.isNull(6))
             assertTrue(c.isNull(7))
@@ -429,7 +429,7 @@ class MigrationTest {
             assertEquals(4711L, c.getLong(0))
             assertEquals("2026-09-10T14:00:00+02:00", c.getString(1))
             assertEquals("2026-09-10T15:00:00+02:00", c.getString(2))
-            assertEquals("Zehentstraße 39, 85055 Ingolstadt", c.getString(3))
+            assertEquals("Musterstraße 39, 85055 Ingolstadt", c.getString(3))
         }
         // Without a link there is nothing this device has seen.
         db.rawQuery(
@@ -624,7 +624,7 @@ class MigrationTest {
             assertEquals("main-alt-1", c.getString(0))
             assertEquals("alt-1", c.getString(1))
             assertTrue(c.isNull(2))
-            assertEquals("Zehentstraße 39", c.getString(3))
+            assertEquals("Musterstraße 39", c.getString(3))
             assertEquals("85055", c.getString(4))
             assertEquals("Ingolstadt", c.getString(5))
             assertEquals(48.7651, c.getDouble(6), 0.0)
@@ -650,7 +650,7 @@ class MigrationTest {
 
         db.rawQuery("SELECT street, city, dirty, updated_at FROM businesses WHERE place_id = 'alt-1'", null).use { c ->
             assertTrue(c.moveToFirst())
-            assertEquals("Zehentstraße 39", c.getString(0))
+            assertEquals("Musterstraße 39", c.getString(0))
             assertEquals("Ingolstadt", c.getString(1))
             assertEquals(0, c.getInt(2))
             assertEquals("2026-09-07T12:00:00+02:00", c.getString(3))

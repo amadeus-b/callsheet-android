@@ -112,13 +112,13 @@ test('a column the payload does not carry keeps its stored value', () => {
   // That is not "empty", it is "not mine to say" — writing NULL there would
   // undo what a newer device stored.
   const db = freshDb()
-  receive(db, { ...empty, businesses: [{ ...BUSINESS, latitude: 48.8059466 }] })
+  receive(db, { ...empty, businesses: [{ ...BUSINESS, latitude: 48.7654321 }] })
 
   receive(db, { ...empty, businesses: [{ ...BUSINESS, note: 'neu', updated_at: '2026-09-07T11:00:00+02:00' }] })
 
   const row = db.prepare('SELECT note, latitude FROM businesses WHERE place_id = ?').get('P1')
   assert.equal(row.note, 'neu')
-  assert.equal(row.latitude, 48.8059466)
+  assert.equal(row.latitude, 48.7654321)
 })
 
 test('an explicit null still clears a column', () => {
@@ -369,7 +369,7 @@ In `test/receive.test.js`, extend the `APPOINTMENT` fixture — an updated app s
 const APPOINTMENT = {
   id: 'T1', place_id: 'P1',
   starts_at: '2026-09-10T14:00:00+02:00', ends_at: '2026-09-10T15:00:00+02:00',
-  location: 'Zehentstraße 39, 85055 Ingolstadt', note: 'Besichtigung', contact_id: 'K1',
+  location: 'Musterstraße 39, 85055 Ingolstadt', note: 'Besichtigung', contact_id: 'K1',
   event_uid: 'T1', updated_at: '2026-09-07T10:00:00+02:00',
   kind: 'visit', done_at: null,
 }

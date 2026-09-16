@@ -242,13 +242,13 @@ class ImporterTest {
     fun `coordinates are read from location`() {
         val json = """
             [{"placeId":"k-1","title":"Gartenbau Merten",
-              "location":{"lat":48.8059466,"lng":11.4058554}}]
+              "location":{"lat":48.7654321,"lng":11.4234567}}]
         """.trimIndent()
 
         val business = Importer.read(json).single()
 
-        assertEquals(48.8059466, business.latitude!!, 0.0000001)
-        assertEquals(11.4058554, business.longitude!!, 0.0000001)
+        assertEquals(48.7654321, business.latitude!!, 0.0000001)
+        assertEquals(11.4234567, business.longitude!!, 0.0000001)
     }
 
     @Test

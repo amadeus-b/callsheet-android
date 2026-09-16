@@ -134,7 +134,7 @@ function databaseBefore012() {
   const appointment = db.prepare(
     `INSERT INTO appointments (id, place_id, starts_at, ends_at, location, note, updated_at, kind,
                                invite_email, calendar_state, event_uid, server_seq)
-     VALUES (?, 'P1', '2026-09-10T14:00:00+02:00', '2026-09-10T15:00:00+02:00', 'Zehentstraße 39',
+     VALUES (?, 'P1', '2026-09-10T14:00:00+02:00', '2026-09-10T15:00:00+02:00', 'Musterstraße 39',
              'Besichtigung', '2026-09-07T10:00:00+02:00', 'visit', ?, 'ok', ?, ?)`
   )
   appointment.run('T1', ' test@example.org ', 'uid-1', 2)
@@ -143,7 +143,7 @@ function databaseBefore012() {
   const pushed = invite => JSON.stringify({
     title: 'Erstgespräch KI bei Elektro Meier – Christoph Bauer',
     starts_at: '2026-09-10T14:00:00+02:00', ends_at: '2026-09-10T15:00:00+02:00',
-    location: 'Zehentstraße 39', invite_email: invite,
+    location: 'Musterstraße 39', invite_email: invite,
   })
   const job = db.prepare(
     'INSERT INTO infomaniak_events (appointment_id, event_id, pushed, pending, generation) VALUES (?, ?, ?, NULL, 1)'
@@ -177,7 +177,7 @@ test('migration 012 rewrites what Infomaniak last received from invite_email to 
   const pushed = id => JSON.parse(db.prepare('SELECT pushed FROM infomaniak_events WHERE appointment_id = ?').get(id).pushed)
   const common = {
     title: 'Erstgespräch KI bei Elektro Meier – Christoph Bauer',
-    starts_at: '2026-09-10T14:00:00+02:00', ends_at: '2026-09-10T15:00:00+02:00', location: 'Zehentstraße 39',
+    starts_at: '2026-09-10T14:00:00+02:00', ends_at: '2026-09-10T15:00:00+02:00', location: 'Musterstraße 39',
   }
   assert.deepEqual(pushed('T1'), { ...common, attendees: ['test@example.org'] })
   assert.deepEqual(pushed('T2'), { ...common, attendees: [] })
@@ -329,15 +329,15 @@ test('the wanted state carries time, place and attendees, never the note', () =>
     title: 'Erstgespräch KI bei Elektro Meier – Christoph Bauer',
     starts_at: '2026-09-10T14:00:00+02:00',
     ends_at: '2026-09-10T15:00:00+02:00',
-    location: 'Zehentstraße 39, 85055 Ingolstadt',
+    location: 'Musterstraße 39, 85055 Ingolstadt',
     attendees: ['test@example.org', 'zweite@example.org'],
   })
 })
 
 test('title, place and attendees are trimmed, and a blank title counts as none', () => {
-  const state = wantedState({ ...VISIT, title: '  Angebot besprechen ', location: ' Am Pulverl 5 ', attendees: '[" test@example.org "]' }, 'Elektro Meier')
+  const state = wantedState({ ...VISIT, title: '  Angebot besprechen ', location: ' Am Musterplatz 5 ', attendees: '[" test@example.org "]' }, 'Elektro Meier')
   assert.equal(state.title, 'Angebot besprechen')
-  assert.equal(state.location, 'Am Pulverl 5')
+  assert.equal(state.location, 'Am Musterplatz 5')
   assert.deepEqual(state.attendees, ['test@example.org'])
   const blank = wantedState({ ...VISIT, title: '   ', location: '  ' }, 'Elektro Meier')
   assert.equal(blank.title, 'Erstgespräch KI bei Elektro Meier – Christoph Bauer')
@@ -396,7 +396,7 @@ test('shouldNotify: title, time or place changed notifies, a list-only change fo
   // Title, time or place changed: everybody, whatever the flag.
   assert.equal(shouldNotify(moved, held, held, 0), true)
   assert.equal(shouldNotify({ ...held, title: 'Angebot' }, held, held, 0), true)
-  assert.equal(shouldNotify({ ...held, location: 'Am Pulverl 5' }, held, held, 0), true)
+  assert.equal(shouldNotify({ ...held, location: 'Am Musterplatz 5' }, held, held, 0), true)
   // A create: the flag decides.
   assert.equal(shouldNotify(held, null, null, null), true)
   assert.equal(shouldNotify(held, null, null, 0), false)
@@ -612,7 +612,7 @@ test('removing everybody from a visit from before this version notifies them', a
 test('update without attendees before or after does not notify', async () => {
   const db = freshDb()
   await created(db, fakeClient())
-  receive(db, { appointments: [later({ location: 'Am Pulverl 5, 85051 Ingolstadt' })] })
+  receive(db, { appointments: [later({ location: 'Am Musterplatz 5, 85051 Ingolstadt' })] })
   const client = fakeClient({ event: eventFor() })
 
   await pushCalendar(db, client)
@@ -1245,7 +1245,7 @@ test('after migration 012 an invited visit uploaded again by the new app queues 
   receive(db, { appointments: [{
     id: 'T1', place_id: 'P1', kind: 'visit', done_at: null,
     starts_at: '2026-09-10T14:00:00+02:00', ends_at: '2026-09-10T15:00:00+02:00',
-    location: 'Zehentstraße 39', note: 'Chef heißt Huber', contact_id: null, title: null,
+    location: 'Musterstraße 39', note: 'Chef heißt Huber', contact_id: null, title: null,
     invite_email: ' test@example.org ', attendees: '["test@example.org"]', attendees_notify: null,
     event_uid: 'uid-1', updated_at: '2026-09-07T11:00:00+02:00',
   }] })
@@ -1994,7 +1994,7 @@ At the end of the class, before its closing `}`, add:
     // --- attendees: the question on saving ------------------------------------
 
     private val storedVisit = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00")
-        .copy(location = "Zehentstraße 39", attendees = listOf("test@example.org"))
+        .copy(location = "Musterstraße 39", attendees = listOf("test@example.org"))
     private val withSecond = storedVisit.copy(attendees = listOf("test@example.org", "zweite@example.org"))
 
     @Test
@@ -2026,7 +2026,7 @@ At the end of the class, before its closing `}`, add:
         val name = "Elektro Meier"
         assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(startsAt = "2026-09-10T16:00:00+02:00"), name))
         assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(endsAt = "2026-09-10T16:00:00+02:00"), name))
-        assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(location = "Am Pulverl 5"), name))
+        assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(location = "Am Musterplatz 5"), name))
         assertNull(Appointment.attendeeQuestion(storedVisit, withSecond.copy(title = "Angebot besprechen"), name))
         // The preset title written out, and the same instant with another offset, are no change.
         val onlySecond = AttendeeQuestion(listOf("zweite@example.org"), emptyList())

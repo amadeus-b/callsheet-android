@@ -821,14 +821,14 @@ class RepositoryTest {
     fun `an appointment is stored, marked for upload and read back`() = runTest {
         repo.saveAppointment(
             visit("A-1", "t-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", note = "Besichtigung")
-                .copy(location = "Zehentstraße 39, 85055 Ingolstadt", contactId = "K-1", eventUid = "A-1")
+                .copy(location = "Musterstraße 39, 85055 Ingolstadt", contactId = "K-1", eventUid = "A-1")
         )
 
         val stored = repo.appointment("A-1")!!
         assertEquals("t-1", stored.placeId)
         assertEquals("2026-09-10T14:00:00+02:00", stored.startsAt)
         assertEquals("2026-09-10T15:00:00+02:00", stored.endsAt)
-        assertEquals("Zehentstraße 39, 85055 Ingolstadt", stored.location)
+        assertEquals("Musterstraße 39, 85055 Ingolstadt", stored.location)
         assertEquals("Besichtigung", stored.note)
         assertEquals("K-1", stored.contactId)
         assertEquals("A-1", stored.eventUid)
@@ -869,11 +869,11 @@ class RepositoryTest {
     @Test
     fun `a callback is stored without a place, whatever the entry carries`() = runTest {
         // Adopting an event, or taking one over in the read-back, copies the event's location.
-        repo.saveAppointment(callback("R-1", "t-1", "2026-09-15T09:00:00+02:00").copy(location = "Zehentstraße 39"))
-        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00").copy(location = "Zehentstraße 39"))
+        repo.saveAppointment(callback("R-1", "t-1", "2026-09-15T09:00:00+02:00").copy(location = "Musterstraße 39"))
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-16T09:00:00+02:00").copy(location = "Musterstraße 39"))
 
         assertNull(repo.appointment("R-1")!!.location)
-        assertEquals("Zehentstraße 39", repo.appointment("A-1")!!.location)
+        assertEquals("Musterstraße 39", repo.appointment("A-1")!!.location)
     }
 
     @Test
@@ -1044,13 +1044,13 @@ class RepositoryTest {
         execute("UPDATE appointments SET dirty = 0")
         val before = repo.appointment("A-1")!!.updatedAt
 
-        repo.setCalendarLink("A-1", 4711L, "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Zehentstraße 39")
+        repo.setCalendarLink("A-1", 4711L, "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Musterstraße 39")
 
         val linked = repo.appointment("A-1")!!
         assertEquals(4711L, linked.calendarEventId)
         assertEquals("2026-09-10T14:00:00+02:00", linked.seenStartsAt)
         assertEquals("2026-09-10T15:00:00+02:00", linked.seenEndsAt)
-        assertEquals("Zehentstraße 39", linked.seenLocation)
+        assertEquals("Musterstraße 39", linked.seenLocation)
         assertEquals(before, linked.updatedAt)
         assertEquals(0, count("SELECT dirty FROM appointments WHERE id = 'A-1'"))
 

@@ -1220,11 +1220,11 @@ In `test/AppointmentTest.kt`, below `a record of the event is current only with 
     @Test
     fun `the seen title is read from the entry, and a record without it is not current`() {
         val recorded = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00").copy(
-            location = "Zehentstraße 39",
+            location = "Musterstraße 39",
             calendarEventId = 4711L,
             seenStartsAt = "2026-09-10T14:00:00+02:00",
             seenEndsAt = "2026-09-10T15:00:00+02:00",
-            seenLocation = "Zehentstraße 39",
+            seenLocation = "Musterstraße 39",
         )
         val titled = planned.copy(title = "Erstgespräch")
 

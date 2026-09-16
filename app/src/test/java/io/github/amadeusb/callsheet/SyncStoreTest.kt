@@ -72,7 +72,7 @@ class SyncStoreTest {
     private fun einTermin(id: String, zeit: String, dirty: Int, eventId: Long? = null) = schreibe(
         "INSERT INTO appointments (id, place_id, starts_at, ends_at, location, updated_at, event_uid, " +
             "calendar_event_id, calendar_seen_starts_at, dirty) VALUES ('$id', 'P1', " +
-            "'2026-09-10T14:00:00+02:00', '2026-09-10T15:00:00+02:00', 'Zehentstraße 39', '$zeit', '$id', " +
+            "'2026-09-10T14:00:00+02:00', '2026-09-10T15:00:00+02:00', 'Musterstraße 39', '$zeit', '$id', " +
             "${eventId ?: "NULL"}, ${if (eventId != null) "'2026-09-10T14:00:00+02:00'" else "NULL"}, $dirty)"
     )
 
@@ -556,7 +556,7 @@ class SyncStoreTest {
             assertEquals("Angebot", c.getString(2))
             // Gaps only: what this device holds stays.
             assertEquals("2026-09-10T14:00:00+02:00", c.getString(3))
-            assertEquals("Zehentstraße 39", c.getString(4))
+            assertEquals("Musterstraße 39", c.getString(4))
             // Filled from the server, so nothing to send back.
             assertEquals(0, c.getInt(5))
         }

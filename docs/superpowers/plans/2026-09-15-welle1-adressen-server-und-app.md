@@ -1074,7 +1074,7 @@ In `test/MigrationTest.kt`, after `createVersionFour()`, add the fixture:
         db.execSQL("ALTER TABLE appointments ADD COLUMN done_at TEXT")
         db.execSQL("UPDATE businesses SET follow_up_at = NULL")
         db.execSQL(
-            "UPDATE businesses SET street = 'Zehentstraße 39', postal_code = '85055', city = 'Ingolstadt', " +
+            "UPDATE businesses SET street = 'Musterstraße 39', postal_code = '85055', city = 'Ingolstadt', " +
                 "latitude = 48.7651, longitude = 11.4237, dirty = 0 WHERE place_id = 'alt-1'"
         )
         db.execSQL("UPDATE businesses SET city = 'Gaimersheim', dirty = 1 WHERE place_id = 'alt-2'")
@@ -1109,7 +1109,7 @@ Before `// --- and a database that never had to migrate at all ---`, add:
             assertEquals("main-alt-1", c.getString(0))
             assertEquals("alt-1", c.getString(1))
             assertTrue(c.isNull(2))
-            assertEquals("Zehentstraße 39", c.getString(3))
+            assertEquals("Musterstraße 39", c.getString(3))
             assertEquals("85055", c.getString(4))
             assertEquals("Ingolstadt", c.getString(5))
             assertEquals(48.7651, c.getDouble(6), 0.0)
@@ -1135,7 +1135,7 @@ Before `// --- and a database that never had to migrate at all ---`, add:
 
         db.rawQuery("SELECT street, city, dirty, updated_at FROM businesses WHERE place_id = 'alt-1'", null).use { c ->
             assertTrue(c.moveToFirst())
-            assertEquals("Zehentstraße 39", c.getString(0))
+            assertEquals("Musterstraße 39", c.getString(0))
             assertEquals("Ingolstadt", c.getString(1))
             assertEquals(0, c.getInt(2))
             assertEquals("2026-09-07T12:00:00+02:00", c.getString(3))
@@ -2855,7 +2855,7 @@ class GeoUriTest {
     private fun address(
         lat: Double? = null,
         lng: Double? = null,
-        street: String? = "Zehentstraße 39",
+        street: String? = "Musterstraße 39",
         postalCode: String? = "85055",
         city: String? = "Ingolstadt",
     ) = BusinessAddress(
@@ -2866,9 +2866,9 @@ class GeoUriTest {
 
     @Test
     fun `coordinates put the map on the point and label the pin`() {
-        val uri = geoUri("Gartenbau Merten", address(48.8059466, 11.4058554))!!
+        val uri = geoUri("Gartenbau Merten", address(48.7654321, 11.4234567))!!
 
-        assertTrue(uri, uri.startsWith("geo:48.8059466,11.4058554?q="))
+        assertTrue(uri, uri.startsWith("geo:48.7654321,11.4234567?q="))
         assertTrue(uri, uri.contains("Gartenbau"))
     }
 
@@ -2876,13 +2876,13 @@ class GeoUriTest {
     fun `without coordinates the address is searched instead`() {
         val uri = geoUri("Gartenbau Merten", address())!!
 
-        assertEquals("geo:0,0?q=" + Uri.encode("Zehentstraße 39, 85055 Ingolstadt"), uri)
+        assertEquals("geo:0,0?q=" + Uri.encode("Musterstraße 39, 85055 Ingolstadt"), uri)
     }
 
     @Test
     fun `half a coordinate is no coordinate`() {
         // A latitude without a longitude would land the map on the equator.
-        val uri = geoUri("Gartenbau Merten", address(lat = 48.8059466))!!
+        val uri = geoUri("Gartenbau Merten", address(lat = 48.7654321))!!
 
         assertTrue(uri, uri.startsWith("geo:0,0?q="))
     }
@@ -2894,7 +2894,7 @@ class GeoUriTest {
 
     @Test
     fun `the address form escapes what it is given`() {
-        assertEquals("geo:0,0?q=Zehentstra%C3%9Fe%2039", geoUri("Zehentstraße 39"))
+        assertEquals("geo:0,0?q=Musterstra%C3%9Fe%2039", geoUri("Musterstraße 39"))
     }
 }
 ```

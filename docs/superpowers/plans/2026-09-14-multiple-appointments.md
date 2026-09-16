@@ -97,7 +97,7 @@ In `MigrationTest.kt`, add below `createVersionTwo()`:
         db.execSQL(
             "UPDATE businesses SET appointment_at = '2026-09-10T14:00:00+02:00', " +
                 "appointment_end_at = '2026-09-10T15:00:00+02:00', " +
-                "appointment_location = 'Zehentstraße 39, 85055 Ingolstadt', calendar_event_id = 4711, dirty = 0 " +
+                "appointment_location = 'Musterstraße 39, 85055 Ingolstadt', calendar_event_id = 4711, dirty = 0 " +
                 "WHERE place_id = 'alt-1'"
         )
         db.execSQL(
@@ -141,7 +141,7 @@ Add before `// --- and a database that never had to migrate at all`:
             assertEquals("alt-1", c.getString(1))
             assertEquals("2026-09-10T14:00:00+02:00", c.getString(2))
             assertEquals("2026-09-10T15:00:00+02:00", c.getString(3))
-            assertEquals("Zehentstraße 39, 85055 Ingolstadt", c.getString(4))
+            assertEquals("Musterstraße 39, 85055 Ingolstadt", c.getString(4))
             assertTrue(c.isNull(5))
             assertTrue(c.isNull(6))
             assertTrue(c.isNull(7))
@@ -168,7 +168,7 @@ Add before `// --- and a database that never had to migrate at all`:
             assertEquals(4711L, c.getLong(0))
             assertEquals("2026-09-10T14:00:00+02:00", c.getString(1))
             assertEquals("2026-09-10T15:00:00+02:00", c.getString(2))
-            assertEquals("Zehentstraße 39, 85055 Ingolstadt", c.getString(3))
+            assertEquals("Musterstraße 39, 85055 Ingolstadt", c.getString(3))
         }
         // Without a link there is nothing this device has seen.
         db.rawQuery(
@@ -385,7 +385,7 @@ In `SyncStoreTest.kt`, add helpers below `betriebJson`:
     private fun einTermin(id: String, zeit: String, dirty: Int, eventId: Long? = null) = schreibe(
         "INSERT INTO appointments (id, place_id, starts_at, ends_at, location, updated_at, event_uid, " +
             "calendar_event_id, calendar_seen_starts_at, dirty) VALUES ('$id', 'P1', " +
-            "'2026-09-10T14:00:00+02:00', '2026-09-10T15:00:00+02:00', 'Zehentstraße 39', '$zeit', '$id', " +
+            "'2026-09-10T14:00:00+02:00', '2026-09-10T15:00:00+02:00', 'Musterstraße 39', '$zeit', '$id', " +
             "${eventId ?: "NULL"}, ${if (eventId != null) "'2026-09-10T14:00:00+02:00'" else "NULL"}, $dirty)"
     )
 
@@ -529,7 +529,7 @@ In `SyncSchemaTest.kt`, append:
             put("event_uid", "T1")
             put("calendar_seen_starts_at", "2026-09-10T14:00:00+02:00")
             put("calendar_seen_ends_at", "2026-09-10T15:00:00+02:00")
-            put("calendar_seen_location", "Zehentstraße 39")
+            put("calendar_seen_location", "Musterstraße 39")
         }
         val columns = row.keys().asSequence().toSet()
 
@@ -1053,14 +1053,14 @@ Below the `// ---- Appointment` divider, add:
     fun `an appointment is stored, marked for upload and read back`() = runTest {
         repo.saveAppointment(
             visit("A-1", "t-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", note = "Besichtigung")
-                .copy(location = "Zehentstraße 39, 85055 Ingolstadt", contactId = "K-1", eventUid = "A-1")
+                .copy(location = "Musterstraße 39, 85055 Ingolstadt", contactId = "K-1", eventUid = "A-1")
         )
 
         val stored = repo.appointment("A-1")!!
         assertEquals("t-1", stored.placeId)
         assertEquals("2026-09-10T14:00:00+02:00", stored.startsAt)
         assertEquals("2026-09-10T15:00:00+02:00", stored.endsAt)
-        assertEquals("Zehentstraße 39, 85055 Ingolstadt", stored.location)
+        assertEquals("Musterstraße 39, 85055 Ingolstadt", stored.location)
         assertEquals("Besichtigung", stored.note)
         assertEquals("K-1", stored.contactId)
         assertEquals("A-1", stored.eventUid)
@@ -1127,13 +1127,13 @@ Below the `// ---- Appointment` divider, add:
         execute("UPDATE appointments SET dirty = 0")
         val before = repo.appointment("A-1")!!.updatedAt
 
-        repo.setCalendarLink("A-1", 4711L, "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Zehentstraße 39")
+        repo.setCalendarLink("A-1", 4711L, "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Musterstraße 39")
 
         val linked = repo.appointment("A-1")!!
         assertEquals(4711L, linked.calendarEventId)
         assertEquals("2026-09-10T14:00:00+02:00", linked.seenStartsAt)
         assertEquals("2026-09-10T15:00:00+02:00", linked.seenEndsAt)
-        assertEquals("Zehentstraße 39", linked.seenLocation)
+        assertEquals("Musterstraße 39", linked.seenLocation)
         assertEquals(before, linked.updatedAt)
         assertEquals(0, count("SELECT dirty FROM appointments WHERE id = 'A-1'"))
 
@@ -1479,8 +1479,8 @@ Append inside the class:
     private fun slot(start: String, end: String? = null, location: String? = null) =
         Slot(instant(start), end?.let { instant(it) }, location)
 
-    private val planned = slot("2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Zehentstraße 39")
-    private val later = slot("2026-09-10T16:00:00+02:00", "2026-09-10T17:00:00+02:00", "Zehentstraße 39")
+    private val planned = slot("2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Musterstraße 39")
+    private val later = slot("2026-09-10T16:00:00+02:00", "2026-09-10T17:00:00+02:00", "Musterstraße 39")
     private val office = slot("2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Im Büro")
     private val dayBefore = instant("2026-09-09T12:00:00+02:00")
     private val dayAfter = instant("2026-09-11T12:00:00+02:00")
@@ -1528,14 +1528,14 @@ Append inside the class:
 
     @Test
     fun `seconds and surrounding spaces are no difference`() {
-        val event = Slot(planned.startMillis + 30_000L, planned.endMillis!! + 30_000L, " Zehentstraße 39 ")
+        val event = Slot(planned.startMillis + 30_000L, planned.endMillis!! + 30_000L, " Musterstraße 39 ")
 
         assertEquals(Reconcile.InStep, Appointment.reconcile(row = planned, seen = planned, event = event, nowMillis = dayBefore))
     }
 
     @Test
     fun `a row without an end is not a difference from the event's end`() {
-        val row = slot("2026-09-10T14:00:00+02:00", null, "Zehentstraße 39")
+        val row = slot("2026-09-10T14:00:00+02:00", null, "Musterstraße 39")
 
         assertEquals(Reconcile.InStep, Appointment.reconcile(row = row, seen = null, event = planned, nowMillis = dayBefore))
     }
@@ -1560,7 +1560,7 @@ Append inside the class:
     @Test
     fun `the row slot and the seen slot are read from the entry`() {
         val linked = entry("A-1", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00")
-            .copy(location = "Zehentstraße 39", seenStartsAt = "2026-09-10T16:00:00+02:00", seenEndsAt = "2026-09-10T17:00:00+02:00", seenLocation = "Zehentstraße 39")
+            .copy(location = "Musterstraße 39", seenStartsAt = "2026-09-10T16:00:00+02:00", seenEndsAt = "2026-09-10T17:00:00+02:00", seenLocation = "Musterstraße 39")
 
         assertEquals(planned, Appointment.rowSlot(linked))
         assertEquals(later, Appointment.seenSlot(linked))
@@ -1575,7 +1575,7 @@ Append inside the class:
             calendarEventId = 4711L,
             seenStartsAt = "2026-09-10T14:00:00+02:00",
             seenEndsAt = "2026-09-10T15:00:00+02:00",
-            seenLocation = "Zehentstraße 39",
+            seenLocation = "Musterstraße 39",
         )
 
         assertTrue(Appointment.seenIsCurrent(recorded, 4711L, planned))

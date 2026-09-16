@@ -19,7 +19,7 @@ class GeoUriTest {
     private fun address(
         lat: Double? = null,
         lng: Double? = null,
-        street: String? = "Zehentstraße 39",
+        street: String? = "Musterstraße 39",
         postalCode: String? = "85055",
         city: String? = "Ingolstadt",
     ) = BusinessAddress(
@@ -30,9 +30,9 @@ class GeoUriTest {
 
     @Test
     fun `coordinates put the map on the point and label the pin`() {
-        val uri = geoUri("Gartenbau Merten", address(48.8059466, 11.4058554))!!
+        val uri = geoUri("Gartenbau Merten", address(48.7654321, 11.4234567))!!
 
-        assertTrue(uri, uri.startsWith("geo:48.8059466,11.4058554?q="))
+        assertTrue(uri, uri.startsWith("geo:48.7654321,11.4234567?q="))
         assertTrue(uri, uri.contains("Gartenbau"))
     }
 
@@ -40,13 +40,13 @@ class GeoUriTest {
     fun `without coordinates the address is searched instead`() {
         val uri = geoUri("Gartenbau Merten", address())!!
 
-        assertEquals("geo:0,0?q=" + Uri.encode("Zehentstraße 39, 85055 Ingolstadt"), uri)
+        assertEquals("geo:0,0?q=" + Uri.encode("Musterstraße 39, 85055 Ingolstadt"), uri)
     }
 
     @Test
     fun `half a coordinate is no coordinate`() {
         // A latitude without a longitude would land the map on the equator.
-        val uri = geoUri("Gartenbau Merten", address(lat = 48.8059466))!!
+        val uri = geoUri("Gartenbau Merten", address(lat = 48.7654321))!!
 
         assertTrue(uri, uri.startsWith("geo:0,0?q="))
     }
@@ -58,6 +58,6 @@ class GeoUriTest {
 
     @Test
     fun `the address form escapes what it is given`() {
-        assertEquals("geo:0,0?q=Zehentstra%C3%9Fe%2039", geoUri("Zehentstraße 39"))
+        assertEquals("geo:0,0?q=Musterstra%C3%9Fe%2039", geoUri("Musterstraße 39"))
     }
 }

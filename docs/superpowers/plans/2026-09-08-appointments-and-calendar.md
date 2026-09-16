@@ -464,14 +464,14 @@ Append to `RepositoryTest.kt`, inside the class:
             placeId = "t-1",
             at = "2026-09-10T14:00:00+02:00",
             endAt = "2026-09-10T15:00:00+02:00",
-            location = "Zehentstraße 39, 85055 Ingolstadt",
+            location = "Musterstraße 39, 85055 Ingolstadt",
             eventId = 4711L,
         )
 
         val business = repo.business("t-1")!!
         assertEquals("2026-09-10T14:00:00+02:00", business.appointmentAt)
         assertEquals("2026-09-10T15:00:00+02:00", business.appointmentEndAt)
-        assertEquals("Zehentstraße 39, 85055 Ingolstadt", business.appointmentLocation)
+        assertEquals("Musterstraße 39, 85055 Ingolstadt", business.appointmentLocation)
         assertEquals(4711L, business.calendarEventId)
     }
 
@@ -492,7 +492,7 @@ Append to `RepositoryTest.kt`, inside the class:
     @Test
     fun `a second import leaves the appointment alone`() = runTest {
         import("""[{"placeId":"t-3","title":"Gartenbau Merten","phone":"+49 841 111"}]""")
-        repo.setAppointment("t-3", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Zehentstraße 39", 99L)
+        repo.setAppointment("t-3", "2026-09-10T14:00:00+02:00", "2026-09-10T15:00:00+02:00", "Musterstraße 39", 99L)
 
         import("""[{"placeId":"t-3","title":"Gartenbau Merten GmbH","phone":"+49 841 222"}]""")
 
@@ -683,13 +683,13 @@ The API is `Importer.read(text: String): List<ImportedBusiness>` (`Importer.kt:2
     fun `coordinates are read from location`() {
         val json = """
             [{"placeId":"k-1","title":"Gartenbau Merten",
-              "location":{"lat":48.8059466,"lng":11.4058554}}]
+              "location":{"lat":48.7654321,"lng":11.4234567}}]
         """.trimIndent()
 
         val business = Importer.read(json).single()
 
-        assertEquals(48.8059466, business.latitude!!, 0.0000001)
-        assertEquals(11.4058554, business.longitude!!, 0.0000001)
+        assertEquals(48.7654321, business.latitude!!, 0.0000001)
+        assertEquals(11.4234567, business.longitude!!, 0.0000001)
     }
 
     @Test
@@ -875,15 +875,15 @@ class AppointmentTest {
     @Test
     fun `the address is joined onto one line`() {
         assertEquals(
-            "Zehentstraße 39, 85055 Ingolstadt",
-            Appointment.address("Zehentstraße 39", "85055", "Ingolstadt"),
+            "Musterstraße 39, 85055 Ingolstadt",
+            Appointment.address("Musterstraße 39", "85055", "Ingolstadt"),
         )
     }
 
     @Test
     fun `missing parts of the address drop out`() {
         assertEquals("Ingolstadt", Appointment.address(null, null, "Ingolstadt"))
-        assertEquals("Zehentstraße 39", Appointment.address("Zehentstraße 39", null, null))
+        assertEquals("Musterstraße 39", Appointment.address("Musterstraße 39", null, null))
         assertNull(Appointment.address(null, null, null))
         assertNull(Appointment.address(" ", "", null))
     }
@@ -2844,10 +2844,10 @@ Append to `AppointmentTest.kt`:
     @Test
     fun `an untouched appointment yields Unchanged`() {
         val outcome = Appointment.readBack(
-            currentAt = at, currentEnd = until, currentLocation = "Zehentstraße 39",
+            currentAt = at, currentEnd = until, currentLocation = "Musterstraße 39",
             eventStartMillis = millis(2026, 9, 10, 14),
             eventEndMillis = millis(2026, 9, 10, 15),
-            eventLocation = "Zehentstraße 39",
+            eventLocation = "Musterstraße 39",
         )
 
         assertEquals(ReadBack.Unchanged, outcome)
@@ -2856,20 +2856,20 @@ Append to `AppointmentTest.kt`:
     @Test
     fun `a moved appointment yields Updated`() {
         val outcome = Appointment.readBack(
-            currentAt = at, currentEnd = until, currentLocation = "Zehentstraße 39",
+            currentAt = at, currentEnd = until, currentLocation = "Musterstraße 39",
             eventStartMillis = millis(2026, 9, 10, 16),
             eventEndMillis = millis(2026, 9, 10, 17),
-            eventLocation = "Zehentstraße 39",
+            eventLocation = "Musterstraße 39",
         ) as ReadBack.Updated
 
         assertEquals(millis(2026, 9, 10, 16), Clock.millis(outcome.startIso))
-        assertEquals("Zehentstraße 39", outcome.location)
+        assertEquals("Musterstraße 39", outcome.location)
     }
 
     @Test
     fun `a relocated appointment yields Updated`() {
         val outcome = Appointment.readBack(
-            currentAt = at, currentEnd = until, currentLocation = "Zehentstraße 39",
+            currentAt = at, currentEnd = until, currentLocation = "Musterstraße 39",
             eventStartMillis = millis(2026, 9, 10, 14),
             eventEndMillis = millis(2026, 9, 10, 15),
             eventLocation = "Im Büro",

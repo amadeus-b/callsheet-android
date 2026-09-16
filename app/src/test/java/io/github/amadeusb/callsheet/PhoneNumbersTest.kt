@@ -12,7 +12,7 @@ class PhoneNumbersTest {
     fun `phoneUnformatted is preferred`() {
         assertEquals(
             "+496219947615",
-            PhoneNumbers.normalize("+49 621 99474615", "+496219947615"),
+            PhoneNumbers.normalize("+49 621 99478615", "+496219947615"),
         )
     }
 
