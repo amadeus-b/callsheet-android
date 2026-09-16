@@ -252,6 +252,9 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
             onAgenda = vm::showAgenda,
             onSettings = vm::showSettings,
             onNewBusiness = vm::showBusinessForm,
+            syncConfigured = syncState.url.isNotEmpty(),
+            syncRunning = syncState.running,
+            onSyncNow = { vm.syncNow(quiet = false) },
         )
 
         is Screen.Detail -> {

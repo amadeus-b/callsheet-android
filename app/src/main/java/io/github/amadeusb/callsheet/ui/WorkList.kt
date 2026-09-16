@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -33,6 +34,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -68,6 +70,11 @@ fun WorkListScreen(
     onAgenda: () -> Unit,
     onSettings: () -> Unit,
     onNewBusiness: () -> Unit,
+    /** A sync server is set up: only then is the server sync offered here. */
+    syncConfigured: Boolean = false,
+    syncRunning: Boolean = false,
+    /** Syncs with the server — not the device calendar, which DAVx5 fills. */
+    onSyncNow: () -> Unit = {},
 ) {
     var dialog by remember { mutableStateOf(OpenDialog.NONE) }
 
@@ -76,6 +83,17 @@ fun WorkListScreen(
             TopAppBar(
                 title = { Text("Callsheet") },
                 actions = {
+                    // Named after the server on purpose: it does not make DAVx5
+                    // bring the device calendar up to date.
+                    if (syncConfigured) {
+                        TextButton(
+                            onClick = onSyncNow,
+                            enabled = !syncRunning,
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            ),
+                        ) { Text(if (syncRunning) "Gleicht ab …" else "Server abgleichen") }
+                    }
                     IconButton(onClick = onAgenda) {
                         Icon(Icons.Filled.DateRange, contentDescription = "Termine")
                     }
