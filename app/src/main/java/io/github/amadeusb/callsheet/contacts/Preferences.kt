@@ -166,6 +166,16 @@ class Preferences(context: Context) {
         get() = store.getString(MAIL_TEMPLATE_BODY, null) ?: DEFAULT_MAIL_BODY
         set(value) = store.edit().putString(MAIL_TEMPLATE_BODY, value).apply()
 
+    /**
+     * Forgets the saved subject and body, so the mail dialog starts from
+     * [DEFAULT_MAIL_SUBJECT] and [DEFAULT_MAIL_BODY] again. The settings save
+     * every keystroke, an emptied field included — without this, a template
+     * once touched would never show a newer default.
+     */
+    fun resetMailTemplate() {
+        store.edit().remove(MAIL_TEMPLATE_SUBJECT).remove(MAIL_TEMPLATE_BODY).apply()
+    }
+
     private companion object {
         const val PHONE_BOOK_ENABLED = "phone_book_enabled"
         const val ACCOUNT_NAME = "phone_book_account_name"
@@ -185,11 +195,49 @@ class Preferences(context: Context) {
         const val NO_CALENDAR = -1L
         const val MAIL_TEMPLATE_SUBJECT = "mail_template_subject"
         const val MAIL_TEMPLATE_BODY = "mail_template_body"
-        const val DEFAULT_MAIL_SUBJECT = "Ihr Termin bei {{business_name}}"
-        const val DEFAULT_MAIL_BODY = "Guten Tag,\n\n" +
-            "vielen Dank für das freundliche Telefonat mit {{business_name}}. " +
-            "Wie besprochen melden wir uns hiermit auf diesem Weg bei Ihnen.\n\n" +
-            "Bei Rückfragen erreichen Sie uns jederzeit gerne telefonisch.\n\n" +
-            "Freundliche Grüße"
+
+        /**
+         * The signature every mail goes out under, verbatim as it is kept for the
+         * sender domain bauer-ki.de. Grußformel included: it belongs to the
+         * signature, it is never part of the body text itself.
+         *
+         * The block after the contact line is the legal one. A UG's business mail
+         * counts as a Geschäftsbrief under § 35a GmbHG, so firm with its legal
+         * form, seat, register court, HRB and Geschäftsführer have to be in it.
+         * No `-- ` separator in front: mail clients grey out everything behind it
+         * and drop it when replying, Grußformel and all.
+         */
+        const val MAIL_SIGNATURE = "Mit bestem Gruß\n" +
+            "Christoph Bauer\n\n" +
+            "KI-Automatisierung für Betriebe in Ingolstadt & Region 10\n" +
+            "Tel. 0174 5228788 · christoph@bauer-ki.de · bauer-ki.de\n\n" +
+            "TM Services UG (haftungsbeschränkt) · Im Ebenfeld 8c · 94536 Eppenschlag\n" +
+            "Sitz: Eppenschlag · Registergericht: Amtsgericht Passau · HRB 12759\n" +
+            "Geschäftsführer: Christoph Bauer · USt-IdNr.: DE452785562"
+
+        const val DEFAULT_MAIL_SUBJECT = "Wie besprochen: KI-Automatisierung für {{business_name}}"
+        /**
+         * `[Name]` is left for the salutation, to be filled in by hand before
+         * sending; the server refuses a mail that still contains it.
+         */
+        const val DEFAULT_MAIL_BODY = "Guten Tag [Name],\n\n" +
+            "vielen Dank für das freundliche Telefonat. Wie besprochen hier ein paar Infos.\n\n" +
+            "Ich helfe Betrieben in Ingolstadt und Umgebung dabei, wiederkehrende Büroarbeit " +
+            "zu automatisieren - aufbauend auf den Programmen, die Sie ohnehin schon nutzen, " +
+            "oder ergänzend mit neuen Lösungen, um Optimierungen bestmöglich umzusetzen.\n\n" +
+            "- Anfragen und E-Mails werden erkannt, einsortiert und als fertiger Entwurf " +
+            "vorbereitet oder nach Freigabe direkt versendet.\n" +
+            "- Dokumente landen per Texterkennung automatisch in der richtigen Ablage und " +
+            "sind durchsuchbar.\n" +
+            "- Auswertungen und kleine Werkzeuge, zugeschnitten auf Ihre Abläufe.\n\n" +
+            "KI kann heutzutage viele Dinge vollautomatisch übernehmen. Sie bestimmen, wie viel " +
+            "sie eigenständig darf und welche Schritte nur nach menschlicher Freigabe " +
+            "ausgeführt werden. Als ausgebildeter Datenschutzbeauftragter (BDSG/DSGVO) sorge " +
+            "ich dafür, dass die KI nur das tut, was Sie freigegeben haben - und nur mit den " +
+            "Daten, die sie dafür braucht.\n\n" +
+            "Der nächste Schritt kostet Sie nichts: eine Analyse bei Ihnen vor Ort.\n\n" +
+            "Buchen Sie gerne unverbindlich Ihren Termin: https://bauer-ki.de/termin/\n\n" +
+            "Für Rückfragen erreichen Sie mich gerne per E-Mail oder Telefon.\n\n" +
+            MAIL_SIGNATURE
     }
 }
