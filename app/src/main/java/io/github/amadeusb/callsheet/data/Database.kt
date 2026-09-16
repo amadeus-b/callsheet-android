@@ -92,6 +92,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         for (sql in COLUMNS_APPOINTMENTS_8) db.execSQL(sql)
         db.execSQL(COLUMN_BUSINESSES_9)
         for (sql in COLUMNS_APPOINTMENTS_10) db.execSQL(sql)
+        for (sql in COLUMNS_APPOINTMENTS_11) db.execSQL(sql)
         db.execSQL("CREATE INDEX idx_businesses_status ON businesses(status)")
         db.execSQL("CREATE INDEX idx_businesses_industry ON businesses(industry)")
         db.execSQL("CREATE INDEX idx_businesses_is_target ON businesses(is_target)")
@@ -290,6 +291,11 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             for (sql in COLUMNS_APPOINTMENTS_10) db.execSQL(sql)
             carryInvitationsOver(db)
         }
+        if (old < 11) {
+            // Nothing to carry over and nothing to mark: empty is unknown, and
+            // an unknown confirmation never makes a visit missing.
+            for (sql in COLUMNS_APPOINTMENTS_11) db.execSQL(sql)
+        }
     }
 
     /**
@@ -320,7 +326,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
 
     companion object {
         const val NAME = "callsheet.db"
-        const val VERSION = 10
+        const val VERSION = 11
 
         @Volatile
         private var shared: Database? = null
@@ -545,6 +551,18 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         private val COLUMNS_APPOINTMENTS_10 = listOf(
             "ALTER TABLE appointments ADD COLUMN attendees TEXT",
             "ALTER TABLE appointments ADD COLUMN attendees_notify INTEGER",
+        )
+
+        /**
+         * Schema 11: when the read-back first looked for a visit's event in
+         * vain, and when this device first saw the server confirm the visit —
+         * both millis, both local (see Rows.LOCAL_ONLY and
+         * Appointment.reconcileTracked). Added by ALTER on both roads, for the
+         * reason COLUMNS_APPOINTMENTS_6 gives.
+         */
+        private val COLUMNS_APPOINTMENTS_11 = listOf(
+            "ALTER TABLE appointments ADD COLUMN calendar_missing_since INTEGER",
+            "ALTER TABLE appointments ADD COLUMN calendar_ok_since INTEGER",
         )
 
         /**

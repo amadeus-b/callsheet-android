@@ -282,6 +282,16 @@ class MigrationTest {
         db.close()
     }
 
+    /** The version 10 schema, as 1.5.1 ships it: version 9 with a visit's attendees. */
+    private fun createVersionTen() {
+        createVersionNine()
+        val db = context.openOrCreateDatabase("callsheet.db", 0, null)
+        db.execSQL("ALTER TABLE appointments ADD COLUMN attendees TEXT")
+        db.execSQL("ALTER TABLE appointments ADD COLUMN attendees_notify INTEGER")
+        db.version = 10
+        db.close()
+    }
+
     private fun columnsOf(table: String, db: android.database.sqlite.SQLiteDatabase): Set<String> =
         db.rawQuery("PRAGMA table_info($table)", null).use { c ->
             generateSequence { if (c.moveToNext()) c.getString(1) else null }.toSet()
@@ -758,6 +768,39 @@ class MigrationTest {
 
         // PRAGMA on a missing table returns no columns on both sides.
         assertTrue("edited_fields" in fresh)
+        assertEquals(fresh, upgraded)
+    }
+
+    // --- from version 10, the road 1.5.1 devices are on -----------------------
+
+    @Test
+    fun `an upgrade from version ten adds the missing and ok moments empty and marks nothing`() {
+        createVersionTen()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery(
+            "SELECT calendar_missing_since, calendar_ok_since, dirty, updated_at FROM appointments WHERE id = 'legacy-alt-1'",
+            null,
+        ).use { c ->
+            assertTrue(c.moveToFirst())
+            // Empty is unknown — never zero, or every visit would count as confirmed long ago.
+            assertTrue(c.isNull(0))
+            assertTrue(c.isNull(1))
+            assertEquals(0, c.getInt(2))
+        }
+    }
+
+    @Test
+    fun `a fresh database and one upgraded from version ten have the same appointment columns`() {
+        createVersionTen()
+        val upgraded = Database(context).readableDatabase.let { db -> columnsOf("appointments", db).also { db.close() } }
+        Database.resetSharedInstanceForTesting()
+        context.deleteDatabase("callsheet.db")
+
+        val fresh = columnsOf("appointments", Database(context).readableDatabase)
+
+        assertTrue("calendar_ok_since" in fresh)
         assertEquals(fresh, upgraded)
     }
 

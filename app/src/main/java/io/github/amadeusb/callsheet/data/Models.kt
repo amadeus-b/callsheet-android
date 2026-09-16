@@ -205,6 +205,16 @@ data class AppointmentEntry(
     val seenTitle: String? = null,
     /** Waiting to go up. Read only: saving ignores it and always marks. */
     val dirty: Boolean = false,
+    /**
+     * When the read-back first looked for a visit's event in vain, in millis.
+     * Local, see Appointment.reconcileTracked. Saving clears it.
+     */
+    val missingSince: Long? = null,
+    /**
+     * When this device first saw the server confirm the visit (`ok`), in
+     * millis. Local, set by the sync; null is unknown, never „long ago".
+     */
+    val okSince: Long? = null,
 )
 
 /**

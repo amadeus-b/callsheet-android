@@ -42,13 +42,16 @@ object Rows {
      * `calendar_event_id` points into this device's calendar provider. The same
      * number on another device is a different event, or none. The
      * `calendar_seen_` columns record what this device last saw in its copy of
-     * the event — another device's copy may be ahead or behind. `event_uid` is
+     * the event — another device's copy may be ahead or behind, and
+     * `calendar_missing_since` and `calendar_ok_since` when it looked for a
+     * visit's event in vain and saw the visit confirmed. `event_uid` is
      * deliberately absent: the UID is the same event on every device carrying
      * the shared calendar, and that is what the other devices look it up by.
      */
     private val LOCAL_ONLY = setOf(
         "dirty", "contact_version", "calendar_event_id",
         "calendar_seen_starts_at", "calendar_seen_ends_at", "calendar_seen_location", "calendar_seen_title",
+        "calendar_missing_since", "calendar_ok_since",
     )
 
     /**

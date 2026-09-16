@@ -922,6 +922,96 @@ class SyncStoreTest {
         assertEquals(AppointmentKind.CALLBACK, applied.removed.single().kind)
     }
 
+    // --- when this device first saw a visit confirmed ------------------------
+
+    private fun besuchJson(id: String, zeit: String, state: String?, uid: String? = "abc@example.org") =
+        terminJson(id, zeit).put("kind", "visit")
+            .put("event_uid", uid ?: JSONObject.NULL)
+            .put("calendar_state", state ?: JSONObject.NULL).put("calendar_error", JSONObject.NULL)
+
+    private fun empfange(vararg rows: JSONObject) =
+        store.apply(leereAntwort().put("appointments", JSONArray(rows.toList())))
+
+    private fun momente(id: String): List<String?> =
+        zeile("SELECT calendar_missing_since, calendar_ok_since FROM appointments WHERE id = '$id'")
+
+    private fun setzeMomente(id: String, missing: Long?, ok: Long?) =
+        schreibe("UPDATE appointments SET calendar_missing_since = ${missing ?: "NULL"}, calendar_ok_since = ${ok ?: "NULL"} WHERE id = '$id'")
+
+    @Test
+    fun `a visit arriving confirmed is stamped with the moment this device saw it`() {
+        val before = System.currentTimeMillis()
+        empfange(besuchJson("A1", "2026-09-07T10:00:00+02:00", "ok"))
+        val after = System.currentTimeMillis()
+
+        val (missing, ok) = momente("A1")
+        assertNull(missing)
+        assertTrue(ok!!.toLong() in before..after)
+        assertEquals(listOf("0"), zeile("SELECT dirty FROM appointments WHERE id = 'A1'"))
+    }
+
+    @Test
+    fun `a visit arriving pending is not stamped`() {
+        empfange(besuchJson("A1", "2026-09-07T10:00:00+02:00", "pending", uid = null))
+
+        assertEquals(listOf(null, null), momente("A1"))
+    }
+
+    @Test
+    fun `a visit that stays confirmed keeps its moments through a newer row and a standstill`() {
+        einBesuch("A1", "2026-09-07T10:00:00+02:00", dirty = 0, state = "ok", uid = "abc@example.org")
+        setzeMomente("A1", missing = 1234L, ok = 5678L)
+
+        empfange(besuchJson("A1", "2026-09-07T11:00:00+02:00", "ok"))
+        assertEquals(listOf("1234", "5678"), momente("A1"))
+
+        empfange(besuchJson("A1", "2026-09-07T11:00:00+02:00", "ok"))
+        assertEquals(listOf("1234", "5678"), momente("A1"))
+    }
+
+    @Test
+    fun `a visit turning confirmed at a standstill is stamped`() {
+        einBesuch("A1", "2026-09-07T10:00:00+02:00", dirty = 0, state = "pending")
+
+        empfange(besuchJson("A1", "2026-09-07T10:00:00+02:00", "ok"))
+
+        assertTrue(momente("A1")[1] != null)
+    }
+
+    @Test
+    fun `a visit leaving confirmed forgets both moments`() {
+        einBesuch("A1", "2026-09-07T10:00:00+02:00", dirty = 0, state = "ok", uid = "abc@example.org")
+        setzeMomente("A1", missing = 1234L, ok = 5678L)
+
+        empfange(besuchJson("A1", "2026-09-07T10:00:00+02:00", "pending"))
+
+        assertEquals(listOf(null, null), momente("A1"))
+    }
+
+    @Test
+    fun `a visit with a new UID starts both moments again`() {
+        // Removed and back: the server made a new event.
+        einBesuch("A1", "2026-09-07T10:00:00+02:00", dirty = 0, state = "ok", uid = "abc@example.org")
+        setzeMomente("A1", missing = 1234L, ok = 5678L)
+
+        empfange(besuchJson("A1", "2026-09-07T11:00:00+02:00", "ok", uid = "def@example.org"))
+
+        val (missing, ok) = momente("A1")
+        assertNull(missing)
+        assertTrue(ok != null && ok != "5678")
+    }
+
+    @Test
+    fun `the moments never go up`() {
+        einBesuch("A1", "2026-09-07T10:00:00+02:00", dirty = 1, state = "ok", uid = "abc@example.org")
+        setzeMomente("A1", missing = 1234L, ok = 5678L)
+
+        val row = store.pending(500).getJSONArray("appointments").getJSONObject(0)
+
+        assertFalse(row.has("calendar_missing_since"))
+        assertFalse(row.has("calendar_ok_since"))
+    }
+
     private fun zahl(sql: String): Int =
         Database(ctx).readableDatabase.rawQuery(sql, null).use { if (it.moveToFirst()) it.getInt(0) else -1 }
 }

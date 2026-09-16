@@ -1016,6 +1016,8 @@ class Repository(context: Context) {
             if (entry.doneAt != null) put("done_at", entry.doneAt)
             put("updated_at", Clock.now())
             put("dirty", 1)
+            // Edited: waiting to go up, not read back — the count starts anew.
+            putNull("calendar_missing_since")
         }
         val db = helper.writableDatabase
         if (db.update("appointments", values, "id = ?", arrayOf(entry.id)) == 0) {
@@ -1044,6 +1046,18 @@ class Repository(context: Context) {
             put("calendar_seen_ends_at", if (eventId == null) null else seenEndsAt)
             put("calendar_seen_location", if (eventId == null) null else seenLocation)
             put("calendar_seen_title", if (eventId == null) null else seenTitle)
+        }
+        helper.writableDatabase.update("appointments", values, "id = ?", arrayOf(id))
+        notifyChanged()
+    }
+
+    /**
+     * Records since when the read-back has looked for a visit's event in vain
+     * — null once found or no longer counted. Local only, like [setCalendarLink].
+     */
+    suspend fun setCalendarMissingSince(id: String, millis: Long?) = withContext(Dispatchers.IO) {
+        val values = ContentValues().apply {
+            if (millis == null) putNull("calendar_missing_since") else put("calendar_missing_since", millis)
         }
         helper.writableDatabase.update("appointments", values, "id = ?", arrayOf(id))
         notifyChanged()
@@ -1301,6 +1315,8 @@ class Repository(context: Context) {
         calendarError = c.text("calendar_error"),
         seenTitle = c.text("calendar_seen_title"),
         dirty = c.int("dirty") == 1,
+        missingSince = c.long("calendar_missing_since"),
+        okSince = c.long("calendar_ok_since"),
     )
 
     private fun Cursor.text(column: String): String? {

@@ -174,4 +174,21 @@ class SyncSchemaTest {
         assertTrue(appointments.contains("attendees"))
         assertTrue(appointments.contains("attendees_notify"))
     }
+
+    @Test
+    fun `when a visit went missing and was confirmed here stays on the device`() {
+        val row = JSONObject().apply {
+            put("id", "A1")
+            put("calendar_missing_since", 1L)
+            put("calendar_ok_since", 2L)
+        }
+
+        val values = Rows.toValues(row, row.keys().asSequence().toSet())
+
+        assertFalse(values.containsKey("calendar_missing_since"))
+        assertFalse(values.containsKey("calendar_ok_since"))
+        val appointments = columns("appointments")
+        assertTrue(appointments.contains("calendar_missing_since"))
+        assertTrue(appointments.contains("calendar_ok_since"))
+    }
 }

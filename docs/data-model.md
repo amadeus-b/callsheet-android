@@ -140,6 +140,8 @@ attendees               TEXT              -- a visit's attendees, JSON array of 
 attendees_notify        INTEGER           -- 1 | 0 | NULL (read as 1): whether the last change to attendees notifies (schema 10)
 calendar_state          TEXT              -- server-owned: 'pending' | 'ok' | 'error'; NULL for callbacks (schema 8)
 calendar_error          TEXT              -- server-owned: the text behind 'error' (schema 8)
+calendar_missing_since  INTEGER           -- local, millis: since when a visit's event has been looked for in vain (schema 11)
+calendar_ok_since       INTEGER           -- local, millis: when this device first saw the state 'ok'; NULL = unknown (schema 11)
 dirty                   INTEGER NOT NULL DEFAULT 0
 ```
 
@@ -183,6 +185,16 @@ list alone only unless `attendees_notify` is 0. At a standstill the two columns
 are filled together or `attendees_notify` not at all. The migration carried a
 non-blank `invite_email` over as the only attendee, as the server's migration
 012 does, and marked nothing.
+
+Schema 11: a visit this device never saw in the calendar can notice that its
+event is gone. The sync stamps `calendar_ok_since` when a visit arrives or turns
+`ok`, or its UID changes, and empties it when the state leaves `ok`. The
+read-back counts a miss in `calendar_missing_since` (emptied when found, on
+editing, and with a new UID or a state other than `ok`). The visit counts as
+missing only after 30 minutes, and only when this device has found a visit
+whose `calendar_ok_since` is strictly later — kept as the device's proof in its
+own SharedPreferences file, `calendar_proof`. Both columns arrive empty with the
+migration; empty never counts. Neither travels.
 
 ### `business_addresses`
 

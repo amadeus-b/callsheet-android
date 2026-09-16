@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.update
 import io.github.amadeusb.callsheet.calendar.BusyTimes
 import io.github.amadeusb.callsheet.calendar.CalendarAccount
+import io.github.amadeusb.callsheet.calendar.CalendarProof
 import io.github.amadeusb.callsheet.calendar.CalendarStore
 import io.github.amadeusb.callsheet.calendar.EventFields
 import io.github.amadeusb.callsheet.calling.Agenda
@@ -177,10 +178,11 @@ data class State(
     val detailAppointments: List<AppointmentEntry> = emptyList(),
     /**
      * The shown business's visits the last read-back did not find in the
-     * calendar (Reconcile.MissingVisit). Not stored: the next opening decides
-     * again, and a found event takes its id out.
+     * calendar, by id, with how it found out (Reconcile.MissingVisit or
+     * Reconcile.MissingVisitUnseen — the latter asks before removing). Not
+     * stored: the next opening decides again, and a found event takes its id out.
      */
-    val detailMissingInCalendar: Set<String> = emptySet(),
+    val detailMissingInCalendar: Map<String, Reconcile> = emptyMap(),
     /** The business's addresses, main address first. */
     val detailAddresses: List<BusinessAddress> = emptyList(),
     /** When a dial attempt is up for choosing, the numbers hang here. */
@@ -261,6 +263,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val repo = Repository(application)
     private val preferences = Preferences(application)
+    private val calendarProof = CalendarProof(application)
     private val store = ContactStore(application, repo, preferences)
     private val syncStore = SyncStore(application)
     private val syncEngine = SyncEngine(syncStore, preferences)
@@ -552,7 +555,7 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             detailCalls = if (switching) emptyList() else _state.value.detailCalls,
             detailContacts = if (switching) emptyList() else _state.value.detailContacts,
             detailAppointments = if (switching) emptyList() else _state.value.detailAppointments,
-            detailMissingInCalendar = if (switching) emptySet() else _state.value.detailMissingInCalendar,
+            detailMissingInCalendar = if (switching) emptyMap() else _state.value.detailMissingInCalendar,
             detailAddresses = if (switching) emptyList() else _state.value.detailAddresses,
             statusSuggestion = if (switching) null else _state.value.statusSuggestion,
             followUpSuggestion = if (switching) null else _state.value.followUpSuggestion,
@@ -1547,17 +1550,30 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 return null
             }
         }
-        val outcome = Appointment.reconcile(
+        val tracked = Appointment.reconcileTracked(
             row = row,
             seen = Appointment.seenSlot(entry),
             event = event?.let { Slot(it.startMillis, it.endMillis, it.location, if (visit) it.title else null) },
             nowMillis = nowMillis,
             // First sight takes nothing, and a visit is never deleted — see Appointment.reconcile.
             visit = visit,
+            missingSince = entry.missingSince,
+            okSince = entry.okSince,
+            proof = calendarProof.latest,
         )
+        val outcome = tracked.outcome
         // After a sync nothing may change a row; recording what an event in step
         // holds is local and may.
         if (rowWinsOnly && outcome != Reconcile.UpdateEvent && outcome != Reconcile.InStep) return null
+
+        // A visit counts its misses and proves the calendar reaches this device
+        // only on opening its business — see Appointment.reconcileTracked.
+        if (visit && !rowWinsOnly) {
+            if (tracked.missingSince != entry.missingSince) repo.setCalendarMissingSince(entry.id, tracked.missingSince)
+            // Only ever raised: another read-back may have raised it since.
+            val proof = tracked.proof
+            if (proof != null && proof > (calendarProof.latest ?: Long.MIN_VALUE)) calendarProof.latest = proof
+        }
 
         // A row without a UID takes the one its event carries — a carried-over
         // appointment, or an event DAVx5 has uploaded since. A row that has one
@@ -1624,8 +1640,8 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             Reconcile.NotYetHere -> Unit
-            // Nothing deleted, nothing stored: reconcileAppointments reports it.
-            Reconcile.MissingVisit -> Unit
+            // Nothing deleted, only the count kept above: reconcileAppointments reports it.
+            Reconcile.MissingVisit, Reconcile.MissingVisitUnseen -> Unit
             Reconcile.DeletedInCalendar -> repo.deleteAppointment(entry.id)
             Reconcile.Unlink -> repo.setCalendarLink(entry.id, null, null, null, null)
         }
@@ -1671,7 +1687,9 @@ class CallsheetViewModel(application: Application) : AndroidViewModel(applicatio
                 // Replaced, not added to: an event found again takes its hint away.
                 // Nothing is stored — the next opening decides again.
                 if (stillShown()) {
-                    val missing = results.filter { it.second == Reconcile.MissingVisit }.map { it.first.id }.toSet()
+                    val missing = results
+                        .filter { it.second == Reconcile.MissingVisit || it.second == Reconcile.MissingVisitUnseen }
+                        .associate { it.first.id to it.second }
                     _state.update { it.copy(detailMissingInCalendar = missing) }
                 }
                 if (results.isEmpty()) return@launch

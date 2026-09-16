@@ -991,6 +991,34 @@ class RepositoryTest {
     }
 
     @Test
+    fun `the moment a visit went missing is written and read back without marking the row`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00"))
+        execute("UPDATE appointments SET dirty = 0, updated_at = '2026-09-07T10:00:00+02:00', calendar_ok_since = 5678 WHERE id = 'A-1'")
+
+        repo.setCalendarMissingSince("A-1", 1234L)
+
+        val stored = repo.appointment("A-1")!!
+        assertEquals(1234L, stored.missingSince)
+        assertEquals(5678L, stored.okSince)
+        assertFalse(stored.dirty)
+        assertEquals("2026-09-07T10:00:00+02:00", stored.updatedAt)
+
+        repo.setCalendarMissingSince("A-1", null)
+        assertNull(repo.appointment("A-1")!!.missingSince)
+    }
+
+    @Test
+    fun `editing a visit forgets when it went missing, not when it was confirmed`() = runTest {
+        repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00"))
+        execute("UPDATE appointments SET calendar_missing_since = 1234, calendar_ok_since = 5678 WHERE id = 'A-1'")
+
+        repo.saveAppointment(repo.appointment("A-1")!!.copy(startsAt = "2026-09-10T16:00:00+02:00"))
+
+        assertNull(repo.appointment("A-1")!!.missingSince)
+        assertEquals(5678L, repo.appointment("A-1")!!.okSince)
+    }
+
+    @Test
     fun `saving leaves this device's calendar link alone`() = runTest {
         repo.saveAppointment(visit("A-1", "t-1", "2026-09-10T14:00:00+02:00"))
         repo.setCalendarLink("A-1", 4711L, "2026-09-10T14:00:00+02:00", null, null)

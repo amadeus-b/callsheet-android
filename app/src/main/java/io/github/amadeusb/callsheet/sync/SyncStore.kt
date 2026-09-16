@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import io.github.amadeusb.callsheet.data.AddressRows
 import io.github.amadeusb.callsheet.data.AppointmentKind
 import io.github.amadeusb.callsheet.data.Addresses
+import io.github.amadeusb.callsheet.data.CalendarState
 import io.github.amadeusb.callsheet.data.Database
 import org.json.JSONArray
 import org.json.JSONObject
@@ -217,7 +218,10 @@ class SyncStore(context: Context) {
                 val rows = response.optJSONArray(table) ?: continue
                 for (i in 0 until rows.length()) {
                     val row = rows.getJSONObject(i)
-                    if (!applyRow(db, table, row, columnsByTable.getValue(table))) continue
+                    val before = if (table == "appointments") confirmation(db, row.getString("id")) else null
+                    val applied = applyRow(db, table, row, columnsByTable.getValue(table))
+                    if (table == "appointments") followConfirmation(db, row.getString("id"), before)
+                    if (!applied) continue
                     when (table) {
                         "appointments" -> written.add(row.getString("id"))
                         "businesses" -> searchStale.add(row.getString("place_id"))
@@ -407,6 +411,50 @@ class SyncStore(context: Context) {
         if (values.size() == 0) return false
         db.update("appointments", values, "id = ?", arrayOf(id))
         return true
+    }
+
+    /** A visit's calendar state and UID, with its two local moments. Null without the row. */
+    private data class Confirmation(val state: String?, val uid: String?, val missingSince: Long?, val okSince: Long?)
+
+    private fun confirmation(db: SQLiteDatabase, id: String): Confirmation? =
+        db.rawQuery(
+            "SELECT calendar_state, event_uid, calendar_missing_since, calendar_ok_since FROM appointments WHERE id = ?",
+            arrayOf(id),
+        ).use { c ->
+            if (!c.moveToFirst()) return null
+            Confirmation(
+                if (c.isNull(0)) null else c.getString(0),
+                if (c.isNull(1)) null else c.getString(1),
+                if (c.isNull(2)) null else c.getLong(2),
+                if (c.isNull(3)) null else c.getLong(3),
+            )
+        }
+
+    /**
+     * Keeps `calendar_ok_since` — when this device first saw the server
+     * confirm the visit — in step with what the sync wrote (see
+     * Appointment.reconcileTracked). Stamped with now when the state turns
+     * `ok` or the UID changes under it: removed and back, the server made a
+     * new event. Emptied when the state leaves `ok`. A row already `ok` keeps
+     * its moment, an unknown one included. `calendar_missing_since` goes with
+     * a new UID and with the state leaving `ok`: an old count would make the
+     * next miss a missing visit at once.
+     *
+     * Local only: no `updated_at`, no mark.
+     */
+    private fun followConfirmation(db: SQLiteDatabase, id: String, before: Confirmation?) {
+        val after = confirmation(db, id) ?: return
+        val newUid = before != null && before.uid != after.uid
+        val confirmed = after.state == CalendarState.OK.key
+        val values = ContentValues()
+        if ((newUid || !confirmed) && after.missingSince != null) values.putNull("calendar_missing_since")
+        when {
+            !confirmed -> if (after.okSince != null) values.putNull("calendar_ok_since")
+            before == null || before.state != after.state || newUid ->
+                values.put("calendar_ok_since", System.currentTimeMillis())
+        }
+        if (values.size() == 0) return
+        db.update("appointments", values, "id = ?", arrayOf(id))
     }
 
     private fun applyTombstone(db: SQLiteDatabase, stone: JSONObject, searchStale: MutableSet<String>): RemovedAppointment? {

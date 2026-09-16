@@ -115,11 +115,27 @@ sealed interface Reconcile {
     data object MissingVisit : Reconcile
 
     /**
+     * A visit never seen on this device, not found for longer than
+     * Appointment.MISSING_GRACE_MILLIS, while this device has found a visit
+     * confirmed later — so the calendar reached it after this one was
+     * confirmed. Like [MissingVisit], but less certain: removing it asks.
+     */
+    data object MissingVisitUnseen : Reconcile
+
+    /**
      * Seen before, gone now, appointment already past. Calendars clear out old
      * events on their own; that must not erase the record. Only the link goes.
      */
     data object Unlink : Reconcile
 }
+
+/**
+ * What a read-back decided, with what to remember for the next one: since
+ * when the event has been looked for in vain ([missingSince], null for found
+ * or not counted), and the device's proof — the latest confirmation among the
+ * visits it has found in the calendar.
+ */
+data class Reconciled(val outcome: Reconcile, val missingSince: Long?, val proof: Long?)
 
 /**
  * One line under a visit in the detail view: where it stands on its way into
@@ -177,6 +193,12 @@ object Appointment {
      * the calendar state down without another tap.
      */
     const val RESYNC_AFTER_SAVE_MILLIS: Long = 5_000L
+
+    /**
+     * How long a visit never seen here must stay unfound before it counts as
+     * missing — a second safeguard next to the proof, see [reconcileTracked].
+     */
+    const val MISSING_GRACE_MILLIS: Long = 30 * 60_000L
 
     /**
      * A visit's title when none was typed. The server builds the same text for
@@ -373,10 +395,12 @@ object Appointment {
      * it removes a piece of the record. „Termin entfernen" under a visit the
      * calendar no longer holds ([missing]) asks only when someone gets a
      * cancellation ([cancellationNotice]); without one nobody outside hears of
-     * it.
+     * it. Found missing without a seen slot ([unseen], see
+     * Reconcile.MissingVisitUnseen) it always asks: the removal cannot be taken
+     * back, and that road is the less certain one.
      */
-    fun removalAsks(entry: AppointmentEntry, missing: Boolean): Boolean =
-        !missing || cancellationNotice(entry) != null
+    fun removalAsks(entry: AppointmentEntry, missing: Boolean, unseen: Boolean = false): Boolean =
+        !missing || unseen || cancellationNotice(entry) != null
 
     /** The hint after a removal that did not ask: that it went, and the status it fell back to, if any. */
     fun removedHint(fallback: Status?): String =
@@ -591,6 +615,45 @@ object Appointment {
         if (seen == null) return if (visit) Reconcile.NotYetHere else Reconcile.TakeEvent(event)
         val onlyTheCalendarMoved = !sameSlot(event, seen) && sameSlot(row, seen)
         return if (onlyTheCalendarMoved) Reconcile.TakeEvent(event) else Reconcile.UpdateEvent
+    }
+
+    /**
+     * [reconcile], and for a visit never seen here the count that lets it
+     * notice its event is gone (Reconcile.MissingVisitUnseen).
+     *
+     * Not found is not missing: a device without the shared calendar finds
+     * nothing, ever, and DAVx5 may bring a new visit only hours later. So a
+     * visit counts as missing only when its event was looked for in vain before
+     * ([missingSince]), at least [MISSING_GRACE_MILLIS] ago, and this device
+     * has found a visit confirmed strictly later than this one ([proof] after
+     * [okSince]) — the calendar reached it after this visit was confirmed, or
+     * that visit would not be there. An unknown [okSince] is never missing.
+     *
+     * A found visit forgets its count and raises the proof to its [okSince]. A
+     * past one, a callback and one seen before are not counted.
+     */
+    fun reconcileTracked(
+        row: Slot,
+        seen: Slot?,
+        event: Slot?,
+        nowMillis: Long,
+        visit: Boolean,
+        missingSince: Long?,
+        okSince: Long?,
+        proof: Long?,
+    ): Reconciled {
+        val outcome = reconcile(row, seen, event, nowMillis, visit)
+        if (!visit) return Reconciled(outcome, null, proof)
+        if (event != null) {
+            val raised = if (okSince == null) proof else maxOf(proof ?: okSince, okSince)
+            return Reconciled(outcome, null, raised)
+        }
+        val ahead = (row.endMillis ?: row.startMillis) > nowMillis
+        if (!ahead || outcome != Reconcile.NotYetHere) return Reconciled(outcome, null, proof)
+        val since = missingSince ?: return Reconciled(outcome, nowMillis, proof)
+        val proven = okSince != null && proof != null && proof > okSince
+        val missing = proven && nowMillis - since >= MISSING_GRACE_MILLIS
+        return Reconciled(if (missing) Reconcile.MissingVisitUnseen else outcome, since, proof)
     }
 
     /**

@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.calling.Appointment
 import io.github.amadeusb.callsheet.calling.FollowUp
 import io.github.amadeusb.callsheet.calling.LegitimateInterest
+import io.github.amadeusb.callsheet.calling.Reconcile
 import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.BusinessAddress
 import io.github.amadeusb.callsheet.data.AppointmentEntry
@@ -86,8 +87,8 @@ fun BusinessDetailScreen(
     appointments: List<AppointmentEntry>,
     /** A sync server is set up; without one a visit never says it is on its way. */
     syncConfigured: Boolean,
-    /** Invited visits the read-back did not find in the calendar. See State.detailMissingInCalendar. */
-    missingInCalendar: Set<String>,
+    /** Visits the read-back did not find in the calendar, and how it found out. See State.detailMissingInCalendar. */
+    missingInCalendar: Map<String, Reconcile>,
     addresses: List<BusinessAddress>,
     noteFocus: Boolean,
     statusSuggestion: Status?,
@@ -730,7 +731,7 @@ private fun AppointmentsBlock(
     business: Business,
     appointments: List<AppointmentEntry>,
     syncConfigured: Boolean,
-    missingInCalendar: Set<String>,
+    missingInCalendar: Map<String, Reconcile>,
     contacts: List<Contact>,
     onSet: (String?) -> Unit,
     onRemove: (AppointmentEntry) -> Unit,
@@ -757,13 +758,13 @@ private fun AppointmentsBlock(
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        ahead.forEach { AppointmentItem(it, contacts, onSet, onRemove, onRemoveNow, onOpenUrl, syncConfigured, it.id in missingInCalendar) }
+        ahead.forEach { AppointmentItem(it, contacts, onSet, onRemove, onRemoveNow, onOpenUrl, syncConfigured, missingInCalendar[it.id]) }
 
         if (past.isNotEmpty()) {
             TextButton(onClick = { showPast = !showPast }) {
                 Text("Frühere Termine (${past.size})")
             }
-            if (showPast) past.forEach { AppointmentItem(it, contacts, onSet, onRemove, onRemoveNow, onOpenUrl, syncConfigured, it.id in missingInCalendar) }
+            if (showPast) past.forEach { AppointmentItem(it, contacts, onSet, onRemove, onRemoveNow, onOpenUrl, syncConfigured, missingInCalendar[it.id]) }
         }
 
         Spacer(Modifier.height(8.dp))
@@ -784,7 +785,8 @@ private fun AppointmentItem(
     onRemoveNow: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
     syncConfigured: Boolean,
-    missing: Boolean,
+    /** How the read-back found this visit missing from the calendar; null while it is not. */
+    missing: Reconcile?,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Text(
@@ -813,7 +815,7 @@ private fun AppointmentItem(
             )
         }
         // Where the visit stands on its way into the calendar — the server puts it there.
-        Appointment.calendarLine(entry, syncConfigured, missing)?.let { line ->
+        Appointment.calendarLine(entry, syncConfigured, missing != null)?.let { line ->
             Text(
                 text = line.text,
                 style = MaterialTheme.typography.bodySmall,
@@ -822,10 +824,11 @@ private fun AppointmentItem(
             // Not found: removing it is offered, never done on its own. With an
             // invitation it goes through the dialog, which names who gets the
             // cancellation; without one nobody outside hears of it, and it goes
-            // at once.
+            // at once — unless it was found missing without a seen slot.
             if (line.offersRemoval) {
                 TextButton(onClick = {
-                    if (Appointment.removalAsks(entry, missing = true)) onRemove(entry) else onRemoveNow(entry.id)
+                    val unseen = missing == Reconcile.MissingVisitUnseen
+                    if (Appointment.removalAsks(entry, missing = true, unseen = unseen)) onRemove(entry) else onRemoveNow(entry.id)
                 }) { Text("Termin entfernen") }
             }
         }

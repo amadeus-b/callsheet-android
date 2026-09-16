@@ -581,6 +581,164 @@ class AppointmentTest {
         )
     }
 
+    // --- reconcile: a visit gone without a seen slot, as a sequence ----------
+
+    // Visit B is confirmed at 10:01 the day before; A days earlier.
+    private val bOkSince = instant("2026-09-09T10:01:00+02:00")
+    private val aOkSince = instant("2026-09-06T09:00:00+02:00")
+    private fun at(time: String) = instant("2026-09-09T${time}:00+02:00")
+
+    /** One read-back of an unseen visit; the remembered values are carried on by the caller. */
+    private fun track(
+        now: Long,
+        missingSince: Long?,
+        proof: Long?,
+        event: Slot? = null,
+        row: Slot = planned,
+        okSince: Long? = bOkSince,
+        visit: Boolean = true,
+    ) = Appointment.reconcileTracked(
+        row = row, seen = null, event = event, nowMillis = now, visit = visit,
+        missingSince = missingSince, okSince = okSince, proof = proof,
+    )
+
+    @Test
+    fun `a fresh visit not found yet is remembered as missing, nothing more`() {
+        val first = track(at("10:02"), missingSince = null, proof = null)
+
+        assertEquals(Reconcile.NotYetHere, first.outcome)
+        assertEquals(at("10:02"), first.missingSince)
+        assertNull(first.proof)
+    }
+
+    @Test
+    fun `within the grace time an unseen visit stays not yet here`() {
+        val first = track(at("10:02"), missingSince = null, proof = at("11:00"))
+        val second = track(at("10:10"), first.missingSince, first.proof)
+
+        assertEquals(Reconcile.NotYetHere, second.outcome)
+        assertEquals(at("10:02"), second.missingSince)
+    }
+
+    @Test
+    fun `without proof that this device gets the calendar a visit is never missing`() {
+        // A device without the shared calendar finds nothing, ever.
+        var last = track(at("10:02"), missingSince = null, proof = null)
+        for (time in listOf("11:00", "15:00", "23:00")) {
+            last = track(at(time), last.missingSince, last.proof)
+            assertEquals(Reconcile.NotYetHere, last.outcome)
+        }
+    }
+
+    @Test
+    fun `proof confirmed before the visit proves nothing`() {
+        // DAVx5 may not have run since B was confirmed.
+        val first = track(at("10:02"), missingSince = null, proof = aOkSince)
+        val second = track(at("11:00"), first.missingSince, first.proof)
+
+        assertEquals(Reconcile.NotYetHere, second.outcome)
+    }
+
+    @Test
+    fun `proof confirmed after the visit makes it missing once the grace time is over`() {
+        val first = track(at("10:02"), missingSince = null, proof = at("10:05"))
+        val second = track(at("10:40"), first.missingSince, first.proof)
+
+        assertEquals(Reconcile.MissingVisitUnseen, second.outcome)
+        assertEquals(at("10:02"), second.missingSince)
+    }
+
+    @Test
+    fun `proof confirmed at the same moment proves nothing`() {
+        // After a new install every visit gets the same moment.
+        val first = track(at("10:02"), missingSince = null, proof = bOkSince)
+        val second = track(at("11:00"), first.missingSince, first.proof)
+
+        assertEquals(Reconcile.NotYetHere, second.outcome)
+    }
+
+    @Test
+    fun `finding an older visit in between proves nothing about a newer one`() {
+        // A has been in the calendar for days, B was confirmed at 10:01 and not delivered.
+        val b1 = track(at("10:02"), missingSince = null, proof = null)
+        val a = track(at("10:30"), missingSince = null, proof = b1.proof, event = planned, okSince = aOkSince)
+        assertEquals(aOkSince, a.proof)
+        val b2 = track(at("10:40"), b1.missingSince, a.proof)
+
+        assertEquals(Reconcile.NotYetHere, b2.outcome)
+    }
+
+    @Test
+    fun `a visit that differed on first sight notices when its event goes`() {
+        val proof = at("10:05")
+        val differing = track(at("10:02"), missingSince = null, proof = proof, event = office)
+        assertEquals(Reconcile.NotYetHere, differing.outcome)
+        assertNull(differing.missingSince)
+
+        val gone = track(at("10:10"), differing.missingSince, differing.proof)
+        val later = track(at("10:50"), gone.missingSince, gone.proof)
+
+        assertEquals(Reconcile.MissingVisitUnseen, later.outcome)
+    }
+
+    @Test
+    fun `an event found in between starts the count again and raises the proof`() {
+        val first = track(at("10:02"), missingSince = null, proof = aOkSince)
+        val found = track(at("10:40"), first.missingSince, first.proof, event = planned)
+
+        assertEquals(Reconcile.InStep, found.outcome)
+        assertNull(found.missingSince)
+        assertEquals(bOkSince, found.proof)
+
+        val again = track(at("11:30"), found.missingSince, found.proof)
+        assertEquals(Reconcile.NotYetHere, again.outcome)
+        assertEquals(at("11:30"), again.missingSince)
+    }
+
+    @Test
+    fun `the proof never falls and an unknown confirmation does not raise it`() {
+        assertEquals(at("12:00"), track(at("12:30"), null, at("12:00"), event = planned).proof)
+        assertEquals(aOkSince, track(at("12:30"), null, aOkSince, event = planned, okSince = null).proof)
+        assertNull(track(at("12:30"), null, null, event = planned, okSince = null).proof)
+    }
+
+    @Test
+    fun `a visit whose confirmation this device never saw is never missing`() {
+        // Right after the migration: empty is unknown, never zero.
+        val first = track(at("10:02"), missingSince = null, proof = at("12:00"), okSince = null)
+        val second = track(at("11:00"), first.missingSince, first.proof, okSince = null)
+
+        assertEquals(Reconcile.NotYetHere, second.outcome)
+    }
+
+    @Test
+    fun `a past visit is not counted and forgets its count`() {
+        val result = track(dayAfter, missingSince = at("10:02"), proof = at("12:00"))
+
+        assertEquals(Reconcile.NotYetHere, result.outcome)
+        assertNull(result.missingSince)
+    }
+
+    @Test
+    fun `a visit seen before is missing at once, as before`() {
+        val result = Appointment.reconcileTracked(
+            row = planned, seen = planned, event = null, nowMillis = dayBefore, visit = true,
+            missingSince = null, okSince = null, proof = null,
+        )
+
+        assertEquals(Reconcile.MissingVisit, result.outcome)
+        assertNull(result.missingSince)
+    }
+
+    @Test
+    fun `a callback is not counted`() {
+        val result = track(at("11:00"), missingSince = at("10:02"), proof = at("12:00"), visit = false)
+
+        assertEquals(Reconcile.NotYetHere, result.outcome)
+        assertNull(result.missingSince)
+        assertEquals(at("12:00"), result.proof)
+    }
+
     @Test
     fun `the visit rules leave a callback alone`() {
         assertEquals(Reconcile.TakeEvent(planned), Appointment.reconcile(row = later, seen = null, event = planned, nowMillis = dayBefore))
@@ -1124,6 +1282,18 @@ class AppointmentTest {
         // The ordinary „Entfernen" always asks: it removes a piece of the record.
         assertTrue(Appointment.removalAsks(visit, missing = false))
         assertTrue(Appointment.removalAsks(visit.copy(kind = AppointmentKind.CALLBACK), missing = false))
+    }
+
+    @Test
+    fun `removing a visit found missing without a seen slot always asks`() {
+        val visit = entry("A-1", "2026-09-10T14:00:00+02:00")
+        val invited = visit.copy(attendees = listOf("test@example.org"))
+
+        assertTrue(Appointment.removalAsks(visit, missing = true, unseen = true))
+        assertTrue(Appointment.removalAsks(invited, missing = true, unseen = true))
+        // Found missing over the seen slot: as before.
+        assertFalse(Appointment.removalAsks(visit, missing = true, unseen = false))
+        assertTrue(Appointment.removalAsks(invited, missing = true, unseen = false))
     }
 
     @Test
