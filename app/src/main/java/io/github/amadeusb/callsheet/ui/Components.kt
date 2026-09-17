@@ -43,6 +43,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.NumberPicker
+import io.github.amadeusb.callsheet.data.Addresses
 import io.github.amadeusb.callsheet.data.Business
 import io.github.amadeusb.callsheet.data.Status
 import io.github.amadeusb.callsheet.data.DialTarget
@@ -123,6 +124,7 @@ fun BusinessRow(
             val secondLine = listOfNotNull(
                 business.industry?.takeIf { it.isNotBlank() },
                 business.city?.takeIf { it.isNotBlank() },
+                Addresses.driveLine(business.driveMeters, business.driveSeconds),
             ).joinToString(" · ")
             if (secondLine.isNotBlank()) {
                 Text(

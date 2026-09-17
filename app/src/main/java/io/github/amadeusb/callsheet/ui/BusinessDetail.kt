@@ -584,6 +584,15 @@ private fun MasterData(
                 DataRow(address.label?.trim()?.ifEmpty { null } ?: "Anschrift", line) {
                     geoUri(business.name, address)?.let(onOpenUrl)
                 }
+                // Not clickable: the address above opens the map.
+                Addresses.driveLine(address.driveMeters, address.driveSeconds)?.let { drive ->
+                    Text(
+                        text = drive,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 8.dp),
+                    )
+                }
             }
         }
         TextButton(
