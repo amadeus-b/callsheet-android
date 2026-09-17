@@ -4,6 +4,13 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.7.1
+
+- **Website and email at a glance.** The list shows a globe behind the name
+  when a website is known and an envelope when an email address is — the
+  business's own or one of its contacts'. Nothing is shown for what is
+  missing.
+
 ## 1.7.0
 
 - **Distance and driving time.** The list shows „Branche · Ort · 23 km · 21 min"

@@ -42,6 +42,8 @@ data class Business(
      * list queries fill this in; everywhere else it stays 0.
      */
     val additionalNumbers: Int = 0,
+    /** How many email addresses hang off the contacts. Only the list queries fill this in. */
+    val contactEmails: Int = 0,
     /** The master data columns changed by hand (`edited_fields`, see MasterData). */
     val editedFields: Set<String> = emptySet(),
     /** Distance and driving time of the main address, for the lists. See Addresses.driveLine. */
@@ -51,6 +53,14 @@ data class Business(
     /** Whether any number at all can be dialled — the main one or a contact's. */
     val hasNumber: Boolean
         get() = !phone.isNullOrBlank() || additionalNumbers > 0
+
+    /** Whether the business has a website, for the icon in the lists. */
+    val hasWebsite: Boolean
+        get() = !website.isNullOrBlank()
+
+    /** Whether any email address is known — the business's own or a contact's. */
+    val hasEmail: Boolean
+        get() = !email.isNullOrBlank() || contactEmails > 0
 }
 
 /**

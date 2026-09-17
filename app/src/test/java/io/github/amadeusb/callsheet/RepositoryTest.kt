@@ -12,6 +12,7 @@ import io.github.amadeusb.callsheet.data.CalendarState
 import io.github.amadeusb.callsheet.data.CallEntry
 import io.github.amadeusb.callsheet.data.ContactDraft
 import io.github.amadeusb.callsheet.data.Database
+import io.github.amadeusb.callsheet.data.EmailDraft
 import io.github.amadeusb.callsheet.data.PhoneDraft
 import io.github.amadeusb.callsheet.data.PhoneType
 import io.github.amadeusb.callsheet.data.EntryKind
@@ -537,6 +538,25 @@ class RepositoryTest {
         val business = repo.list(withoutNumber).single { it.placeId == "P5" }
         assertEquals(1, business.additionalNumbers)
         assertTrue(business.hasNumber)
+    }
+
+    @Test
+    fun `the list knows a contact contributes an email address`() = runTest {
+        import(FIRST_IMPORT)
+        val all = Filter(status = emptySet(), onlyTargets = false)
+        assertFalse(repo.list(all).single { it.placeId == "P5" }.hasEmail)
+
+        repo.saveContact(
+            ContactDraft(
+                placeId = "P5",
+                name = "Frau Beispiel",
+                emails = listOf(EmailDraft(email = "beispiel@example.de")),
+            )
+        ).getOrThrow()
+
+        val business = repo.list(all).single { it.placeId == "P5" }
+        assertEquals(1, business.contactEmails)
+        assertTrue(business.hasEmail)
     }
 
     @Test

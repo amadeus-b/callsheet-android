@@ -242,7 +242,7 @@ class Repository(context: Context) {
     /** The work list for a filter, ordered by industry, city, name. Blocked businesses excluded. */
     suspend fun list(filter: Filter): List<Business> = withContext(Dispatchers.IO) {
         val (where, args) = condition(filter)
-        val sql = "SELECT b.*, $NUMBERS_SUBQUERY, $MAIN_CITY_SUBQUERY FROM businesses b WHERE $where " +
+        val sql = "SELECT b.*, $NUMBERS_SUBQUERY, $EMAILS_SUBQUERY, $MAIN_CITY_SUBQUERY FROM businesses b WHERE $where " +
             "ORDER BY b.industry IS NULL, b.industry COLLATE NOCASE, main_city COLLATE NOCASE, b.name COLLATE NOCASE"
         helper.readableDatabase.rawQuery(sql, args).use { c -> allBusinesses(c) }
     }
@@ -338,7 +338,7 @@ class Repository(context: Context) {
         return appointments.mapNotNull { appointment ->
             val business = businesses.getOrPut(appointment.placeId) {
                 db.rawQuery(
-                    "SELECT b.*, $NUMBERS_SUBQUERY, $MAIN_CITY_SUBQUERY FROM businesses b WHERE b.place_id = ?",
+                    "SELECT b.*, $NUMBERS_SUBQUERY, $EMAILS_SUBQUERY, $MAIN_CITY_SUBQUERY FROM businesses b WHERE b.place_id = ?",
                     arrayOf(appointment.placeId),
                 ).use { c -> if (c.moveToFirst()) fromCursor(c) else null }
             }
@@ -1277,6 +1277,7 @@ class Repository(context: Context) {
         note = c.text("note"),
         updatedAt = c.text("updated_at") ?: "",
         additionalNumbers = c.int("additional_numbers") ?: 0,
+        contactEmails = c.int("contact_emails") ?: 0,
         editedFields = MasterData.parse(c.text("edited_fields")),
         driveMeters = c.int("main_drive_meters"),
         driveSeconds = c.int("main_drive_seconds"),
@@ -1378,6 +1379,12 @@ class Repository(context: Context) {
             "(SELECT COUNT(*) FROM contact_numbers n " +
                 "JOIN contacts a ON a.id = n.contact_id " +
                 "WHERE a.place_id = b.place_id AND n.kind <> 'fax') AS additional_numbers"
+
+        /** Counts the contacts' email addresses, for the mail icon in the lists. */
+        const val EMAILS_SUBQUERY =
+            "(SELECT COUNT(*) FROM contact_emails e " +
+                "JOIN contacts a ON a.id = e.contact_id " +
+                "WHERE a.place_id = b.place_id) AS contact_emails"
 
         private const val MAIN_ADDRESS_ORDER =
             "FROM business_addresses ba WHERE ba.place_id = b.place_id ORDER BY ba.position IS NULL, ba.position, ba.id LIMIT 1"
