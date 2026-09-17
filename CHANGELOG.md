@@ -4,6 +4,17 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.7.0
+
+- **Distance and driving time.** The list shows „Branche · Ort · 23 km · 21 min"
+  for the main address, the detail view a line under every address. The
+  values come from the server, computed once for every address with
+  coordinates; an address without them shows nothing.
+- **Changing an address clears its values**, as it clears the coordinates.
+  An address added later has none.
+- The first sync after the update fetches everything once more, so the values
+  arrive on this phone.
+
 ## 1.6.0
 
 - **New mail template.** The mail dialog starts from a revised text that
