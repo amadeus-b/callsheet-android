@@ -804,6 +804,50 @@ class MigrationTest {
         assertEquals(fresh, upgraded)
     }
 
+    // --- from version 11, the road 1.6.0 devices are on -----------------------
+
+    private fun createVersionEleven() {
+        createVersionTen()
+        val db = context.openOrCreateDatabase("callsheet.db", 0, null)
+        db.execSQL("ALTER TABLE appointments ADD COLUMN calendar_missing_since INTEGER")
+        db.execSQL("ALTER TABLE appointments ADD COLUMN calendar_ok_since INTEGER")
+        db.execSQL(
+            "INSERT INTO business_addresses (id, place_id, city, position, updated_at, dirty) " +
+                "VALUES ('A1', 'alt-1', 'Musterstadt', 0, '2026-09-07T10:00:00+02:00', 0)"
+        )
+        db.version = 11
+        db.close()
+    }
+
+    @Test
+    fun `an upgrade from version eleven adds the drive time empty and marks nothing`() {
+        createVersionEleven()
+
+        val db = Database(context).readableDatabase
+
+        db.rawQuery("SELECT drive_meters, drive_seconds, dirty FROM business_addresses", null).use { c ->
+            assertTrue(c.moveToFirst())
+            do {
+                assertTrue(c.isNull(0))
+                assertTrue(c.isNull(1))
+                assertEquals(0, c.getInt(2))
+            } while (c.moveToNext())
+        }
+    }
+
+    @Test
+    fun `a fresh database and one upgraded from version eleven have the same address columns`() {
+        createVersionEleven()
+        val upgraded = Database(context).readableDatabase.let { db -> columnsOf("business_addresses", db).also { db.close() } }
+        Database.resetSharedInstanceForTesting()
+        context.deleteDatabase("callsheet.db")
+
+        val fresh = columnsOf("business_addresses", Database(context).readableDatabase)
+
+        assertTrue("drive_seconds" in fresh)
+        assertEquals(fresh, upgraded)
+    }
+
     // --- and a database that never had to migrate at all ---------------------
 
     @Test

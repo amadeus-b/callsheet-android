@@ -145,7 +145,7 @@ class SyncSchemaTest {
     @Test
     fun `business addresses, a contact's address and the removed main addresses have their columns`() {
         assertEquals(
-            setOf("id", "place_id", "label", "street", "postal_code", "city", "latitude", "longitude", "position", "updated_at", "dirty"),
+            setOf("id", "place_id", "label", "street", "postal_code", "city", "latitude", "longitude", "position", "drive_meters", "drive_seconds", "updated_at", "dirty"),
             columns("business_addresses"),
         )
         assertTrue(columns("contacts").contains("address_id"))

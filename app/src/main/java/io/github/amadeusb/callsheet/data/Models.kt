@@ -72,6 +72,10 @@ data class BusinessAddress(
     val longitude: Double? = null,
     /** Null reads as last. */
     val position: Int? = null,
+    /** Road distance from the office in metres, from the server. Cleared when the address changes. */
+    val driveMeters: Int? = null,
+    /** Driving time from the office in seconds, from the server. Cleared when the address changes. */
+    val driveSeconds: Int? = null,
 ) {
     /** Street, postal code and city on one line. Null when nothing is known. */
     val oneLine: String?

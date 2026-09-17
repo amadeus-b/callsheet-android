@@ -1284,6 +1284,8 @@ class Repository(context: Context) {
         latitude = c.decimal("latitude"),
         longitude = c.decimal("longitude"),
         position = c.int("position"),
+        driveMeters = c.int("drive_meters"),
+        driveSeconds = c.int("drive_seconds"),
     )
 
     private fun allAppointments(c: Cursor): List<AppointmentEntry> {

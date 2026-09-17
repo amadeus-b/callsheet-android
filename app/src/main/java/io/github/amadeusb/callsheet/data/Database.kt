@@ -296,6 +296,13 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
             // an unknown confirmation never makes a visit missing.
             for (sql in COLUMNS_APPOINTMENTS_11) db.execSQL(sql)
         }
+        if (old in 7..11) {
+            // Nothing to carry over and nothing to mark: the server fills the
+            // values, and a sync after this version fetches them (see
+            // Preferences.refetchedForDriveTimes). Below 7, TABLE_ADDRESSES
+            // above already creates business_addresses with these columns.
+            for (sql in COLUMNS_ADDRESSES_12) db.execSQL(sql)
+        }
     }
 
     /**
@@ -326,7 +333,7 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
 
     companion object {
         const val NAME = "callsheet.db"
-        const val VERSION = 11
+        const val VERSION = 12
 
         @Volatile
         private var shared: Database? = null
@@ -484,6 +491,8 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
                 latitude    REAL,
                 longitude   REAL,
                 position    INTEGER,
+                drive_meters  INTEGER,
+                drive_seconds INTEGER,
                 updated_at  TEXT NOT NULL,
                 dirty       INTEGER NOT NULL DEFAULT 0
             )
@@ -563,6 +572,12 @@ class Database(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION
         private val COLUMNS_APPOINTMENTS_11 = listOf(
             "ALTER TABLE appointments ADD COLUMN calendar_missing_since INTEGER",
             "ALTER TABLE appointments ADD COLUMN calendar_ok_since INTEGER",
+        )
+
+        /** Schema 12: road distance and driving time from the office, written by the server. */
+        private val COLUMNS_ADDRESSES_12 = listOf(
+            "ALTER TABLE business_addresses ADD COLUMN drive_meters INTEGER",
+            "ALTER TABLE business_addresses ADD COLUMN drive_seconds INTEGER",
         )
 
         /**
