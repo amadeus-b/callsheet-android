@@ -219,6 +219,9 @@ class Repository(context: Context) {
             val same = stored.street == s.street && stored.postalCode == s.postalCode && stored.city == s.city &&
                 stored.latitude == s.latitude && stored.longitude == s.longitude
             if (same) return false
+            // The drive time belonged to the address that was there.
+            values.putNull("drive_meters")
+            values.putNull("drive_seconds")
             db.update("business_addresses", values, "id = ?", arrayOf(id))
             return true
         }
@@ -871,8 +874,8 @@ class Repository(context: Context) {
      * out, label or not.
      *
      * Only rows that changed are stamped and marked; a moved position counts.
-     * Changing street, postal code or city clears the coordinates — they
-     * belonged to the old address. A row no longer in [drafts] is removed with a
+     * Changing street, postal code or city clears the coordinates and the drive
+     * time — they belonged to the old address. A row no longer in [drafts] is removed with a
      * tombstone, the contacts assigned to it lose the assignment and are marked,
      * and a removed `main-` row is remembered so a re-import leaves it out.
      */
@@ -923,6 +926,9 @@ class Repository(context: Context) {
                         if (moved) {
                             putNull("latitude")
                             putNull("longitude")
+                            // Distance and time belonged to the old address too.
+                            putNull("drive_meters")
+                            putNull("drive_seconds")
                         }
                         put("position", index)
                         put("updated_at", now)

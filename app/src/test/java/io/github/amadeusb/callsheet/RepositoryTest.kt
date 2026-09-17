@@ -1339,6 +1339,48 @@ class RepositoryTest {
     }
 
     @Test
+    fun `changing the street clears the drive time, changing only the label keeps it`() = runTest {
+        val (head, branch) = twoAddresses()
+        execute("UPDATE business_addresses SET drive_meters = 23400, drive_seconds = 1260")
+
+        repo.saveAddresses(
+            "P1",
+            Addresses.drafts(listOf(head, branch)).let { drafts ->
+                listOf(drafts[0].copy(label = "Hauptsitz"), drafts[1].copy(street = "Hafenstraße 7"))
+            },
+        )
+
+        val after = repo.addresses("P1")
+        assertEquals(23400, after[0].driveMeters)
+        assertEquals(1260, after[0].driveSeconds)
+        assertNull(after[1].driveMeters)
+        assertNull(after[1].driveSeconds)
+    }
+
+    @Test
+    fun `a re-import that moves the main address clears its drive time`() = runTest {
+        import(FIRST_IMPORT)
+        execute("UPDATE business_addresses SET drive_meters = 23400, drive_seconds = 1260 WHERE id = 'main-P1'")
+
+        import(FIRST_IMPORT.replace("Musterweg 1", "Musterweg 3"))
+
+        val main = repo.addresses("P1").single { it.id == "main-P1" }
+        assertEquals("Musterweg 3", main.street)
+        assertNull(main.driveMeters)
+        assertNull(main.driveSeconds)
+    }
+
+    @Test
+    fun `an unchanged re-import keeps the drive time`() = runTest {
+        import(FIRST_IMPORT)
+        execute("UPDATE business_addresses SET drive_meters = 23400, drive_seconds = 1260 WHERE id = 'main-P1'")
+
+        import(FIRST_IMPORT)
+
+        assertEquals(1260, repo.addresses("P1").single { it.id == "main-P1" }.driveSeconds)
+    }
+
+    @Test
     fun `saved addresses keep the order given, blank rows are left out, unchanged rows stay unmarked`() = runTest {
         import(FIRST_IMPORT)
         execute("UPDATE business_addresses SET dirty = 0")
