@@ -71,6 +71,19 @@ object Addresses {
             )
         }
 
+    /**
+     * Distance and driving time from the office on one line, „23 km · 21 min".
+     * Null unless both are known.
+     */
+    fun driveLine(meters: Int?, seconds: Int?): String? {
+        if (meters == null || seconds == null) return null
+        val km = Math.round(meters / 1000.0)
+        val distance = if (meters < 500) "< 1 km" else "$km km"
+        val minutes = maxOf(1L, Math.round(seconds / 60.0))
+        val time = if (minutes < 60) "$minutes min" else "${minutes / 60} h ${"%02d".format(minutes % 60)} min"
+        return "$distance · $time"
+    }
+
     /** „Als Hauptadresse": the row at [index] moves to the top, the others keep their order. */
     fun makeMain(drafts: List<AddressDraft>, index: Int): List<AddressDraft> {
         if (index !in drafts.indices) return drafts

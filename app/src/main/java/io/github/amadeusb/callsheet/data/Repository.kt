@@ -1278,6 +1278,8 @@ class Repository(context: Context) {
         updatedAt = c.text("updated_at") ?: "",
         additionalNumbers = c.int("additional_numbers") ?: 0,
         editedFields = MasterData.parse(c.text("edited_fields")),
+        driveMeters = c.int("main_drive_meters"),
+        driveSeconds = c.int("main_drive_seconds"),
     )
 
     private fun addressFromCursor(c: Cursor): BusinessAddress = BusinessAddress(
@@ -1377,12 +1379,17 @@ class Repository(context: Context) {
                 "JOIN contacts a ON a.id = n.contact_id " +
                 "WHERE a.place_id = b.place_id AND n.kind <> 'fax') AS additional_numbers"
 
+        private const val MAIN_ADDRESS_ORDER =
+            "FROM business_addresses ba WHERE ba.place_id = b.place_id ORDER BY ba.position IS NULL, ba.position, ba.id LIMIT 1"
+
         /**
          * The city of the business's main address — what the list shows and
-         * sorts by. The business's own `city` column is no longer written.
+         * sorts by — plus its distance and driving time, see fromCursor. The
+         * business's own `city` column is no longer written.
          */
         const val MAIN_CITY_SUBQUERY =
-            "(SELECT ba.city FROM business_addresses ba WHERE ba.place_id = b.place_id " +
-                "ORDER BY ba.position IS NULL, ba.position, ba.id LIMIT 1) AS main_city"
+            "(SELECT ba.city $MAIN_ADDRESS_ORDER) AS main_city, " +
+                "(SELECT ba.drive_meters $MAIN_ADDRESS_ORDER) AS main_drive_meters, " +
+                "(SELECT ba.drive_seconds $MAIN_ADDRESS_ORDER) AS main_drive_seconds"
     }
 }

@@ -1358,6 +1358,19 @@ class RepositoryTest {
     }
 
     @Test
+    fun `the list carries the main address's drive time`() = runTest {
+        twoAddresses()
+        execute("UPDATE business_addresses SET drive_meters = 23400, drive_seconds = 1260 WHERE id = 'main-P1'")
+        execute("UPDATE business_addresses SET drive_meters = 99000, drive_seconds = 5000 WHERE id <> 'main-P1'")
+
+        val listed = repo.list(Filter(status = emptySet(), onlyTargets = false)).single { it.placeId == "P1" }
+
+        assertEquals(23400, listed.driveMeters)
+        assertEquals(1260, listed.driveSeconds)
+        assertEquals(1260, repo.business("P1")!!.driveSeconds)
+    }
+
+    @Test
     fun `a re-import that moves the main address clears its drive time`() = runTest {
         import(FIRST_IMPORT)
         execute("UPDATE business_addresses SET drive_meters = 23400, drive_seconds = 1260 WHERE id = 'main-P1'")

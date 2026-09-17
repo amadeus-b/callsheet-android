@@ -44,6 +44,9 @@ data class Business(
     val additionalNumbers: Int = 0,
     /** The master data columns changed by hand (`edited_fields`, see MasterData). */
     val editedFields: Set<String> = emptySet(),
+    /** Distance and driving time of the main address, for the lists. See Addresses.driveLine. */
+    val driveMeters: Int? = null,
+    val driveSeconds: Int? = null,
 ) {
     /** Whether any number at all can be dialled — the main one or a contact's. */
     val hasNumber: Boolean

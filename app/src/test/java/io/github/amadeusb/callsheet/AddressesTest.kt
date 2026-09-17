@@ -101,4 +101,28 @@ class AddressesTest {
     fun `the main id carries the place id`() {
         assertEquals("main-P1", Addresses.mainId("P1"))
     }
+
+    @Test
+    fun `the drive line rounds kilometres and minutes`() {
+        assertEquals("23 km · 21 min", Addresses.driveLine(23_400, 1_260))
+        assertEquals("24 km · 22 min", Addresses.driveLine(23_500, 1_290))
+    }
+
+    @Test
+    fun `the drive line keeps short trips readable`() {
+        assertEquals("< 1 km · 1 min", Addresses.driveLine(400, 20))
+        assertEquals("1 km · 1 min", Addresses.driveLine(999, 59))
+    }
+
+    @Test
+    fun `the drive line shows hours from sixty minutes on`() {
+        assertEquals("98 km · 1 h 05 min", Addresses.driveLine(98_000, 3_900))
+        assertEquals("80 km · 1 h 00 min", Addresses.driveLine(80_000, 3_590))
+    }
+
+    @Test
+    fun `no drive line without both values`() {
+        assertNull(Addresses.driveLine(null, 1_260))
+        assertNull(Addresses.driveLine(23_400, null))
+    }
 }
