@@ -4,6 +4,12 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.7.2
+
+- **Server sync as an icon.** The „Server abgleichen" button in the top bar
+  is now a refresh icon; while a sync runs, a small spinner takes its place.
+  Screen readers still announce „Server abgleichen".
+
 ## 1.7.1
 
 - **Website and email at a glance.** The list shows a globe behind the name

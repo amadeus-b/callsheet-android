@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,7 +23,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -34,7 +36,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -83,16 +84,20 @@ fun WorkListScreen(
             TopAppBar(
                 title = { Text("Callsheet") },
                 actions = {
-                    // Named after the server on purpose: it does not make DAVx5
-                    // bring the device calendar up to date.
+                    // The label names the server on purpose: it does not make
+                    // DAVx5 bring the device calendar up to date.
                     if (syncConfigured) {
-                        TextButton(
-                            onClick = onSyncNow,
-                            enabled = !syncRunning,
-                            colors = ButtonDefaults.textButtonColors(
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            ),
-                        ) { Text(if (syncRunning) "Gleicht ab …" else "Server abgleichen") }
+                        IconButton(onClick = onSyncNow, enabled = !syncRunning) {
+                            if (syncRunning) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                )
+                            } else {
+                                Icon(Icons.Filled.Refresh, contentDescription = "Server abgleichen")
+                            }
+                        }
                     }
                     IconButton(onClick = onAgenda) {
                         Icon(Icons.Filled.DateRange, contentDescription = "Termine")
