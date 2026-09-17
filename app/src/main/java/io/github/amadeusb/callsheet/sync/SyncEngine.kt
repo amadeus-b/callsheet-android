@@ -120,6 +120,12 @@ class SyncEngine(private val store: SyncStore, private val prefs: Preferences) {
                 prefs.watermark = 0
                 prefs.refetchedForAttendees = true
             }
+            // Once more, on the first sync that runs on schema 12 — see
+            // Preferences.refetchedForDriveTimes.
+            if (!prefs.refetchedForDriveTimes) {
+                prefs.watermark = 0
+                prefs.refetchedForDriveTimes = true
+            }
             var rounds = 0
             val total = store.pendingCount()
             onProgress(total, total)

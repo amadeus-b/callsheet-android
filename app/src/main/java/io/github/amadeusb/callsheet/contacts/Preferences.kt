@@ -137,6 +137,17 @@ class Preferences(context: Context) {
         get() = store.getBoolean(REFETCHED_FOR_ATTENDEES, false)
         set(value) = store.edit().putBoolean(REFETCHED_FOR_ATTENDEES, value).apply()
 
+    /**
+     * Whether this device has fetched everything once since schema 12. The
+     * server writes the drive times with their updated_at unchanged; a row this
+     * device already fetched before the update comes down again at a
+     * standstill and the store fills the gap. A flag for the reason
+     * [refetchedForAppointments] gives.
+     */
+    var refetchedForDriveTimes: Boolean
+        get() = store.getBoolean(REFETCHED_FOR_DRIVE_TIMES, false)
+        set(value) = store.edit().putBoolean(REFETCHED_FOR_DRIVE_TIMES, value).apply()
+
     /** Whether appointments get mirrored into the device calendar at all. */
     var calendarEnabled: Boolean
         get() = store.getBoolean(CALENDAR_ENABLED, false)
@@ -189,6 +200,7 @@ class Preferences(context: Context) {
         const val REFETCHED_FOR_ADDRESSES = "refetched_for_addresses"
         const val REFETCHED_FOR_EDITED_FIELDS = "refetched_for_edited_fields"
         const val REFETCHED_FOR_ATTENDEES = "refetched_for_attendees"
+        const val REFETCHED_FOR_DRIVE_TIMES = "refetched_for_drive_times"
         const val CALENDAR_ENABLED = "calendar_enabled"
         const val CALENDAR_ID = "calendar_id"
         const val APPOINTMENT_MINUTES = "appointment_minutes"

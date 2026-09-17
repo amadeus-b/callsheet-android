@@ -770,6 +770,36 @@ class SyncStoreTest {
         assertEquals("elektro meier", einzeln("SELECT search_text FROM businesses WHERE place_id = 'P1'"))
     }
 
+    private fun eineFahrzeitAdresse(id: String, zeit: String, dirty: Int) = schreibe(
+        "INSERT INTO business_addresses (id, place_id, street, postal_code, city, position, updated_at, dirty) " +
+            "VALUES ('$id', 'P1', 'Musterweg 1', '85049', 'Musterstadt', 0, '$zeit', $dirty)"
+    )
+
+    private fun fahrzeitAdresseJson(id: String, zeit: String) = JSONObject().apply {
+        put("id", id); put("place_id", "P1"); put("street", "Musterweg 1"); put("postal_code", "85049")
+        put("city", "Musterstadt"); put("position", 0); put("updated_at", zeit)
+    }
+
+    @Test
+    fun `a standstill fills an address's drive time`() {
+        eineFahrzeitAdresse("A1", "2026-09-07T10:00:00+02:00", dirty = 0)
+        val incoming = fahrzeitAdresseJson("A1", "2026-09-07T10:00:00+02:00").put("drive_meters", 23400).put("drive_seconds", 1260)
+
+        store.apply(leereAntwort().put("business_addresses", JSONArray(listOf(incoming))))
+
+        assertEquals(listOf("23400", "1260", "0"), zeile("SELECT drive_meters, drive_seconds, dirty FROM business_addresses WHERE id = 'A1'"))
+    }
+
+    @Test
+    fun `a drive time never overwrites a newer address here`() {
+        eineFahrzeitAdresse("A1", "2026-09-07T11:00:00+02:00", dirty = 1)
+        val incoming = fahrzeitAdresseJson("A1", "2026-09-07T10:00:00+02:00").put("drive_meters", 23400).put("drive_seconds", 1260)
+
+        store.apply(leereAntwort().put("business_addresses", JSONArray(listOf(incoming))))
+
+        assertEquals(listOf(null, null, "1"), zeile("SELECT drive_meters, drive_seconds, dirty FROM business_addresses WHERE id = 'A1'"))
+    }
+
     @Test
     fun `a tombstone for a main address is remembered for the import, and an incoming main address forgets it`() {
         store.apply(antwort().put("deleted", grabstein("business_addresses", "main-P1", "2026-09-08T10:00:00+02:00")))

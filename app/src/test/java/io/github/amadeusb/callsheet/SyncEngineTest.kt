@@ -389,6 +389,30 @@ class SyncEngineTest {
         prefs.refetchedForAddresses = true
         prefs.refetchedForEditedFields = true
         prefs.refetchedForAttendees = false
+        prefs.refetchedForDriveTimes = true
+        val seen = mutableListOf<Int>()
+        val transport = object : Transport {
+            override fun post(payload: JSONObject): JSONObject {
+                seen.add(payload.getInt("since"))
+                return leereAntwort(17)
+            }
+        }
+
+        engine.sync(transport)
+        engine.sync(transport)
+
+        assertEquals(listOf(0, 17), seen)
+    }
+
+    @Test
+    fun `the first sync after schema 12 starts from watermark zero, and only that one`() {
+        prefs.watermark = 42
+        prefs.refetchedForAppointments = true
+        prefs.refetchedForCallbacks = true
+        prefs.refetchedForAddresses = true
+        prefs.refetchedForEditedFields = true
+        prefs.refetchedForAttendees = true
+        prefs.refetchedForDriveTimes = false
         val seen = mutableListOf<Int>()
         val transport = object : Transport {
             override fun post(payload: JSONObject): JSONObject {
@@ -411,6 +435,7 @@ class SyncEngineTest {
         prefs.refetchedForAddresses = true
         prefs.refetchedForEditedFields = true
         prefs.refetchedForAttendees = true
+        prefs.refetchedForDriveTimes = true
         val seen = mutableListOf<Int>()
 
         engine.sync(object : Transport {
