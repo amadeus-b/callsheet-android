@@ -111,7 +111,8 @@ class AddressesTest {
     @Test
     fun `the drive line keeps short trips readable`() {
         assertEquals("< 1 km · 1 min", Addresses.driveLine(400, 20))
-        assertEquals("1 km · 1 min", Addresses.driveLine(999, 59))
+        assertEquals("< 1 km · 1 min", Addresses.driveLine(999, 59))
+        assertEquals("1 km · 1 min", Addresses.driveLine(1000, 60))
     }
 
     @Test

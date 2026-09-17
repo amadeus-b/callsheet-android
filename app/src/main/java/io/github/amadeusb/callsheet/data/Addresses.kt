@@ -78,7 +78,7 @@ object Addresses {
     fun driveLine(meters: Int?, seconds: Int?): String? {
         if (meters == null || seconds == null) return null
         val km = Math.round(meters / 1000.0)
-        val distance = if (meters < 500) "< 1 km" else "$km km"
+        val distance = if (meters < 1000) "< 1 km" else "$km km"
         val minutes = maxOf(1L, Math.round(seconds / 60.0))
         val time = if (minutes < 60) "$minutes min" else "${minutes / 60} h ${"%02d".format(minutes % 60)} min"
         return "$distance · $time"
