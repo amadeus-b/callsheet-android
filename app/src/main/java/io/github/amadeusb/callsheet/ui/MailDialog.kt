@@ -1,5 +1,13 @@
 package io.github.amadeusb.callsheet.ui
 
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
+import android.util.TypedValue
+import android.view.Gravity
+import android.widget.EditText
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,16 +23,18 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import io.github.amadeusb.callsheet.data.Business
 import io.github.amadeusb.callsheet.data.Contact
@@ -121,18 +131,18 @@ fun MailDialog(
                     Spacer(Modifier.heightIn(min = 8.dp))
                 }
 
-                OutlinedTextField(
+                SpellCheckedField(
                     value = subject,
                     onValueChange = { subject = it },
-                    label = { Text("Betreff") },
+                    label = "Betreff",
                     singleLine = true,
                     enabled = !sending,
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
-                OutlinedTextField(
+                SpellCheckedField(
                     value = body,
                     onValueChange = { body = it },
-                    label = { Text("Text") },
+                    label = "Text",
                     minLines = 6,
                     enabled = !sending,
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -164,4 +174,80 @@ fun MailDialog(
             TextButton(onClick = onDismiss, enabled = !sending) { Text("Abbrechen") }
         },
     )
+}
+
+/**
+ * A text field built on the platform's [EditText] instead of Compose's own.
+ *
+ * Only for the sake of the spell checker: Compose text fields do not draw the
+ * red underline of the system spell checker, and do not offer its
+ * corrections on a tap. An [EditText] does both, with whichever spell checker
+ * is chosen in the device's settings.
+ */
+@Composable
+private fun SpellCheckedField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = false,
+    minLines: Int = 1,
+) {
+    val colors = MaterialTheme.colorScheme
+    var focused by remember { mutableStateOf(false) }
+    // The listener is created once with the view; this keeps it calling the
+    // current callback, not the one from the first composition.
+    val currentOnValueChange by rememberUpdatedState(onValueChange)
+
+    Column(modifier = modifier) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (focused) colors.primary else colors.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+        )
+        AndroidView(
+            factory = { context ->
+                EditText(context).apply {
+                    background = null
+                    setPadding(0, 0, 0, 0)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                    gravity = Gravity.TOP or Gravity.START
+                    // Without NO_SUGGESTIONS and not a password: the two
+                    // conditions under which the spell checker runs at all.
+                    inputType = InputType.TYPE_CLASS_TEXT or
+                        InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
+                        InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or
+                        (if (singleLine) 0 else InputType.TYPE_TEXT_FLAG_MULTI_LINE)
+                    if (singleLine) maxLines = 1 else setMinLines(minLines)
+                    setText(value)
+                    addTextChangedListener(object : TextWatcher {
+                        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                        override fun afterTextChanged(s: Editable?) {
+                            currentOnValueChange(s?.toString().orEmpty())
+                        }
+                    })
+                    setOnFocusChangeListener { _, hasFocus -> focused = hasFocus }
+                }
+            },
+            update = { field ->
+                field.setTextColor(colors.onSurface.toArgb())
+                field.isEnabled = enabled
+                field.alpha = if (enabled) 1f else 0.6f
+                // Only a change from outside is written back: rewriting what
+                // was just typed would move the cursor to the start.
+                if (field.text.toString() != value) field.setText(value)
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(
+                    width = if (focused) 2.dp else 1.dp,
+                    color = if (focused) colors.primary else colors.outline,
+                    shape = RoundedCornerShape(4.dp),
+                )
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+        )
+    }
 }

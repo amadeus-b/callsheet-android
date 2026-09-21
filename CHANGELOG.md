@@ -4,6 +4,14 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.7.3
+
+- **Spell checking in the mail dialog.** Subject and text are now plain
+  Android text fields, so the device's spell checker underlines misspelled
+  words in red and offers its corrections on a tap. Which language it knows
+  depends on the spell checker chosen in the system settings. Sentences now
+  start with a capital letter by themselves.
+
 ## 1.7.2
 
 - **Server sync as an icon.** The „Server abgleichen" button in the top bar
