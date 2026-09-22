@@ -4,6 +4,14 @@ What changed in each release. The section for a version is written before the
 release is cut — `tools/release.sh` refuses to publish without one and uses it
 as the release notes on GitHub.
 
+## 1.7.4
+
+- **Call duration is recorded again.** The call log was read the moment the
+  dial button was tapped — before the call had even been placed — so every
+  call came out „Dauer nicht ermittelbar". It is now read when the app comes
+  back from the phone app, as intended. Entries already recorded without a
+  duration stay as they are.
+
 ## 1.7.3
 
 - **Spell checking in the mail dialog.** Subject and text are now plain

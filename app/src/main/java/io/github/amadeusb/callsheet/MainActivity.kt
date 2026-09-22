@@ -206,8 +206,13 @@ private fun App(vm: CallsheetViewModel = viewModel()) {
     }
 
     // Back from the dialler: evaluate the call log.
+    //
+    // Keyed on the lifecycle alone, never on selectedBusiness: dial() sets it
+    // while the app is still resumed, and an observer added to a resumed
+    // lifecycle is handed ON_RESUME at once. The call was then evaluated before
+    // it had even been placed — every entry came out „Dauer nicht ermittelbar“.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(lifecycle, selectedBusiness) {
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 val id = selectedBusiness
